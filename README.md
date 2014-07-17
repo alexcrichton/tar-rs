@@ -2,8 +2,8 @@
 
 A tar archive reading/writing library for Rust.
 
-```
-// Cargo.toml
+```toml
+# Cargo.toml
 [dependencies.tar]
 git = "https://github.com/alexcrichton/tar-rs"
 ```
