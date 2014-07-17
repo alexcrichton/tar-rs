@@ -15,8 +15,10 @@ use std::cmp;
 use std::io::{IoResult, IoError};
 use std::io;
 use std::iter::AdditiveIterator;
+use std::fmt;
 use std::mem;
 use std::num;
+use std::slice::bytes;
 use std::str;
 
 /// A top-level representation of an archive file.
@@ -81,6 +83,11 @@ impl<O> Archive<O> {
     pub fn new(obj: O) -> Archive<O> {
         Archive { obj: RefCell::new(obj), pos: Cell::new(0) }
     }
+
+    /// Unwrap this archive, returning the underlying object.
+    pub fn unwrap(self) -> O {
+        self.obj.unwrap()
+    }
 }
 
 impl<R: Seek + Reader> Archive<R> {
@@ -102,6 +109,96 @@ impl<R: Seek + Reader> Archive<R> {
         try!(self.obj.borrow_mut().seek(pos as i64, io::SeekSet));
         self.pos.set(pos);
         Ok(())
+    }
+}
+
+impl<W: Writer> Archive<W> {
+    /// Add the file at the specified path to this archive.
+    ///
+    /// This function will insert the file into the archive with the appropriate
+    /// metadata set, returning any I/O error which occurs while writing.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    pub fn append(&self, path: &str, file: &mut io::File) -> IoResult<()> {
+        let stat = try!(file.stat());
+
+        // Prepare the header, flagging it as a UStar archive
+        let mut header: Header = unsafe { mem::zeroed() };
+        header.ustar = [b'u', b's', b't', b'a', b'r', b' '];
+        header.ustar_version = [b' ', 0];
+
+        // Prepare the filename
+        let cstr = path.to_c_str();
+        let path = cstr.as_bytes();
+        let (namelen, prefixlen) = (header.name.len(), header.prefix.len());
+        if path.len() < namelen {
+            bytes::copy_memory(header.name, path);
+        } else if path.len() < namelen + prefixlen {
+            bytes::copy_memory(header.name, path.slice_from(namelen));
+            bytes::copy_memory(header.prefix, path.slice_to(namelen));
+        } else {
+            return Err(IoError {
+                kind: io::OtherIoError,
+                desc: "path is too long to insert into archive",
+                detail: None,
+            })
+        }
+
+        // Prepare the metadata fields.
+        octal(header.mode, stat.perm.bits()); // TODO: is this right?
+        // TODO: what granularity is this on?
+        // octal(header.mtime, stat.modified);
+        octal(header.owner_id, stat.unstable.uid);
+        octal(header.group_id, stat.unstable.gid);
+        octal(header.size, stat.size);
+
+        header.link[0] = match stat.kind {
+            io::TypeFile => b'0',
+            io::TypeDirectory => b'5',
+            io::TypeNamedPipe => b'6',
+            io::TypeBlockSpecial => b'4',
+            io::TypeSymlink => b'2',
+            io::TypeUnknown => b' ',
+        };
+
+        // Final step, calculate the checksum
+        let cksum = {
+            let bytes = header.as_bytes();
+            bytes.slice_to(148).iter().map(|i| *i as uint).sum() +
+                bytes.slice_from(156).iter().map(|i| *i as uint).sum() +
+                32 * header.cksum.len()
+        };
+        octal(header.cksum, cksum);
+
+        // Write out the header, the entire file, then pad with zeroes.
+        let mut obj = self.obj.borrow_mut();
+        try!(obj.write(header.as_bytes().as_slice()));
+        try!(io::util::copy(file, &mut *obj));
+        let buf = [0, ..512];
+        let remaining = 512 - (stat.size % 512);
+        if remaining < 512 {
+            try!(obj.write(buf.slice_to(remaining as uint)));
+        }
+
+        // And we're done!
+        return Ok(());
+
+        fn octal<T: fmt::Octal>(dst: &mut [u8], val: T) {
+            let o = format!("{:o}", val);
+            println!("{} {}", dst.len(), o);
+            bytes::copy_memory(dst, o.as_bytes())
+        }
+    }
+
+    /// Finish writing this archive, emitting the termination sections.
+    ///
+    /// This function is required to be called to complete the archive, it will
+    /// be invalid if this is not called.
+    pub fn finish(&self) -> IoResult<()> {
+        let b = [0, ..1024];
+        self.obj.borrow_mut().write(b)
     }
 }
 
@@ -177,6 +274,9 @@ impl Header {
     fn cksum(&self) -> IoResult<uint> { octal(self.cksum) }
     fn is_ustar(&self) -> bool {
         self.ustar.slice_to(5) == b"ustar"
+    }
+    fn as_bytes<'a>(&'a self) -> &'a [u8, ..512] {
+        unsafe { &*(self as *const _ as *const [u8, ..512]) }
     }
 }
 
@@ -347,7 +447,7 @@ fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::io::BufReader;
+    use std::io::{BufReader, MemWriter, MemReader, File, TempDir};
     use super::Archive;
 
     #[test]
@@ -377,5 +477,28 @@ mod tests {
         a.seek(0, io::SeekSet).unwrap();
         assert_eq!(a.read_to_string().unwrap().as_slice(),
                    "a\na\na\na\na\na\na\na\na\na\na\n");
+    }
+
+    #[test]
+    fn writing_files() {
+        let wr = MemWriter::new();
+        let ar = Archive::new(wr);
+        let td = TempDir::new("tar-rs").unwrap();
+
+        let path = td.path().join("test");
+        File::create(&path).write(b"test").unwrap();
+
+        ar.append("test2", &mut File::open(&path).unwrap()).unwrap();
+        ar.finish().unwrap();
+
+        let rd = MemReader::new(ar.unwrap().unwrap());
+        let ar = Archive::new(rd);
+        let mut files = ar.files().unwrap();
+        let mut f = files.next().unwrap().unwrap();
+        assert!(files.next().is_none());
+
+        assert_eq!(f.filename(), Some("test2"));
+        assert_eq!(f.size(), 4);
+        assert_eq!(f.read_to_string().unwrap().as_slice(), "test");
     }
 }
