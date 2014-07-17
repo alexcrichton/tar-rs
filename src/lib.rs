@@ -1,4 +1,4 @@
-//! A library for reading an writing TAR archives
+//! A library for reading and writing TAR archives
 //!
 //! This library provides utilities necessary to manage TAR archives [1]
 //! abstracted over a reader or writer. Great strides are taken to ensure that
@@ -316,7 +316,7 @@ impl<'a, R: Seek + Reader> File<'a, R> {
         }
     }
 
-    /// Reeturns the username of the owner of this file, if present
+    /// Returns the username of the owner of this file, if present
     pub fn username_bytes<'a>(&'a self) -> Option<&'a [u8]> {
         if self.header.is_ustar() {
             Some(truncate(self.header.owner_name))
@@ -324,7 +324,7 @@ impl<'a, R: Seek + Reader> File<'a, R> {
             None
         }
     }
-    /// Reeturns the group name of the owner of this file, if present
+    /// Returns the group name of the owner of this file, if present
     pub fn groupname_bytes<'a>(&'a self) -> Option<&'a [u8]> {
         if self.header.is_ustar() {
             Some(truncate(self.header.group_name))
