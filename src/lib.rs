@@ -187,7 +187,6 @@ impl<W: Writer> Archive<W> {
 
         fn octal<T: fmt::Octal>(dst: &mut [u8], val: T) {
             let o = format!("{:o}", val);
-            println!("{} {}", dst.len(), o);
             bytes::copy_memory(dst, o.as_bytes())
         }
     }
