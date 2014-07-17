@@ -45,20 +45,32 @@ pub struct File<'a, R> {
     tar_offset: u64,
     pos: u64,
     size: u64,
+    filename: Vec<u8>,
 }
 
+/// Representation of the header of a file in an archive
 #[repr(C)]
-struct Header {
-    name: [u8, ..100],
-    mode: [u8, ..8],
-    owner: [u8, ..8],
-    group: [u8, ..8],
-    size: [u8, ..12],
-    mtime: [u8, ..12],
-    cksum: [u8, ..8],
-    link: [u8, ..1],
-    linkname: [u8, ..100],
-    _rest: [u8, ..255],
+#[allow(missing_doc)]
+pub struct Header {
+    pub name: [u8, ..100],
+    pub mode: [u8, ..8],
+    pub owner_id: [u8, ..8],
+    pub group_id: [u8, ..8],
+    pub size: [u8, ..12],
+    pub mtime: [u8, ..12],
+    pub cksum: [u8, ..8],
+    pub link: [u8, ..1],
+    pub linkname: [u8, ..100],
+
+    // UStar format
+    pub ustar: [u8, ..6],
+    pub ustar_version: [u8, ..2],
+    pub owner_name: [u8, ..32],
+    pub group_name: [u8, ..32],
+    pub dev_major: [u8, ..8],
+    pub dev_minor: [u8, ..8],
+    pub prefix: [u8, ..155],
+    _rest: [u8, ..12],
 }
 
 impl<O> Archive<O> {
@@ -132,32 +144,47 @@ impl<'a, R: Seek + Reader> Iterator<IoResult<File<'a, R>>> for Files<'a, R> {
                   chunk.slice_from(156).iter().map(|i| *i as uint).sum() +
                   32 * 8;
 
-        let hd: Header = unsafe { mem::transmute(chunk) };
         let mut ret = File {
             archive: self.archive,
-            header: hd,
+            header: unsafe { mem::transmute(chunk) },
             pos: 0,
             size: 0,
             tar_offset: self.offset,
+            filename: Vec::new(),
         };
 
         // Make sure the checksum is ok
-        let cksum = try!(ret.cksum());
+        let cksum = try!(ret.header.cksum());
         if sum != cksum { bail!() }
 
         // Figure out where the next file is
-        let size = try!(ret.calc_size());
+        let size = try!(ret.header.size());
         ret.size = size;
         let size = (size + 511) & !(512 - 1);
         self.offset += size;
+
+        if ret.header.is_ustar() {
+            ret.filename.push_all(truncate(ret.header.prefix));
+        }
+        ret.filename.push_all(truncate(ret.header.name));
 
         Some(Ok(ret))
     }
 }
 
+impl Header {
+    fn size(&self) -> IoResult<u64> { octal(self.size) }
+    fn cksum(&self) -> IoResult<uint> { octal(self.cksum) }
+    fn is_ustar(&self) -> bool {
+        self.ustar.slice_to(5) == b"ustar"
+    }
+}
+
 impl<'a, R: Seek + Reader> File<'a, R> {
     /// Returns the filename of this archive as a byte array
-    pub fn filename_bytes<'a>(&'a self) -> &'a [u8] { truncate(self.header.name) }
+    pub fn filename_bytes<'a>(&'a self) -> &'a [u8] {
+        self.filename.as_slice()
+    }
 
     /// Returns the filename of this archive as a utf8 string.
     ///
@@ -166,30 +193,86 @@ impl<'a, R: Seek + Reader> File<'a, R> {
         str::from_utf8(self.filename_bytes())
     }
 
+    /// Returns the value of the owner's user ID field
+    pub fn uid(&self) -> IoResult<uint> { octal(self.header.owner_id) }
+    /// Returns the value of the group's user ID field
+    pub fn gid(&self) -> IoResult<uint> { octal(self.header.group_id) }
+    /// Returns the last modification time in Unix time format
+    pub fn mtime(&self) -> IoResult<uint> { octal(self.header.mtime) }
+
+    /// Classify the type of file that this entry represents
+    pub fn classify(&self) -> io::FileType {
+        match (self.header.is_ustar(), self.header.link[0]) {
+            (_, b'0') => io::TypeFile,
+            (_, b'1') => io::TypeUnknown, // need a hard link enum?
+            (_, b'2') => io::TypeSymlink,
+            (false, _) => io::TypeUnknown, // not technically valid...
+
+            (_, b'3') => io::TypeUnknown, // character special...
+            (_, b'4') => io::TypeBlockSpecial,
+            (_, b'5') => io::TypeDirectory,
+            (_, b'6') => io::TypeNamedPipe,
+            (_, _) => io::TypeUnknown, // not technically valid...
+        }
+    }
+
+    /// Reeturns the username of the owner of this file, if present
+    pub fn username_bytes<'a>(&'a self) -> Option<&'a [u8]> {
+        if self.header.is_ustar() {
+            Some(truncate(self.header.owner_name))
+        } else {
+            None
+        }
+    }
+    /// Reeturns the group name of the owner of this file, if present
+    pub fn groupname_bytes<'a>(&'a self) -> Option<&'a [u8]> {
+        if self.header.is_ustar() {
+            Some(truncate(self.header.group_name))
+        } else {
+            None
+        }
+    }
+    /// Return the username of the owner of this file, if present and if valid
+    /// utf8
+    pub fn username<'a>(&'a self) -> Option<&'a str> {
+        self.username_bytes().and_then(str::from_utf8)
+    }
+    /// Return the group name of the owner of this file, if present and if valid
+    /// utf8
+    pub fn groupname<'a>(&'a self) -> Option<&'a str> {
+        self.groupname_bytes().and_then(str::from_utf8)
+    }
+
+    /// Returns the device major number, if present.
+    ///
+    /// This field is only present in UStar archives. A value of `None` means
+    /// that this archive is not a UStar archive, while a value of `Some`
+    /// represents the attempt to decode the field in the header.
+    pub fn device_major(&self) -> Option<IoResult<uint>> {
+        if self.header.is_ustar() {
+            Some(octal(self.header.dev_major))
+        } else {
+            None
+        }
+    }
+    /// Returns the device minor number, if present.
+    ///
+    /// This field is only present in UStar archives. A value of `None` means
+    /// that this archive is not a UStar archive, while a value of `Some`
+    /// represents the attempt to decode the field in the header.
+    pub fn device_minor(&self) -> Option<IoResult<uint>> {
+        if self.header.is_ustar() {
+            Some(octal(self.header.dev_minor))
+        } else {
+            None
+        }
+    }
+
+    /// Returns raw access to the header of this file in the archive.
+    pub fn raw_header<'a>(&'a self) -> &'a Header { &self.header }
+
     /// Returns the size of the file in the archive.
     pub fn size(&self) -> u64 { self.size }
-
-    fn calc_size(&self) -> IoResult<u64> {
-        let num = match str::from_utf8(truncate(self.header.size)) {
-            Some(n) => n,
-            None => return Err(bad_archive()),
-        };
-        match num::from_str_radix(num, 8) {
-            Some(n) => Ok(n),
-            None => Err(bad_archive())
-        }
-    }
-
-    fn cksum(&self) -> IoResult<uint> {
-        let num = match str::from_utf8(truncate(self.header.cksum)) {
-            Some(n) => n,
-            None => return Err(bad_archive())
-        };
-        match num::from_str_radix(num.trim(), 8) {
-            Some(n) => Ok(n),
-            None => Err(bad_archive())
-        }
-    }
 }
 
 impl<'a, R: Reader> Reader for &'a Archive<R> {
@@ -240,6 +323,17 @@ fn bad_archive() -> IoError {
         kind: io::OtherIoError,
         desc: "invalid tar archive",
         detail: None,
+    }
+}
+
+fn octal<T: num::FromStrRadix>(slice: &[u8]) -> IoResult<T> {
+    let num = match str::from_utf8(truncate(slice)) {
+        Some(n) => n,
+        None => return Err(bad_archive()),
+    };
+    match num::from_str_radix(num, 8) {
+        Some(n) => Ok(n),
+        None => Err(bad_archive())
     }
 }
 
