@@ -148,8 +148,7 @@ impl<W: Writer> Archive<W> {
 
         // Prepare the metadata fields.
         octal(header.mode, stat.perm.bits()); // TODO: is this right?
-        // TODO: what granularity is this on?
-        // octal(header.mtime, stat.modified);
+        octal(header.mtime, stat.modified / 1000);
         octal(header.owner_id, stat.unstable.uid);
         octal(header.group_id, stat.unstable.gid);
         octal(header.size, stat.size);
