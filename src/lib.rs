@@ -136,8 +136,8 @@ impl<W: Writer> Archive<W> {
         if path.len() < namelen {
             bytes::copy_memory(header.name, path);
         } else if path.len() < namelen + prefixlen {
-            bytes::copy_memory(header.name, path.slice_from(namelen));
-            bytes::copy_memory(header.prefix, path.slice_to(namelen));
+            bytes::copy_memory(header.name, path.slice_from(path.len() - namelen));
+            bytes::copy_memory(header.prefix, path.slice_to(path.len() - namelen));
         } else {
             return Err(IoError {
                 kind: io::OtherIoError,
@@ -496,6 +496,33 @@ mod tests {
         assert!(files.next().is_none());
 
         assert_eq!(f.filename(), Some("test2"));
+        assert_eq!(f.size(), 4);
+        assert_eq!(f.read_to_string().unwrap().as_slice(), "test");
+    }
+
+    #[test]
+    fn large_filename() {
+        let ar = Archive::new(MemWriter::new());
+        let td = TempDir::new("tar-rs").unwrap();
+
+        let path = td.path().join("test");
+        File::create(&path).write(b"test").unwrap();
+
+        let filename = "abcd".repeat(60);
+        ar.append(filename.as_slice(), &mut File::open(&path).unwrap()).unwrap();
+        ar.finish().unwrap();
+
+        let too_long = "abcd".repeat(200);
+        ar.append(too_long.as_slice(), &mut File::open(&path).unwrap())
+          .err().unwrap();
+
+        let rd = MemReader::new(ar.unwrap().unwrap());
+        let ar = Archive::new(rd);
+        let mut files = ar.files().unwrap();
+        let mut f = files.next().unwrap().unwrap();
+        assert!(files.next().is_none());
+
+        assert_eq!(f.filename(), Some(filename.as_slice()));
         assert_eq!(f.size(), 4);
         assert_eq!(f.read_to_string().unwrap().as_slice(), "test");
     }
