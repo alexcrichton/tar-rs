@@ -1,5 +1,9 @@
 # tar-rs
 
+[![Build Status](https://travis-ci.org/alexcrichton/tar-rs.svg?branch=master)](https://travis-ci.org/alexcrichton/tar-rs)
+
+[Documentation](http://alexcrichton.com/tar-rs/tar/index.html)
+
 A tar archive reading/writing library for Rust.
 
 ```toml
