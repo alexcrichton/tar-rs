@@ -30,7 +30,7 @@ pub struct Archive<R> {
 }
 
 /// An iterator over the files of an archive.
-pub struct Files<'a, R> {
+pub struct Files<'a, R:'a> {
     archive: &'a Archive<R>,
     done: bool,
     offset: u64,
@@ -41,7 +41,7 @@ pub struct Files<'a, R> {
 /// This structure is a windows into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader and Seek
 /// traits. A file cannot be rewritten once inserted into an archive.
-pub struct File<'a, R> {
+pub struct File<'a, R:'a> {
     header: Header,
     archive: &'a Archive<R>,
     tar_offset: u64,
