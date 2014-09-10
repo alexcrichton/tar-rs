@@ -14,7 +14,7 @@ use std::cell::{RefCell, Cell};
 use std::cmp;
 use std::io::{IoResult, IoError};
 use std::io;
-use std::iter::AdditiveIterator;
+use std::iter::{AdditiveIterator, Repeat};
 use std::fmt;
 use std::mem;
 use std::num;
@@ -126,8 +126,8 @@ impl<W: Writer> Archive<W> {
 
         // Prepare the header, flagging it as a UStar archive
         let mut header: Header = unsafe { mem::zeroed() };
-        header.ustar = [b'u', b's', b't', b'a', b'r', b' '];
-        header.ustar_version = [b' ', 0];
+        header.ustar = [b'u', b's', b't', b'a', b'r', 0];
+        header.ustar_version = [b'0', b'0'];
 
         // Prepare the filename
         let cstr = path.to_c_str();
@@ -136,8 +136,17 @@ impl<W: Writer> Archive<W> {
         if path.len() < namelen {
             bytes::copy_memory(header.name, path);
         } else if path.len() < namelen + prefixlen {
-            bytes::copy_memory(header.name, path.slice_from(path.len() - namelen));
-            bytes::copy_memory(header.prefix, path.slice_to(path.len() - namelen));
+            let prefix = path.slice_to(cmp::min(path.len(), prefixlen));
+            let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
+                Some(i) => i,
+                None => return Err(IoError {
+                    kind: io::OtherIoError,
+                    desc: "path cannot be split to be inserted into archive",
+                    detail: None,
+                })
+            };
+            bytes::copy_memory(header.name, path.slice_from(pos + 1));
+            bytes::copy_memory(header.prefix, path.slice_to(pos));
         } else {
             return Err(IoError {
                 kind: io::OtherIoError,
@@ -152,6 +161,8 @@ impl<W: Writer> Archive<W> {
         octal(header.owner_id, stat.unstable.uid);
         octal(header.group_id, stat.unstable.gid);
         octal(header.size, stat.size);
+        octal(header.dev_minor, 0i);
+        octal(header.dev_major, 0i);
 
         header.link[0] = match stat.kind {
             io::TypeFile => b'0',
@@ -186,7 +197,11 @@ impl<W: Writer> Archive<W> {
 
         fn octal<T: fmt::Octal>(dst: &mut [u8], val: T) {
             let o = format!("{:o}", val);
-            bytes::copy_memory(dst, o.as_bytes())
+            let value = o.as_slice().bytes().rev().chain(Repeat::new(b'0'));
+            for (slot, value) in dst.mut_iter().rev().skip(1).zip(value) {
+                *slot = value;
+            }
+            // bytes::copy_memory(dst, o.as_bytes())
         }
     }
 
@@ -258,8 +273,9 @@ impl<'a, R: Seek + Reader> Iterator<IoResult<File<'a, R>>> for Files<'a, R> {
         let size = (size + 511) & !(512 - 1);
         self.offset += size;
 
-        if ret.header.is_ustar() {
+        if ret.header.is_ustar() && ret.header.prefix[0] != 0 {
             ret.filename.push_all(truncate(ret.header.prefix));
+            ret.filename.push(b'/');
         }
         ret.filename.push_all(truncate(ret.header.name));
 
@@ -508,7 +524,7 @@ mod tests {
         let path = td.path().join("test");
         File::create(&path).write(b"test").unwrap();
 
-        let filename = "abcd".repeat(60);
+        let filename = "abcd/".repeat(50);
         ar.append(filename.as_slice(), &mut File::open(&path).unwrap()).unwrap();
         ar.finish().unwrap();
 
