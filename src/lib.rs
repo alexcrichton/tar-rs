@@ -198,10 +198,9 @@ impl<W: Writer> Archive<W> {
         fn octal<T: fmt::Octal>(dst: &mut [u8], val: T) {
             let o = format!("{:o}", val);
             let value = o.as_slice().bytes().rev().chain(Repeat::new(b'0'));
-            for (slot, value) in dst.mut_iter().rev().skip(1).zip(value) {
+            for (slot, value) in dst.iter_mut().rev().skip(1).zip(value) {
                 *slot = value;
             }
-            // bytes::copy_memory(dst, o.as_bytes())
         }
     }
 

@@ -14,7 +14,8 @@ git = "https://github.com/alexcrichton/tar-rs"
 
 ## Reading an archive
 
-```rust
+```rust,no_run
+# #![allow(unused_must_use)]
 extern crate tar;
 
 use tar::Archive;
@@ -44,11 +45,12 @@ fn main() {
 
 ## Writing an archive
 
-```rust
+```rust,no_run
+# #![allow(unused_must_use)]
 extern crate tar;
 
 use tar::Archive;
-use std::io::{File, SeekSet};
+use std::io::File;
 
 fn main() {
     let file = File::create(&Path::new("foo.tar")).unwrap();
