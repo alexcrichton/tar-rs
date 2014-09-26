@@ -312,6 +312,10 @@ impl<'a, R: Seek + Reader> File<'a, R> {
     pub fn gid(&self) -> IoResult<uint> { octal(self.header.group_id) }
     /// Returns the last modification time in Unix time format
     pub fn mtime(&self) -> IoResult<uint> { octal(self.header.mtime) }
+    /// Returns the mode bits for this file
+    pub fn mode(&self) -> IoResult<io::FilePermission> {
+        octal(self.header.mode).map(io::FilePermission::from_bits_truncate)
+    }
 
     /// Classify the type of file that this entry represents
     pub fn classify(&self) -> io::FileType {
@@ -406,7 +410,7 @@ impl<'a, R: Reader + Seek> Reader for File<'a, R> {
         try!(self.archive.seek(self.tar_offset + self.pos));
 
         let amt = cmp::min((self.size - self.pos) as uint, into.len());
-        let amt = try!(self.archive.read(into.mut_slice_to(amt)));
+        let amt = try!(self.archive.read(into.slice_to_mut(amt)));
         self.pos += amt as u64;
         Ok(amt)
     }
