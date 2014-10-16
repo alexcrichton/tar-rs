@@ -3,3 +3,12 @@
 name = "tar"
 version = "0.0.1"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
+homepage = "https://github.com/alexcrichton/tar-rs"
+documentation = "http://alexcrichton.com/tar-rs"
+
+description = """
+A Rust implementation of a TAR file reader and writer. This library does not
+currently handle compression, but it is abstract over all I/O readers and
+writers. Additionally, great lengths are taken to ensure that the entire
+contents are never required to be entirely resident in memory all at once.
+"""
