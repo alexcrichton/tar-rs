@@ -12,8 +12,7 @@
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
-use std::io::{IoResult, IoError};
-use std::io;
+use std::io::{mod, IoResult, IoError, fs};
 use std::iter::{AdditiveIterator, Repeat};
 use std::fmt;
 use std::mem;
@@ -148,6 +147,21 @@ impl<R: Reader> Archive<R> {
     /// returns), then the contents read for each file may be corrupted.
     pub fn files_mut<'a>(&'a mut self) -> IoResult<FilesMut<'a, R>> {
         Ok(FilesMut { archive: self, done: false, next: 0 })
+    }
+
+    /// Unpacks this tarball into the specified path
+    pub fn unpack(&mut self, into: &Path) -> IoResult<()> {
+        for file in try!(self.files_mut()) {
+            let mut file = try!(file);
+            let dst = into.join(file.filename_bytes());
+            try!(fs::mkdir_recursive(&dst.dir_path(), io::USER_DIR));
+            {
+                let mut dst = try!(io::File::create(&dst));
+                try!(io::util::copy(&mut file, &mut dst));
+            }
+            try!(fs::chmod(&dst, try!(file.mode()) & io::USER_RWX));
+        }
+        Ok(())
     }
 
     fn skip(&self, mut amt: u64) -> IoResult<()> {
