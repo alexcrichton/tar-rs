@@ -21,6 +21,13 @@ use std::num;
 use std::slice::bytes;
 use std::str;
 
+macro_rules! try_iter( ($me:expr, $e:expr) => (
+    match $e {
+        Ok(e) => e,
+        Err(e) => { $me.done = true; return Some(Err(e)) }
+    }
+) )
+
 /// A top-level representation of an archive file.
 ///
 /// This archive can have a file added to it and it can be iterated over.
@@ -30,10 +37,22 @@ pub struct Archive<R> {
 }
 
 /// An iterator over the files of an archive.
+///
+/// Requires that `R` implement `Seek`.
 pub struct Files<'a, R:'a> {
     archive: &'a Archive<R>,
     done: bool,
     offset: u64,
+}
+
+/// An iterator over the files of an archive.
+///
+/// Does not require that `R` implements `Seek`, but each file must be processed
+/// before the next.
+pub struct FilesMut<'a, R:'a> {
+    archive: &'a Archive<R>,
+    next: u64,
+    done: bool,
 }
 
 /// A read-only view into a file of an archive.
@@ -41,13 +60,18 @@ pub struct Files<'a, R:'a> {
 /// This structure is a windows into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader and Seek
 /// traits. A file cannot be rewritten once inserted into an archive.
-pub struct File<'a, R:'a> {
+pub struct File<'a, R: 'a> {
     header: Header,
     archive: &'a Archive<R>,
-    tar_offset: u64,
     pos: u64,
     size: u64,
     filename: Vec<u8>,
+
+    // Used in read() to make sure we're positioned at the next byte. For a
+    // `Files` iterator these are meaningful while for a `FilesMut` iterator
+    // these are both unused/noops.
+    seek: fn(&File<R>) -> IoResult<()>,
+    tar_offset: u64,
 }
 
 /// Representation of the header of a file in an archive
@@ -109,6 +133,83 @@ impl<R: Seek + Reader> Archive<R> {
         try!(self.obj.borrow_mut().seek(pos as i64, io::SeekSet));
         self.pos.set(pos);
         Ok(())
+    }
+}
+
+impl<R: Reader> Archive<R> {
+    /// Construct an iterator over the files in this archive.
+    ///
+    /// While similar to the `files` iterator, this iterator does not require
+    /// that `R` implement `Seek` and restricts the iterator to processing only
+    /// one file at a time in a streaming fashion.
+    ///
+    /// Note that care must be taken to consider each file within an archive in
+    /// sequence. If files are processed out of sequence (from what the iterator
+    /// returns), then the contents read for each file may be corrupted.
+    pub fn files_mut<'a>(&'a mut self) -> IoResult<FilesMut<'a, R>> {
+        Ok(FilesMut { archive: self, done: false, next: 0 })
+    }
+
+    fn skip(&self, mut amt: u64) -> IoResult<()> {
+        let mut buf = [0u8, ..4096 * 8];
+        while amt > 0 {
+            let n = cmp::min(amt, buf.len() as u64);
+            let mut me = self;
+            try!(me.read(buf.slice_to_mut(n as uint)));
+            amt -= n;
+        }
+        Ok(())
+    }
+
+    // Assumes that the underlying reader is positioned at the start of a valid
+    // header to parse.
+    fn next_file(&self, offset: &mut u64, seek: fn(&File<R>) -> IoResult<()>)
+                 -> IoResult<Option<File<R>>> {
+        // If we have 2 or more sections of 0s, then we're done!
+        let mut chunk = [0, ..512];
+        let mut cnt = 0i;
+        let mut me = self;
+        loop {
+            if try!(me.read(chunk)) != 512 {
+                return Err(bad_archive())
+            }
+            *offset += 512;
+            if chunk.iter().any(|i| *i != 0) { break }
+            cnt += 1;
+            if cnt > 1 { return Ok(None) }
+        }
+
+        let sum = chunk.slice_to(148).iter().map(|i| *i as uint).sum() +
+                  chunk.slice_from(156).iter().map(|i| *i as uint).sum() +
+                  32 * 8;
+
+        let mut ret = File {
+            archive: self,
+            header: unsafe { mem::transmute(chunk) },
+            pos: 0,
+            size: 0,
+            tar_offset: *offset,
+            filename: Vec::new(),
+            seek: seek,
+        };
+
+        // Make sure the checksum is ok
+        let cksum = try!(ret.header.cksum());
+        if sum != cksum { return Err(bad_archive()) }
+
+        // Figure out where the next file is
+        let size = try!(ret.header.size());
+        ret.size = size;
+        let size = (size + 511) & !(512 - 1);
+        *offset += size;
+
+        if ret.header.is_ustar() && ret.header.prefix[0] != 0 {
+            ret.filename.push_all(truncate(ret.header.prefix));
+            ret.filename.push(b'/');
+        }
+        ret.filename.push_all(truncate(ret.header.name));
+
+        return Ok(Some(ret));
     }
 }
 
@@ -216,69 +317,42 @@ impl<W: Writer> Archive<W> {
 
 impl<'a, R: Seek + Reader> Iterator<IoResult<File<'a, R>>> for Files<'a, R> {
     fn next(&mut self) -> Option<IoResult<File<'a, R>>> {
-        macro_rules! try( ($e:expr) => (
-            match $e {
-                Ok(e) => e,
-                Err(e) => { self.done = true; return Some(Err(e)) }
-            }
-        ) )
-        macro_rules! bail( () => ({
-            self.done = true;
-            return Some(Err(bad_archive()))
-        }) )
-
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
 
-        // Make sure that we've seeked to the start of the next file in this
-        // iterator, and then parse the chunk. If we have 2 or more sections of
-        // all 0s, then the archive is done.
-        try!(self.archive.seek(self.offset));
-        let mut chunk = [0, ..512];
-        let mut cnt = 0i;
-        loop {
-            if try!(self.archive.read(chunk)) != 512 {
-                bail!()
-            }
-            self.offset += 512;
-            if chunk.iter().any(|i| *i != 0) { break }
-            cnt += 1;
-            if cnt > 1 {
-                self.done = true;
-                return None
-            }
+        // Seek to the start of the next header in the archive
+        try_iter!(self, self.archive.seek(self.offset));
+
+        fn doseek<R: Seek + Reader>(file: &File<R>) -> IoResult<()> {
+            file.archive.seek(file.tar_offset + file.pos)
         }
 
-        let sum = chunk.slice_to(148).iter().map(|i| *i as uint).sum() +
-                  chunk.slice_from(156).iter().map(|i| *i as uint).sum() +
-                  32 * 8;
-
-        let mut ret = File {
-            archive: self.archive,
-            header: unsafe { mem::transmute(chunk) },
-            pos: 0,
-            size: 0,
-            tar_offset: self.offset,
-            filename: Vec::new(),
-        };
-
-        // Make sure the checksum is ok
-        let cksum = try!(ret.header.cksum());
-        if sum != cksum { bail!() }
-
-        // Figure out where the next file is
-        let size = try!(ret.header.size());
-        ret.size = size;
-        let size = (size + 511) & !(512 - 1);
-        self.offset += size;
-
-        if ret.header.is_ustar() && ret.header.prefix[0] != 0 {
-            ret.filename.push_all(truncate(ret.header.prefix));
-            ret.filename.push(b'/');
+        // Parse the next file header
+        match try_iter!(self, self.archive.next_file(&mut self.offset, doseek)) {
+            None => { self.done = true; None }
+            Some(f) => Some(Ok(f)),
         }
-        ret.filename.push_all(truncate(ret.header.name));
+    }
+}
 
-        Some(Ok(ret))
+
+impl<'a, R: Reader> Iterator<IoResult<File<'a, R>>> for FilesMut<'a, R> {
+    fn next(&mut self) -> Option<IoResult<File<'a, R>>> {
+        // If we hit a previous error, or we reached the end, we're done here
+        if self.done { return None }
+
+        // Seek to the start of the next header in the archive
+        let delta = self.next - self.archive.pos.get();
+        try_iter!(self, self.archive.skip(delta));
+
+        // no-op because this reader can't seek
+        fn doseek<R>(_: &File<R>) -> IoResult<()> { Ok(()) }
+
+        // Parse the next file header
+        match try_iter!(self, self.archive.next_file(&mut self.next, doseek)) {
+            None => { self.done = true; None }
+            Some(f) => Some(Ok(f)),
+        }
     }
 }
 
@@ -293,7 +367,7 @@ impl Header {
     }
 }
 
-impl<'a, R: Seek + Reader> File<'a, R> {
+impl<'a, R> File<'a, R> {
     /// Returns the filename of this archive as a byte array
     pub fn filename_bytes<'a>(&'a self) -> &'a [u8] {
         self.filename.as_slice()
@@ -401,14 +475,13 @@ impl<'a, R: Reader> Reader for &'a Archive<R> {
     }
 }
 
-impl<'a, R: Reader + Seek> Reader for File<'a, R> {
+impl<'a, R: Reader> Reader for File<'a, R> {
     fn read(&mut self, into: &mut [u8]) -> IoResult<uint> {
         if self.size == self.pos {
             return Err(io::standard_error(io::EndOfFile))
         }
 
-        try!(self.archive.seek(self.tar_offset + self.pos));
-
+        try!((self.seek)(self));
         let amt = cmp::min((self.size - self.pos) as uint, into.len());
         let amt = try!(self.archive.read(into.slice_to_mut(amt)));
         self.pos += amt as u64;
@@ -416,7 +489,7 @@ impl<'a, R: Reader + Seek> Reader for File<'a, R> {
     }
 }
 
-impl<'a, R> Seek for File<'a, R> {
+impl<'a, R: Reader + Seek> Seek for File<'a, R> {
     fn tell(&self) -> IoResult<u64> { Ok(self.pos) }
     fn seek(&mut self, pos: i64, style: io::SeekStyle) -> IoResult<()> {
         let next = match style {
@@ -544,5 +617,23 @@ mod tests {
         assert_eq!(f.filename(), Some(filename.as_slice()));
         assert_eq!(f.size(), 4);
         assert_eq!(f.read_to_string().unwrap().as_slice(), "test");
+    }
+
+    #[test]
+    fn reading_files_mut() {
+        let rdr = BufReader::new(include_bin!("tests/reading_files.tar"));
+        let mut ar = Archive::new(rdr);
+        let mut files = ar.files_mut().unwrap();
+        let mut a = files.next().unwrap().unwrap();
+        assert_eq!(a.filename(), Some("a"));
+        assert_eq!(a.read_to_string().unwrap().as_slice(),
+                   "a\na\na\na\na\na\na\na\na\na\na\n");
+        assert_eq!(a.read_to_string().unwrap().as_slice(), "");
+        let mut b = files.next().unwrap().unwrap();
+
+        assert_eq!(b.filename(), Some("b"));
+        assert_eq!(b.read_to_string().unwrap().as_slice(),
+                   "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
+        assert!(files.next().is_none());
     }
 }
