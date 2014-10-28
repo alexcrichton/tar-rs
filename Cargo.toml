@@ -4,7 +4,11 @@ name = "tar"
 version = "0.0.1"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 homepage = "https://github.com/alexcrichton/tar-rs"
+repository = "https://github.com/alexcrichton/tar-rs"
 documentation = "http://alexcrichton.com/tar-rs"
+license = "MIT/APL2"
+keywords = ["tar", "tarfile", "encoding"]
+readme = "README.md"
 
 description = """
 A Rust implementation of a TAR file reader and writer. This library does not
