@@ -8,7 +8,7 @@
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
 #![feature(macro_rules)]
-#![deny(missing_doc)]
+#![deny(missing_docs)]
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
@@ -75,7 +75,7 @@ pub struct File<'a, R: 'a> {
 
 /// Representation of the header of a file in an archive
 #[repr(C)]
-#[allow(missing_doc)]
+#[allow(missing_docs)]
 pub struct Header {
     pub name: [u8, ..100],
     pub mode: [u8, ..8],
