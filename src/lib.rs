@@ -153,7 +153,10 @@ impl<R: Reader> Archive<R> {
     pub fn unpack(&mut self, into: &Path) -> IoResult<()> {
         for file in try!(self.files_mut()) {
             let mut file = try!(file);
-            let dst = into.join(file.filename_bytes());
+            let bytes = file.filename_bytes().iter().map(|&b| {
+                if b == b'\\' {b'/'} else {b}
+            }).collect::<Vec<_>>();
+            let dst = into.join(bytes);
             try!(fs::mkdir_recursive(&dst.dir_path(), io::USER_DIR));
             {
                 let mut dst = try!(io::File::create(&dst));
@@ -245,7 +248,7 @@ impl<W: Writer> Archive<W> {
         header.ustar_version = [b'0', b'0'];
 
         // Prepare the filename
-        let cstr = path.to_c_str();
+        let cstr = path.replace(r"\", "/").to_c_str();
         let path = cstr.as_bytes();
         let (namelen, prefixlen) = (header.name.len(), header.prefix.len());
         if path.len() < namelen {
