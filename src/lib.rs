@@ -169,10 +169,10 @@ impl<R: Reader> Archive<R> {
 
     fn skip(&self, mut amt: u64) -> IoResult<()> {
         let mut buf = [0u8, ..4096 * 8];
+        let mut me = self;
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
-            let mut me = self;
-            try!(me.read(buf.slice_to_mut(n as uint)));
+            try!(Reader::read(&mut me, buf.slice_to_mut(n as uint)));
             amt -= n;
         }
         Ok(())
@@ -187,7 +187,7 @@ impl<R: Reader> Archive<R> {
         let mut cnt = 0i;
         let mut me = self;
         loop {
-            if try!(me.read(chunk)) != 512 {
+            if try!(Reader::read(&mut me, chunk)) != 512 {
                 return Err(bad_archive())
             }
             *offset += 512;
@@ -500,7 +500,7 @@ impl<'a, R: Reader> Reader for File<'a, R> {
 
         try!((self.seek)(self));
         let amt = cmp::min((self.size - self.pos) as uint, into.len());
-        let amt = try!(self.archive.read(into.slice_to_mut(amt)));
+        let amt = try!(Reader::read(&mut self.archive, into.slice_to_mut(amt)));
         self.pos += amt as u64;
         Ok(amt)
     }
