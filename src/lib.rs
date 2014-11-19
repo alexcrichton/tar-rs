@@ -187,7 +187,7 @@ impl<R: Reader> Archive<R> {
         let mut cnt = 0i;
         let mut me = self;
         loop {
-            if try!(Reader::read(&mut me, chunk)) != 512 {
+            if try!(Reader::read(&mut me, &mut chunk)) != 512 {
                 return Err(bad_archive())
             }
             *offset += 512;
@@ -221,10 +221,10 @@ impl<R: Reader> Archive<R> {
         *offset += size;
 
         if ret.header.is_ustar() && ret.header.prefix[0] != 0 {
-            ret.filename.push_all(truncate(ret.header.prefix));
+            ret.filename.push_all(truncate(&ret.header.prefix));
             ret.filename.push(b'/');
         }
-        ret.filename.push_all(truncate(ret.header.name));
+        ret.filename.push_all(truncate(&ret.header.name));
 
         return Ok(Some(ret));
     }
@@ -252,7 +252,7 @@ impl<W: Writer> Archive<W> {
         let path = cstr.as_bytes();
         let (namelen, prefixlen) = (header.name.len(), header.prefix.len());
         if path.len() < namelen {
-            bytes::copy_memory(header.name, path);
+            bytes::copy_memory(&mut header.name, path);
         } else if path.len() < namelen + prefixlen {
             let prefix = path.slice_to(cmp::min(path.len(), prefixlen));
             let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
@@ -263,8 +263,8 @@ impl<W: Writer> Archive<W> {
                     detail: None,
                 })
             };
-            bytes::copy_memory(header.name, path.slice_from(pos + 1));
-            bytes::copy_memory(header.prefix, path.slice_to(pos));
+            bytes::copy_memory(&mut header.name, path.slice_from(pos + 1));
+            bytes::copy_memory(&mut header.prefix, path.slice_to(pos));
         } else {
             return Err(IoError {
                 kind: io::OtherIoError,
@@ -274,13 +274,13 @@ impl<W: Writer> Archive<W> {
         }
 
         // Prepare the metadata fields.
-        octal(header.mode, stat.perm.bits()); // TODO: is this right?
-        octal(header.mtime, stat.modified / 1000);
-        octal(header.owner_id, stat.unstable.uid);
-        octal(header.group_id, stat.unstable.gid);
-        octal(header.size, stat.size);
-        octal(header.dev_minor, 0i);
-        octal(header.dev_major, 0i);
+        octal(&mut header.mode, stat.perm.bits()); // TODO: is this right?
+        octal(&mut header.mtime, stat.modified / 1000);
+        octal(&mut header.owner_id, stat.unstable.uid);
+        octal(&mut header.group_id, stat.unstable.gid);
+        octal(&mut header.size, stat.size);
+        octal(&mut header.dev_minor, 0i);
+        octal(&mut header.dev_major, 0i);
 
         header.link[0] = match stat.kind {
             io::TypeFile => b'0',
@@ -298,7 +298,7 @@ impl<W: Writer> Archive<W> {
                 bytes.slice_from(156).iter().map(|i| *i as uint).sum() +
                 32 * header.cksum.len()
         };
-        octal(header.cksum, cksum);
+        octal(&mut header.cksum, cksum);
 
         // Write out the header, the entire file, then pad with zeroes.
         let mut obj = self.obj.borrow_mut();
@@ -328,7 +328,7 @@ impl<W: Writer> Archive<W> {
     /// be invalid if this is not called.
     pub fn finish(&self) -> IoResult<()> {
         let b = [0, ..1024];
-        self.obj.borrow_mut().write(b)
+        self.obj.borrow_mut().write(&b)
     }
 }
 
@@ -374,8 +374,8 @@ impl<'a, R: Reader> Iterator<IoResult<File<'a, R>>> for FilesMut<'a, R> {
 }
 
 impl Header {
-    fn size(&self) -> IoResult<u64> { octal(self.size) }
-    fn cksum(&self) -> IoResult<uint> { octal(self.cksum) }
+    fn size(&self) -> IoResult<u64> { octal(&self.size) }
+    fn cksum(&self) -> IoResult<uint> { octal(&self.cksum) }
     fn is_ustar(&self) -> bool {
         self.ustar.slice_to(5) == b"ustar"
     }
@@ -398,14 +398,14 @@ impl<'a, R> File<'a, R> {
     }
 
     /// Returns the value of the owner's user ID field
-    pub fn uid(&self) -> IoResult<uint> { octal(self.header.owner_id) }
+    pub fn uid(&self) -> IoResult<uint> { octal(&self.header.owner_id) }
     /// Returns the value of the group's user ID field
-    pub fn gid(&self) -> IoResult<uint> { octal(self.header.group_id) }
+    pub fn gid(&self) -> IoResult<uint> { octal(&self.header.group_id) }
     /// Returns the last modification time in Unix time format
-    pub fn mtime(&self) -> IoResult<uint> { octal(self.header.mtime) }
+    pub fn mtime(&self) -> IoResult<uint> { octal(&self.header.mtime) }
     /// Returns the mode bits for this file
     pub fn mode(&self) -> IoResult<io::FilePermission> {
-        octal(self.header.mode).map(io::FilePermission::from_bits_truncate)
+        octal(&self.header.mode).map(io::FilePermission::from_bits_truncate)
     }
 
     /// Classify the type of file that this entry represents
@@ -427,7 +427,7 @@ impl<'a, R> File<'a, R> {
     /// Returns the username of the owner of this file, if present
     pub fn username_bytes<'a>(&'a self) -> Option<&'a [u8]> {
         if self.header.is_ustar() {
-            Some(truncate(self.header.owner_name))
+            Some(truncate(&self.header.owner_name))
         } else {
             None
         }
@@ -435,7 +435,7 @@ impl<'a, R> File<'a, R> {
     /// Returns the group name of the owner of this file, if present
     pub fn groupname_bytes<'a>(&'a self) -> Option<&'a [u8]> {
         if self.header.is_ustar() {
-            Some(truncate(self.header.group_name))
+            Some(truncate(&self.header.group_name))
         } else {
             None
         }
@@ -458,7 +458,7 @@ impl<'a, R> File<'a, R> {
     /// represents the attempt to decode the field in the header.
     pub fn device_major(&self) -> Option<IoResult<uint>> {
         if self.header.is_ustar() {
-            Some(octal(self.header.dev_major))
+            Some(octal(&self.header.dev_major))
         } else {
             None
         }
@@ -470,7 +470,7 @@ impl<'a, R> File<'a, R> {
     /// represents the attempt to decode the field in the header.
     pub fn device_minor(&self) -> Option<IoResult<uint>> {
         if self.header.is_ustar() {
-            Some(octal(self.header.dev_minor))
+            Some(octal(&self.header.dev_minor))
         } else {
             None
         }
