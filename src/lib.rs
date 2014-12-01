@@ -283,12 +283,12 @@ impl<W: Writer> Archive<W> {
         octal(&mut header.dev_major, 0i);
 
         header.link[0] = match stat.kind {
-            io::TypeFile => b'0',
-            io::TypeDirectory => b'5',
-            io::TypeNamedPipe => b'6',
-            io::TypeBlockSpecial => b'4',
-            io::TypeSymlink => b'2',
-            io::TypeUnknown => b' ',
+            io::FileType::RegularFile => b'0',
+            io::FileType::Directory => b'5',
+            io::FileType::NamedPipe => b'6',
+            io::FileType::BlockSpecial => b'4',
+            io::FileType::Symlink => b'2',
+            io::FileType::Unknown => b' ',
         };
 
         // Final step, calculate the checksum
@@ -411,16 +411,16 @@ impl<'a, R> File<'a, R> {
     /// Classify the type of file that this entry represents
     pub fn classify(&self) -> io::FileType {
         match (self.header.is_ustar(), self.header.link[0]) {
-            (_, b'0') => io::TypeFile,
-            (_, b'1') => io::TypeUnknown, // need a hard link enum?
-            (_, b'2') => io::TypeSymlink,
-            (false, _) => io::TypeUnknown, // not technically valid...
+            (_, b'0') => io::FileType::RegularFile,
+            (_, b'1') => io::FileType::Unknown, // need a hard link enum?
+            (_, b'2') => io::FileType::Symlink,
+            (false, _) => io::FileType::Unknown, // not technically valid...
 
-            (_, b'3') => io::TypeUnknown, // character special...
-            (_, b'4') => io::TypeBlockSpecial,
-            (_, b'5') => io::TypeDirectory,
-            (_, b'6') => io::TypeNamedPipe,
-            (_, _) => io::TypeUnknown, // not technically valid...
+            (_, b'3') => io::FileType::Unknown, // character special...
+            (_, b'4') => io::FileType::BlockSpecial,
+            (_, b'5') => io::FileType::Directory,
+            (_, b'6') => io::FileType::NamedPipe,
+            (_, _) => io::FileType::Unknown, // not technically valid...
         }
     }
 
