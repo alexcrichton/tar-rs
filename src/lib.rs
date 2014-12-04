@@ -545,7 +545,7 @@ fn octal<T: num::FromStrRadix>(slice: &[u8]) -> IoResult<T> {
 }
 
 fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
-    match slice.iter().position(|i| *i == 0) {
+    match slice.iter().position(|i| *i == 0 || *i == b' ') {
         Some(i) => slice.slice_to(i),
         None => slice,
     }
