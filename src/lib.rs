@@ -659,4 +659,22 @@ mod tests {
                    "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
         assert!(files.next().is_none());
     }
+
+    #[test]
+    fn extracting_directories() {
+        let td = TempDir::new("tar-rs").unwrap();
+        let rdr = BufReader::new(include_bin!("tests/directory.tar"));
+        let mut ar = Archive::new(rdr);
+        ar.unpack(td.path()).unwrap();
+    }
+
+    #[test]
+    fn octal_spaces()
+    {
+        let rdr = BufReader::new(include_bin!("tests/spaces.tar"));
+        let ar = Archive::new(rdr);
+        for file in ar.files().unwrap() {
+            file.unwrap();
+        }
+    }
 }
