@@ -544,14 +544,14 @@ fn octal<T: num::FromStrRadix>(slice: &[u8]) -> IoResult<T> {
         Some(n) => n,
         None => return Err(bad_archive()),
     };
-    match num::from_str_radix(num, 8) {
+    match num::from_str_radix(num.trim(), 8) {
         Some(n) => Ok(n),
         None => Err(bad_archive())
     }
 }
 
 fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
-    match slice.iter().position(|i| *i == 0 || *i == b' ') {
+    match slice.iter().position(|i| *i == 0) {
         Some(i) => slice.slice_to(i),
         None => slice,
     }
