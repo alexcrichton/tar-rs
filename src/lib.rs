@@ -156,13 +156,19 @@ impl<R: Reader> Archive<R> {
             let bytes = file.filename_bytes().iter().map(|&b| {
                 if b == b'\\' {b'/'} else {b}
             }).collect::<Vec<_>>();
+            let is_directory = bytes[bytes.len() - 1] == b'/';
             let dst = into.join(bytes);
-            try!(fs::mkdir_recursive(&dst.dir_path(), io::USER_DIR));
-            {
-                let mut dst = try!(io::File::create(&dst));
-                try!(io::util::copy(&mut file, &mut dst));
+            if is_directory {
+                try!(fs::mkdir_recursive(&dst, io::USER_DIR));
             }
-            try!(fs::chmod(&dst, try!(file.mode()) & io::USER_RWX));
+            else {
+                try!(fs::mkdir_recursive(&dst.dir_path(), io::USER_DIR));
+                {
+                    let mut dst = try!(io::File::create(&dst));
+                    try!(io::util::copy(&mut file, &mut dst));
+                }
+                try!(fs::chmod(&dst, try!(file.mode()) & io::USER_RWX));
+            }
         }
         Ok(())
     }
@@ -538,7 +544,7 @@ fn octal<T: num::FromStrRadix>(slice: &[u8]) -> IoResult<T> {
         Some(n) => n,
         None => return Err(bad_archive()),
     };
-    match num::from_str_radix(num, 8) {
+    match num::from_str_radix(num.trim(), 8) {
         Some(n) => Ok(n),
         None => Err(bad_archive())
     }
@@ -652,5 +658,37 @@ mod tests {
         assert_eq!(b.read_to_string().unwrap().as_slice(),
                    "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
         assert!(files.next().is_none());
+    }
+
+    #[test]
+    fn extracting_directories() {
+        use std::io::fs::PathExtensions;
+
+        let td = TempDir::new("tar-rs").unwrap();
+        let rdr = BufReader::new(include_bin!("tests/directory.tar"));
+        let mut ar = Archive::new(rdr);
+        ar.unpack(td.path()).unwrap();
+
+        let dir_a = td.path().join("a");
+        let dir_b = td.path().join("a/b");
+        let file_c = td.path().join("a/c");
+        assert!(dir_a.is_dir());
+        assert!(dir_b.is_dir());
+        assert!(file_c.is_file());
+    }
+
+    #[test]
+    fn octal_spaces()
+    {
+        let rdr = BufReader::new(include_bin!("tests/spaces.tar"));
+        let ar = Archive::new(rdr);
+
+        let file = ar.files().unwrap().next().unwrap().unwrap();
+        assert_eq!(file.mode().unwrap(), io::USER_RWX | io::GROUP_RWX | io::OTHER_RWX);
+        assert_eq!(file.uid().unwrap(), 0);
+        assert_eq!(file.gid().unwrap(), 0);
+        assert_eq!(file.size, 2);
+        assert_eq!(file.mtime().unwrap(), 0o12440016664);
+        assert_eq!(file.header.cksum().unwrap(), 0o4253);
     }
 }
