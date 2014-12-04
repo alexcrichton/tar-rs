@@ -156,13 +156,19 @@ impl<R: Reader> Archive<R> {
             let bytes = file.filename_bytes().iter().map(|&b| {
                 if b == b'\\' {b'/'} else {b}
             }).collect::<Vec<_>>();
+            let is_directory = bytes[bytes.len() - 1] == b'/';
             let dst = into.join(bytes);
-            try!(fs::mkdir_recursive(&dst.dir_path(), io::USER_DIR));
-            {
-                let mut dst = try!(io::File::create(&dst));
-                try!(io::util::copy(&mut file, &mut dst));
+            if is_directory {
+                try!(fs::mkdir_recursive(&dst, io::USER_DIR));
             }
-            try!(fs::chmod(&dst, try!(file.mode()) & io::USER_RWX));
+            else {
+                try!(fs::mkdir_recursive(&dst.dir_path(), io::USER_DIR));
+                {
+                    let mut dst = try!(io::File::create(&dst));
+                    try!(io::util::copy(&mut file, &mut dst));
+                }
+                try!(fs::chmod(&dst, try!(file.mode()) & io::USER_RWX));
+            }
         }
         Ok(())
     }
