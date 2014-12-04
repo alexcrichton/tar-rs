@@ -662,10 +662,19 @@ mod tests {
 
     #[test]
     fn extracting_directories() {
+        use std::io::fs::PathExtensions;
+
         let td = TempDir::new("tar-rs").unwrap();
         let rdr = BufReader::new(include_bin!("tests/directory.tar"));
         let mut ar = Archive::new(rdr);
         ar.unpack(td.path()).unwrap();
+
+        let dir_a = td.path().join("a");
+        let dir_b = td.path().join("a/b");
+        let file_c = td.path().join("a/c");
+        assert!(dir_a.is_dir());
+        assert!(dir_b.is_dir());
+        assert!(file_c.is_file());
     }
 
     #[test]
@@ -673,8 +682,13 @@ mod tests {
     {
         let rdr = BufReader::new(include_bin!("tests/spaces.tar"));
         let ar = Archive::new(rdr);
-        for file in ar.files().unwrap() {
-            file.unwrap();
-        }
+
+        let file = ar.files().unwrap().next().unwrap().unwrap();
+        assert_eq!(file.mode().unwrap(), io::USER_RWX | io::GROUP_RWX | io::OTHER_RWX);
+        assert_eq!(file.uid().unwrap(), 0);
+        assert_eq!(file.gid().unwrap(), 0);
+        assert_eq!(file.size, 2);
+        assert_eq!(file.mtime().unwrap(), 0o12440016664);
+        assert_eq!(file.header.cksum().unwrap(), 0o4253);
     }
 }
