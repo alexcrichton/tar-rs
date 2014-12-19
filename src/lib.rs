@@ -9,6 +9,8 @@
 
 #![feature(macro_rules)]
 #![deny(missing_docs)]
+#![cfg_attr(test, deny(warnings))]
+#![allow(missing_copy_implementations)]
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
@@ -122,7 +124,7 @@ impl<R: Seek + Reader> Archive<R> {
     /// Additionally, the iterator yields `IoResult<File>` instead of `File` to
     /// handle invalid tar archives as well as any intermittent I/O error that
     /// occurs.
-    pub fn files<'a>(&'a self) -> IoResult<Files<'a, R>> {
+    pub fn files(&self) -> IoResult<Files<R>> {
         try!(self.seek(0));
         Ok(Files { archive: self, done: false, offset: 0 })
     }
@@ -145,7 +147,7 @@ impl<R: Reader> Archive<R> {
     /// Note that care must be taken to consider each file within an archive in
     /// sequence. If files are processed out of sequence (from what the iterator
     /// returns), then the contents read for each file may be corrupted.
-    pub fn files_mut<'a>(&'a mut self) -> IoResult<FilesMut<'a, R>> {
+    pub fn files_mut(&mut self) -> IoResult<FilesMut<R>> {
         Ok(FilesMut { archive: self, done: false, next: 0 })
     }
 
@@ -385,21 +387,21 @@ impl Header {
     fn is_ustar(&self) -> bool {
         self.ustar.slice_to(5) == b"ustar"
     }
-    fn as_bytes<'a>(&'a self) -> &'a [u8, ..512] {
+    fn as_bytes(&self) -> &[u8, ..512] {
         unsafe { &*(self as *const _ as *const [u8, ..512]) }
     }
 }
 
 impl<'a, R> File<'a, R> {
     /// Returns the filename of this archive as a byte array
-    pub fn filename_bytes<'a>(&'a self) -> &'a [u8] {
+    pub fn filename_bytes(&self) -> &[u8] {
         self.filename.as_slice()
     }
 
     /// Returns the filename of this archive as a utf8 string.
     ///
     /// If `None` is returned, then the filename is not valid utf8
-    pub fn filename<'a>(&'a self) -> Option<&'a str> {
+    pub fn filename(&self) -> Option<&str> {
         str::from_utf8(self.filename_bytes())
     }
 
@@ -431,7 +433,7 @@ impl<'a, R> File<'a, R> {
     }
 
     /// Returns the username of the owner of this file, if present
-    pub fn username_bytes<'a>(&'a self) -> Option<&'a [u8]> {
+    pub fn username_bytes(&self) -> Option<&[u8]> {
         if self.header.is_ustar() {
             Some(truncate(&self.header.owner_name))
         } else {
@@ -439,7 +441,7 @@ impl<'a, R> File<'a, R> {
         }
     }
     /// Returns the group name of the owner of this file, if present
-    pub fn groupname_bytes<'a>(&'a self) -> Option<&'a [u8]> {
+    pub fn groupname_bytes(&self) -> Option<&[u8]> {
         if self.header.is_ustar() {
             Some(truncate(&self.header.group_name))
         } else {
@@ -448,12 +450,12 @@ impl<'a, R> File<'a, R> {
     }
     /// Return the username of the owner of this file, if present and if valid
     /// utf8
-    pub fn username<'a>(&'a self) -> Option<&'a str> {
+    pub fn username(&self) -> Option<&str> {
         self.username_bytes().and_then(str::from_utf8)
     }
     /// Return the group name of the owner of this file, if present and if valid
     /// utf8
-    pub fn groupname<'a>(&'a self) -> Option<&'a str> {
+    pub fn groupname(&self) -> Option<&str> {
         self.groupname_bytes().and_then(str::from_utf8)
     }
 
@@ -483,7 +485,7 @@ impl<'a, R> File<'a, R> {
     }
 
     /// Returns raw access to the header of this file in the archive.
-    pub fn raw_header<'a>(&'a self) -> &'a Header { &self.header }
+    pub fn raw_header(&self) -> &Header { &self.header }
 
     /// Returns the size of the file in the archive.
     pub fn size(&self) -> u64 { self.size }
