@@ -402,7 +402,7 @@ impl<'a, R> File<'a, R> {
     ///
     /// If `None` is returned, then the filename is not valid utf8
     pub fn filename(&self) -> Option<&str> {
-        str::from_utf8(self.filename_bytes())
+        str::from_utf8(self.filename_bytes()).ok()
     }
 
     /// Returns the value of the owner's user ID field
@@ -451,12 +451,12 @@ impl<'a, R> File<'a, R> {
     /// Return the username of the owner of this file, if present and if valid
     /// utf8
     pub fn username(&self) -> Option<&str> {
-        self.username_bytes().and_then(str::from_utf8)
+        self.username_bytes().and_then(|s| str::from_utf8(s).ok())
     }
     /// Return the group name of the owner of this file, if present and if valid
     /// utf8
     pub fn groupname(&self) -> Option<&str> {
-        self.groupname_bytes().and_then(str::from_utf8)
+        self.groupname_bytes().and_then(|s| str::from_utf8(s).ok())
     }
 
     /// Returns the device major number, if present.
@@ -543,8 +543,8 @@ fn bad_archive() -> IoError {
 
 fn octal<T: num::FromStrRadix>(slice: &[u8]) -> IoResult<T> {
     let num = match str::from_utf8(truncate(slice)) {
-        Some(n) => n,
-        None => return Err(bad_archive()),
+        Ok(n) => n,
+        Err(..) => return Err(bad_archive()),
     };
     match num::from_str_radix(num.trim(), 8) {
         Some(n) => Ok(n),
@@ -561,6 +561,7 @@ fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
 
 #[cfg(test)]
 mod tests {
+    use std::iter::repeat;
     use std::io;
     use std::io::{BufReader, MemWriter, MemReader, File, TempDir};
     use super::Archive;
@@ -625,11 +626,11 @@ mod tests {
         let path = td.path().join("test");
         File::create(&path).write(b"test").unwrap();
 
-        let filename = "abcd/".repeat(50);
+        let filename = repeat("abcd/").take(50).collect::<String>();
         ar.append(filename.as_slice(), &mut File::open(&path).unwrap()).unwrap();
         ar.finish().unwrap();
 
-        let too_long = "abcd".repeat(200);
+        let too_long = repeat("abcd").take(200).collect::<String>();
         ar.append(too_long.as_slice(), &mut File::open(&path).unwrap())
           .err().unwrap();
 
