@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn simple() {
-        let rdr = BufReader::new(include_bin!("tests/simple.tar"));
+        let rdr = BufReader::new(include_bytes!("tests/simple.tar"));
         let ar = Archive::new(rdr);
         for file in ar.files().unwrap() {
             file.unwrap();
@@ -578,7 +578,7 @@ mod tests {
 
     #[test]
     fn reading_files() {
-        let rdr = BufReader::new(include_bin!("tests/reading_files.tar"));
+        let rdr = BufReader::new(include_bytes!("tests/reading_files.tar"));
         let ar = Archive::new(rdr);
         let mut files = ar.files().unwrap();
         let mut a = files.next().unwrap().unwrap();
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn reading_files_mut() {
-        let rdr = BufReader::new(include_bin!("tests/reading_files.tar"));
+        let rdr = BufReader::new(include_bytes!("tests/reading_files.tar"));
         let mut ar = Archive::new(rdr);
         let mut files = ar.files_mut().unwrap();
         let mut a = files.next().unwrap().unwrap();
@@ -669,7 +669,7 @@ mod tests {
         use std::io::fs::PathExtensions;
 
         let td = TempDir::new("tar-rs").unwrap();
-        let rdr = BufReader::new(include_bin!("tests/directory.tar"));
+        let rdr = BufReader::new(include_bytes!("tests/directory.tar"));
         let mut ar = Archive::new(rdr);
         ar.unpack(td.path()).unwrap();
 
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn octal_spaces()
     {
-        let rdr = BufReader::new(include_bin!("tests/spaces.tar"));
+        let rdr = BufReader::new(include_bytes!("tests/spaces.tar"));
         let ar = Archive::new(rdr);
 
         let file = ar.files().unwrap().next().unwrap().unwrap();
