@@ -14,6 +14,7 @@
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
+use std::c_str::ToCStr;
 use std::io::{self, IoResult, IoError, fs};
 use std::iter::{AdditiveIterator, repeat};
 use std::fmt;
