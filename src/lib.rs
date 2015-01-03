@@ -14,7 +14,8 @@
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
-use std::io::{mod, IoResult, IoError, fs};
+use std::c_str::ToCStr;
+use std::io::{self, IoResult, IoError, fs};
 use std::iter::{AdditiveIterator, repeat};
 use std::fmt;
 use std::mem;
@@ -79,25 +80,25 @@ pub struct File<'a, R: 'a> {
 #[repr(C)]
 #[allow(missing_docs)]
 pub struct Header {
-    pub name: [u8, ..100],
-    pub mode: [u8, ..8],
-    pub owner_id: [u8, ..8],
-    pub group_id: [u8, ..8],
-    pub size: [u8, ..12],
-    pub mtime: [u8, ..12],
-    pub cksum: [u8, ..8],
-    pub link: [u8, ..1],
-    pub linkname: [u8, ..100],
+    pub name: [u8; 100],
+    pub mode: [u8; 8],
+    pub owner_id: [u8; 8],
+    pub group_id: [u8; 8],
+    pub size: [u8; 12],
+    pub mtime: [u8; 12],
+    pub cksum: [u8; 8],
+    pub link: [u8; 1],
+    pub linkname: [u8; 100],
 
     // UStar format
-    pub ustar: [u8, ..6],
-    pub ustar_version: [u8, ..2],
-    pub owner_name: [u8, ..32],
-    pub group_name: [u8, ..32],
-    pub dev_major: [u8, ..8],
-    pub dev_minor: [u8, ..8],
-    pub prefix: [u8, ..155],
-    _rest: [u8, ..12],
+    pub ustar: [u8; 6],
+    pub ustar_version: [u8; 2],
+    pub owner_name: [u8; 32],
+    pub group_name: [u8; 32],
+    pub dev_major: [u8; 8],
+    pub dev_minor: [u8; 8],
+    pub prefix: [u8; 155],
+    _rest: [u8; 12],
 }
 
 impl<O> Archive<O> {
@@ -176,7 +177,7 @@ impl<R: Reader> Archive<R> {
     }
 
     fn skip(&self, mut amt: u64) -> IoResult<()> {
-        let mut buf = [0u8, ..4096 * 8];
+        let mut buf = [0u8; 4096 * 8];
         let mut me = self;
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
@@ -191,7 +192,7 @@ impl<R: Reader> Archive<R> {
     fn next_file(&self, offset: &mut u64, seek: fn(&File<R>) -> IoResult<()>)
                  -> IoResult<Option<File<R>>> {
         // If we have 2 or more sections of 0s, then we're done!
-        let mut chunk = [0, ..512];
+        let mut chunk = [0; 512];
         let mut cnt = 0i;
         let mut me = self;
         loop {
@@ -312,7 +313,7 @@ impl<W: Writer> Archive<W> {
         let mut obj = self.obj.borrow_mut();
         try!(obj.write(header.as_bytes().as_slice()));
         try!(io::util::copy(file, &mut *obj));
-        let buf = [0, ..512];
+        let buf = [0; 512];
         let remaining = 512 - (stat.size % 512);
         if remaining < 512 {
             try!(obj.write(buf.slice_to(remaining as uint)));
@@ -335,7 +336,7 @@ impl<W: Writer> Archive<W> {
     /// This function is required to be called to complete the archive, it will
     /// be invalid if this is not called.
     pub fn finish(&self) -> IoResult<()> {
-        let b = [0, ..1024];
+        let b = [0; 1024];
         self.obj.borrow_mut().write(&b)
     }
 }
@@ -387,8 +388,8 @@ impl Header {
     fn is_ustar(&self) -> bool {
         self.ustar.slice_to(5) == b"ustar"
     }
-    fn as_bytes(&self) -> &[u8, ..512] {
-        unsafe { &*(self as *const _ as *const [u8, ..512]) }
+    fn as_bytes(&self) -> &[u8; 512] {
+        unsafe { &*(self as *const _ as *const [u8; 512]) }
     }
 }
 
