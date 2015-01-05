@@ -7,7 +7,7 @@
 //!
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
-#![feature(macro_rules)]
+#![feature(macro_rules, associated_types)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 #![allow(missing_copy_implementations)]
@@ -341,7 +341,9 @@ impl<W: Writer> Archive<W> {
     }
 }
 
-impl<'a, R: Seek + Reader> Iterator<IoResult<File<'a, R>>> for Files<'a, R> {
+impl<'a, R: Seek + Reader> Iterator for Files<'a, R> {
+    type Item = IoResult<File<'a, R>>;
+    
     fn next(&mut self) -> Option<IoResult<File<'a, R>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
@@ -362,7 +364,9 @@ impl<'a, R: Seek + Reader> Iterator<IoResult<File<'a, R>>> for Files<'a, R> {
 }
 
 
-impl<'a, R: Reader> Iterator<IoResult<File<'a, R>>> for FilesMut<'a, R> {
+impl<'a, R: Reader> Iterator for FilesMut<'a, R> {
+    type Item = IoResult<File<'a, R>>;
+    
     fn next(&mut self) -> Option<IoResult<File<'a, R>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
