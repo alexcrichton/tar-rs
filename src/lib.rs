@@ -7,16 +7,15 @@
 //!
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
-#![feature(macro_rules, associated_types)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 #![allow(missing_copy_implementations)]
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
-use std::c_str::ToCStr;
 use std::io::{self, IoResult, IoError, fs};
 use std::iter::{AdditiveIterator, repeat};
+use std::ffi::CString;
 use std::fmt;
 use std::mem;
 use std::num;
@@ -257,7 +256,7 @@ impl<W: Writer> Archive<W> {
         header.ustar_version = [b'0', b'0'];
 
         // Prepare the filename
-        let cstr = path.replace(r"\", "/").to_c_str();
+        let cstr = CString::from_slice(path.replace(r"\", "/").as_bytes());
         let path = cstr.as_bytes();
         let (namelen, prefixlen) = (header.name.len(), header.prefix.len());
         if path.len() < namelen {
