@@ -9,7 +9,7 @@
 
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
-#![allow(missing_copy_implementations)]
+#![allow(missing_copy_implementations, unstable)]
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
@@ -180,7 +180,7 @@ impl<R: Reader> Archive<R> {
         let mut me = self;
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
-            try!(Reader::read(&mut me, buf.slice_to_mut(n as uint)));
+            try!(Reader::read(&mut me, buf.slice_to_mut(n as usize)));
             amt -= n;
         }
         Ok(())
@@ -192,7 +192,7 @@ impl<R: Reader> Archive<R> {
                  -> IoResult<Option<File<R>>> {
         // If we have 2 or more sections of 0s, then we're done!
         let mut chunk = [0; 512];
-        let mut cnt = 0i;
+        let mut cnt = 0;
         let mut me = self;
         loop {
             if try!(Reader::read(&mut me, &mut chunk)) != 512 {
@@ -204,8 +204,8 @@ impl<R: Reader> Archive<R> {
             if cnt > 1 { return Ok(None) }
         }
 
-        let sum = chunk.slice_to(148).iter().map(|i| *i as uint).sum() +
-                  chunk.slice_from(156).iter().map(|i| *i as uint).sum() +
+        let sum = chunk.slice_to(148).iter().map(|i| *i as u32).sum() +
+                  chunk.slice_from(156).iter().map(|i| *i as u32).sum() +
                   32 * 8;
 
         let mut ret = File {
@@ -287,8 +287,8 @@ impl<W: Writer> Archive<W> {
         octal(&mut header.owner_id, stat.unstable.uid);
         octal(&mut header.group_id, stat.unstable.gid);
         octal(&mut header.size, stat.size);
-        octal(&mut header.dev_minor, 0i);
-        octal(&mut header.dev_major, 0i);
+        octal(&mut header.dev_minor, 0);
+        octal(&mut header.dev_major, 0);
 
         header.link[0] = match stat.kind {
             io::FileType::RegularFile => b'0',
@@ -302,9 +302,9 @@ impl<W: Writer> Archive<W> {
         // Final step, calculate the checksum
         let cksum = {
             let bytes = header.as_bytes();
-            bytes.slice_to(148).iter().map(|i| *i as uint).sum() +
-                bytes.slice_from(156).iter().map(|i| *i as uint).sum() +
-                32 * header.cksum.len()
+            bytes.slice_to(148).iter().map(|i| *i as u32).sum() +
+                bytes.slice_from(156).iter().map(|i| *i as u32).sum() +
+                32 * (header.cksum.len() as u32)
         };
         octal(&mut header.cksum, cksum);
 
@@ -315,7 +315,7 @@ impl<W: Writer> Archive<W> {
         let buf = [0; 512];
         let remaining = 512 - (stat.size % 512);
         if remaining < 512 {
-            try!(obj.write(buf.slice_to(remaining as uint)));
+            try!(obj.write(buf.slice_to(remaining as usize)));
         }
 
         // And we're done!
@@ -342,7 +342,7 @@ impl<W: Writer> Archive<W> {
 
 impl<'a, R: Seek + Reader> Iterator for Files<'a, R> {
     type Item = IoResult<File<'a, R>>;
-    
+
     fn next(&mut self) -> Option<IoResult<File<'a, R>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
@@ -365,7 +365,7 @@ impl<'a, R: Seek + Reader> Iterator for Files<'a, R> {
 
 impl<'a, R: Reader> Iterator for FilesMut<'a, R> {
     type Item = IoResult<File<'a, R>>;
-    
+
     fn next(&mut self) -> Option<IoResult<File<'a, R>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
@@ -387,7 +387,7 @@ impl<'a, R: Reader> Iterator for FilesMut<'a, R> {
 
 impl Header {
     fn size(&self) -> IoResult<u64> { octal(&self.size) }
-    fn cksum(&self) -> IoResult<uint> { octal(&self.cksum) }
+    fn cksum(&self) -> IoResult<u32> { octal(&self.cksum) }
     fn is_ustar(&self) -> bool {
         self.ustar.slice_to(5) == b"ustar"
     }
@@ -410,11 +410,11 @@ impl<'a, R> File<'a, R> {
     }
 
     /// Returns the value of the owner's user ID field
-    pub fn uid(&self) -> IoResult<uint> { octal(&self.header.owner_id) }
+    pub fn uid(&self) -> IoResult<u32> { octal(&self.header.owner_id) }
     /// Returns the value of the group's user ID field
-    pub fn gid(&self) -> IoResult<uint> { octal(&self.header.group_id) }
+    pub fn gid(&self) -> IoResult<u32> { octal(&self.header.group_id) }
     /// Returns the last modification time in Unix time format
-    pub fn mtime(&self) -> IoResult<uint> { octal(&self.header.mtime) }
+    pub fn mtime(&self) -> IoResult<u64> { octal(&self.header.mtime) }
     /// Returns the mode bits for this file
     pub fn mode(&self) -> IoResult<io::FilePermission> {
         octal(&self.header.mode).map(io::FilePermission::from_bits_truncate)
@@ -468,7 +468,7 @@ impl<'a, R> File<'a, R> {
     /// This field is only present in UStar archives. A value of `None` means
     /// that this archive is not a UStar archive, while a value of `Some`
     /// represents the attempt to decode the field in the header.
-    pub fn device_major(&self) -> Option<IoResult<uint>> {
+    pub fn device_major(&self) -> Option<IoResult<u32>> {
         if self.header.is_ustar() {
             Some(octal(&self.header.dev_major))
         } else {
@@ -480,7 +480,7 @@ impl<'a, R> File<'a, R> {
     /// This field is only present in UStar archives. A value of `None` means
     /// that this archive is not a UStar archive, while a value of `Some`
     /// represents the attempt to decode the field in the header.
-    pub fn device_minor(&self) -> Option<IoResult<uint>> {
+    pub fn device_minor(&self) -> Option<IoResult<u32>> {
         if self.header.is_ustar() {
             Some(octal(&self.header.dev_minor))
         } else {
@@ -496,7 +496,7 @@ impl<'a, R> File<'a, R> {
 }
 
 impl<'a, R: Reader> Reader for &'a Archive<R> {
-    fn read(&mut self, into: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, into: &mut [u8]) -> IoResult<usize> {
         self.obj.borrow_mut().read(into).map(|i| {
             self.pos.set(self.pos.get() + i as u64);
             i
@@ -505,13 +505,13 @@ impl<'a, R: Reader> Reader for &'a Archive<R> {
 }
 
 impl<'a, R: Reader> Reader for File<'a, R> {
-    fn read(&mut self, into: &mut [u8]) -> IoResult<uint> {
+    fn read(&mut self, into: &mut [u8]) -> IoResult<usize> {
         if self.size == self.pos {
             return Err(io::standard_error(io::EndOfFile))
         }
 
         try!((self.seek)(self));
-        let amt = cmp::min((self.size - self.pos) as uint, into.len());
+        let amt = cmp::min((self.size - self.pos) as usize, into.len());
         let amt = try!(Reader::read(&mut self.archive, into.slice_to_mut(amt)));
         self.pos += amt as u64;
         Ok(amt)
