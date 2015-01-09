@@ -15,7 +15,7 @@ git = "https://github.com/alexcrichton/tar-rs"
 ## Reading an archive
 
 ```rust,no_run
-# #![allow(unused_must_use)]
+# #![allow(unused_must_use, unstable)]
 extern crate tar;
 
 use tar::Archive;
@@ -30,11 +30,11 @@ fn main() {
         let mut file = file.unwrap();
 
         // Inspect metadata about the file
-        println!("{}", file.filename());
+        println!("{:?}", file.filename());
         println!("{}", file.size());
 
         // files implement the Reader trait
-        println!("{}", file.read_to_string());
+        println!("{}", file.read_to_string().unwrap());
 
         // files also implement the Seek trait
         file.seek(0, SeekSet);
@@ -46,7 +46,7 @@ fn main() {
 ## Writing an archive
 
 ```rust,no_run
-# #![allow(unused_must_use)]
+# #![allow(unused_must_use, unstable)]
 extern crate tar;
 
 use tar::Archive;
