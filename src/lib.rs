@@ -180,7 +180,7 @@ impl<R: Reader> Archive<R> {
         let mut me = self;
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
-            try!(Reader::read(&mut me, buf.slice_to_mut(n as usize)));
+            try!(Reader::read(&mut me, &mut buf[..n as usize]));
             amt -= n;
         }
         Ok(())
@@ -204,8 +204,8 @@ impl<R: Reader> Archive<R> {
             if cnt > 1 { return Ok(None) }
         }
 
-        let sum = chunk.slice_to(148).iter().map(|i| *i as u32).sum() +
-                  chunk.slice_from(156).iter().map(|i| *i as u32).sum() +
+        let sum = chunk[..148].iter().map(|i| *i as u32).sum() +
+                  chunk[156..].iter().map(|i| *i as u32).sum() +
                   32 * 8;
 
         let mut ret = File {
@@ -262,7 +262,7 @@ impl<W: Writer> Archive<W> {
         if path.len() < namelen {
             bytes::copy_memory(&mut header.name, path);
         } else if path.len() < namelen + prefixlen {
-            let prefix = path.slice_to(cmp::min(path.len(), prefixlen));
+            let prefix = &path[..cmp::min(path.len(), prefixlen)];
             let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
                 Some(i) => i,
                 None => return Err(IoError {
@@ -271,8 +271,8 @@ impl<W: Writer> Archive<W> {
                     detail: None,
                 })
             };
-            bytes::copy_memory(&mut header.name, path.slice_from(pos + 1));
-            bytes::copy_memory(&mut header.prefix, path.slice_to(pos));
+            bytes::copy_memory(&mut header.name, &path[pos + 1..]);
+            bytes::copy_memory(&mut header.prefix, &path[..pos]);
         } else {
             return Err(IoError {
                 kind: io::OtherIoError,
@@ -302,8 +302,8 @@ impl<W: Writer> Archive<W> {
         // Final step, calculate the checksum
         let cksum = {
             let bytes = header.as_bytes();
-            bytes.slice_to(148).iter().map(|i| *i as u32).sum() +
-                bytes.slice_from(156).iter().map(|i| *i as u32).sum() +
+            bytes[..148].iter().map(|i| *i as u32).sum() +
+                bytes[156..].iter().map(|i| *i as u32).sum() +
                 32 * (header.cksum.len() as u32)
         };
         octal(&mut header.cksum, cksum);
@@ -315,7 +315,7 @@ impl<W: Writer> Archive<W> {
         let buf = [0; 512];
         let remaining = 512 - (stat.size % 512);
         if remaining < 512 {
-            try!(obj.write(buf.slice_to(remaining as usize)));
+            try!(obj.write(&buf[..remaining as usize]));
         }
 
         // And we're done!
@@ -389,7 +389,7 @@ impl Header {
     fn size(&self) -> IoResult<u64> { octal(&self.size) }
     fn cksum(&self) -> IoResult<u32> { octal(&self.cksum) }
     fn is_ustar(&self) -> bool {
-        self.ustar.slice_to(5) == b"ustar"
+        &self.ustar[..5] == b"ustar"
     }
     fn as_bytes(&self) -> &[u8; 512] {
         unsafe { &*(self as *const _ as *const [u8; 512]) }
@@ -512,7 +512,7 @@ impl<'a, R: Reader> Reader for File<'a, R> {
 
         try!((self.seek)(self));
         let amt = cmp::min((self.size - self.pos) as usize, into.len());
-        let amt = try!(Reader::read(&mut self.archive, into.slice_to_mut(amt)));
+        let amt = try!(Reader::read(&mut self.archive, &mut into[..amt]));
         self.pos += amt as u64;
         Ok(amt)
     }
@@ -558,7 +558,7 @@ fn octal<T: num::FromStrRadix>(slice: &[u8]) -> IoResult<T> {
 
 fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
     match slice.iter().position(|i| *i == 0) {
-        Some(i) => slice.slice_to(i),
+        Some(i) => &slice[..i],
         None => slice,
     }
 }
