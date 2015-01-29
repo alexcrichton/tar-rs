@@ -7,9 +7,10 @@
 //!
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
+#![feature(io, path, core, collections, std_misc)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
-#![allow(missing_copy_implementations, unstable)]
+#![allow(missing_copy_implementations)]
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
