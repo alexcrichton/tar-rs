@@ -19,7 +19,7 @@ git = "https://github.com/alexcrichton/tar-rs"
 extern crate tar;
 
 use tar::Archive;
-use std::io::{File, SeekSet};
+use std::old_io::{File, SeekSet};
 
 fn main() {
     let file = File::open(&Path::new("foo.tar")).unwrap();
@@ -50,7 +50,7 @@ fn main() {
 extern crate tar;
 
 use tar::Archive;
-use std::io::File;
+use std::old_io::File;
 
 fn main() {
     let file = File::create(&Path::new("foo.tar")).unwrap();
