@@ -552,8 +552,8 @@ fn octal<T: num::FromStrRadix>(slice: &[u8]) -> IoResult<T> {
         Err(..) => return Err(bad_archive()),
     };
     match num::from_str_radix(num.trim(), 8) {
-        Some(n) => Ok(n),
-        None => Err(bad_archive())
+        Ok(n) => Ok(n),
+        Err(_) => Err(bad_archive())
     }
 }
 
