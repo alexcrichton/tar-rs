@@ -7,7 +7,7 @@
 //!
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
-#![feature(io, path, core, collections, std_misc)]
+#![feature(old_io, old_path, core, collections, std_misc)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 #![allow(missing_copy_implementations)]
