@@ -257,7 +257,7 @@ impl<W: Writer> Archive<W> {
         header.ustar_version = [b'0', b'0'];
 
         // Prepare the filename
-        let cstr = CString::from_slice(path.replace(r"\", "/").as_bytes());
+        let cstr = try!(CString::new(path.replace(r"\", "/")));
         let path = cstr.as_bytes();
         let (namelen, prefixlen) = (header.name.len(), header.prefix.len());
         if path.len() < namelen {
