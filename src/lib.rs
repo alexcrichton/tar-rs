@@ -7,19 +7,22 @@
 //!
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
-#![feature(old_io, old_path, core, collections, std_misc)]
+#![feature(core, collections, std_misc, io, path, fs, os)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
-#![allow(missing_copy_implementations)]
+#![cfg_attr(test, feature(env))]
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
-use std::old_io::{self, IoResult, IoError, fs};
-use std::iter::{AdditiveIterator, repeat};
 use std::ffi::CString;
 use std::fmt;
+use std::fs;
+use std::io::prelude::*;
+use std::io::{self, Error, ErrorKind, Seek, SeekFrom};
+use std::iter::{AdditiveIterator, repeat};
 use std::mem;
 use std::num;
+use std::path::{PathBuf, Path};
 use std::slice::bytes;
 use std::str;
 
@@ -72,7 +75,7 @@ pub struct File<'a, R: 'a> {
     // Used in read() to make sure we're positioned at the next byte. For a
     // `Files` iterator these are meaningful while for a `FilesMut` iterator
     // these are both unused/noops.
-    seek: fn(&File<R>) -> IoResult<()>,
+    seek: fn(&File<R>) -> io::Result<()>,
     tar_offset: u64,
 }
 
@@ -111,34 +114,34 @@ impl<O> Archive<O> {
     }
 
     /// Unwrap this archive, returning the underlying object.
-    pub fn unwrap(self) -> O {
+    pub fn into_inner(self) -> O {
         self.obj.into_inner()
     }
 }
 
-impl<R: Seek + Reader> Archive<R> {
+impl<R: Seek + Read> Archive<R> {
     /// Construct an iterator over the files of this archive.
     ///
     /// This function can return an error if any underlying I/O operation files
     /// while attempting to construct the iterator.
     ///
-    /// Additionally, the iterator yields `IoResult<File>` instead of `File` to
+    /// Additionally, the iterator yields `io::Result<File>` instead of `File` to
     /// handle invalid tar archives as well as any intermittent I/O error that
     /// occurs.
-    pub fn files(&self) -> IoResult<Files<R>> {
+    pub fn files(&self) -> io::Result<Files<R>> {
         try!(self.seek(0));
         Ok(Files { archive: self, done: false, offset: 0 })
     }
 
-    fn seek(&self, pos: u64) -> IoResult<()> {
+    fn seek(&self, pos: u64) -> io::Result<()> {
         if self.pos.get() == pos { return Ok(()) }
-        try!(self.obj.borrow_mut().seek(pos as i64, old_io::SeekSet));
+        try!(self.obj.borrow_mut().seek(SeekFrom::Start(pos)));
         self.pos.set(pos);
         Ok(())
     }
 }
 
-impl<R: Reader> Archive<R> {
+impl<R: Read> Archive<R> {
     /// Construct an iterator over the files in this archive.
     ///
     /// While similar to the `files` iterator, this iterator does not require
@@ -148,40 +151,68 @@ impl<R: Reader> Archive<R> {
     /// Note that care must be taken to consider each file within an archive in
     /// sequence. If files are processed out of sequence (from what the iterator
     /// returns), then the contents read for each file may be corrupted.
-    pub fn files_mut(&mut self) -> IoResult<FilesMut<R>> {
+    pub fn files_mut(&mut self) -> io::Result<FilesMut<R>> {
         Ok(FilesMut { archive: self, done: false, next: 0 })
     }
 
     /// Unpacks this tarball into the specified path
-    pub fn unpack(&mut self, into: &Path) -> IoResult<()> {
+    pub fn unpack(&mut self, into: &Path) -> io::Result<()> {
         for file in try!(self.files_mut()) {
             let mut file = try!(file);
             let bytes = file.filename_bytes().iter().map(|&b| {
                 if b == b'\\' {b'/'} else {b}
             }).collect::<Vec<_>>();
             let is_directory = bytes[bytes.len() - 1] == b'/';
-            let dst = into.join(bytes);
-            if is_directory {
-                try!(fs::mkdir_recursive(&dst, old_io::USER_DIR));
+            let mut dst = into.to_path_buf();
+            for part in <[u8] as SliceExt>::split(&bytes, |x| *x == b'/') {
+                push(&mut dst, part);
             }
-            else {
-                try!(fs::mkdir_recursive(&dst.dir_path(), old_io::USER_DIR));
+            if is_directory {
+                // TODO: this should not require `.parent().unwrap()`
+                try!(fs::create_dir_all(dst.parent().unwrap()));
+            } else {
+                try!(fs::create_dir_all(dst.parent().unwrap()));
                 {
-                    let mut dst = try!(old_io::File::create(&dst));
-                    try!(old_io::util::copy(&mut file, &mut dst));
+                    let mut dst = try!(fs::File::create(&dst));
+                    try!(io::copy(&mut file, &mut dst));
                 }
-                try!(fs::chmod(&dst, try!(file.mode()) & old_io::USER_RWX));
+                let mut perm = try!(dst.metadata()).permissions();
+                set_perms(&mut perm, try!(file.mode()));
+                try!(fs::set_permissions(&dst, perm));
             }
         }
-        Ok(())
+        return Ok(());
+
+        #[cfg(unix)]
+        fn set_perms(perm: &mut fs::Permissions, mode: i32) {
+            use std::os::unix::*;
+            perm.set_mode(mode);
+        }
+        #[cfg(windows)]
+        fn set_perms(perm: &mut fs::Permissions, mode: i32) {
+            perm.set_readonly(mode & 0o200 != 0o200);
+        }
+        #[cfg(unix)]
+        fn push(path: &mut PathBuf, bytes: &[u8]) {
+            use std::os::unix::*;
+            use std::ffi::OsStr;
+            path.push(<OsStr as OsStrExt>::from_bytes(bytes));
+        }
+        #[cfg(windows)]
+        fn push(path: &mut PathBuf, bytes: &[u8]) {
+            use std::str;
+            let s = str::from_utf8(bytes).expect("only unicode paths are \
+                                                  supported on windows");
+            path.push(s);
+        }
     }
 
-    fn skip(&self, mut amt: u64) -> IoResult<()> {
+    fn skip(&self, mut amt: u64) -> io::Result<()> {
         let mut buf = [0u8; 4096 * 8];
         let mut me = self;
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
-            try!(Reader::read(&mut me, &mut buf[..n as usize]));
+            try!(Read::read(&mut me, &mut buf[..n as usize]));
             amt -= n;
         }
         Ok(())
@@ -189,14 +220,14 @@ impl<R: Reader> Archive<R> {
 
     // Assumes that the underlying reader is positioned at the start of a valid
     // header to parse.
-    fn next_file(&self, offset: &mut u64, seek: fn(&File<R>) -> IoResult<()>)
-                 -> IoResult<Option<File<R>>> {
+    fn next_file(&self, offset: &mut u64, seek: fn(&File<R>) -> io::Result<()>)
+                 -> io::Result<Option<File<R>>> {
         // If we have 2 or more sections of 0s, then we're done!
         let mut chunk = [0; 512];
         let mut cnt = 0;
         let mut me = self;
         loop {
-            if try!(Reader::read(&mut me, &mut chunk)) != 512 {
+            if try!(Read::read(&mut me, &mut chunk)) != 512 {
                 return Err(bad_archive())
             }
             *offset += 512;
@@ -239,7 +270,7 @@ impl<R: Reader> Archive<R> {
     }
 }
 
-impl<W: Writer> Archive<W> {
+impl<W: Write> Archive<W> {
     /// Add the file at the specified path to this archive.
     ///
     /// This function will insert the file into the archive with the appropriate
@@ -248,8 +279,8 @@ impl<W: Writer> Archive<W> {
     /// Note that this will not attempt to seek the archive to a valid position,
     /// so if the archive is in the middle of a read or some other similar
     /// operation then this may corrupt the archive.
-    pub fn append(&self, path: &str, file: &mut old_io::File) -> IoResult<()> {
-        let stat = try!(file.stat());
+    pub fn append(&self, path: &str, file: &mut fs::File) -> io::Result<()> {
+        let stat = try!(file.metadata());
 
         // Prepare the header, flagging it as a UStar archive
         let mut header: Header = unsafe { mem::zeroed() };
@@ -266,39 +297,39 @@ impl<W: Writer> Archive<W> {
             let prefix = &path[..cmp::min(path.len(), prefixlen)];
             let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
                 Some(i) => i,
-                None => return Err(IoError {
-                    kind: old_io::OtherIoError,
-                    desc: "path cannot be split to be inserted into archive",
-                    detail: None,
-                })
+                None => return Err(Error::new(ErrorKind::Other,
+                                              "path cannot be split to be \
+                                               inserted into archive", None)),
             };
             bytes::copy_memory(&mut header.name, &path[pos + 1..]);
             bytes::copy_memory(&mut header.prefix, &path[..pos]);
         } else {
-            return Err(IoError {
-                kind: old_io::OtherIoError,
-                desc: "path is too long to insert into archive",
-                detail: None,
-            })
+            return Err(Error::new(ErrorKind::Other,
+                                  "path is too long to insert into archive",
+                                  None))
         }
 
         // Prepare the metadata fields.
-        octal(&mut header.mode, stat.perm.bits()); // TODO: is this right?
-        octal(&mut header.mtime, stat.modified / 1000);
-        octal(&mut header.owner_id, stat.unstable.uid);
-        octal(&mut header.group_id, stat.unstable.gid);
-        octal(&mut header.size, stat.size);
+        octal(&mut header.mode, perm_bits(&stat)); // TODO: is this right?
+        octal(&mut header.mtime, stat.modified() / 1000);
+        // octal(&mut header.owner_id, stat.unstable.uid);
+        // octal(&mut header.group_id, stat.unstable.gid);
+        octal(&mut header.owner_id, 0); // TODO: fill this in
+        octal(&mut header.group_id, 0); // TODO: fill this in
+        octal(&mut header.size, stat.len());
         octal(&mut header.dev_minor, 0);
         octal(&mut header.dev_major, 0);
 
-        header.link[0] = match stat.kind {
-            old_io::FileType::RegularFile => b'0',
-            old_io::FileType::Directory => b'5',
-            old_io::FileType::NamedPipe => b'6',
-            old_io::FileType::BlockSpecial => b'4',
-            old_io::FileType::Symlink => b'2',
-            old_io::FileType::Unknown => b' ',
-        };
+        // TODO: need to bind more file types
+        header.link[0] = if stat.is_dir() {b'5'} else {b'0'};
+        // header.link[0] = match stat.kind {
+        //     old_io::FileType::RegularFile => b'0',
+        //     old_io::FileType::Directory => b'5',
+        //     old_io::FileType::NamedPipe => b'6',
+        //     old_io::FileType::BlockSpecial => b'4',
+        //     old_io::FileType::Symlink => b'2',
+        //     old_io::FileType::Unknown => b' ',
+        // };
 
         // Final step, calculate the checksum
         let cksum = {
@@ -312,9 +343,9 @@ impl<W: Writer> Archive<W> {
         // Write out the header, the entire file, then pad with zeroes.
         let mut obj = self.obj.borrow_mut();
         try!(obj.write_all(header.as_bytes().as_slice()));
-        try!(old_io::util::copy(file, &mut *obj));
+        try!(io::copy(file, &mut *obj));
         let buf = [0; 512];
-        let remaining = 512 - (stat.size % 512);
+        let remaining = 512 - (stat.len() % 512);
         if remaining < 512 {
             try!(obj.write_all(&buf[..remaining as usize]));
         }
@@ -329,29 +360,43 @@ impl<W: Writer> Archive<W> {
                 *slot = value;
             }
         }
+
+        #[cfg(unix)]
+        fn perm_bits(meta: &fs::Metadata) -> i32 {
+            // TODO: there should be a platform-specific accessor in the stdlib
+            // for this field
+            use std::mem;
+            unsafe { mem::transmute(meta.permissions()) }
+        }
+        #[cfg(windows)]
+        fn perm_bits(meta: &fs::Metadata) -> i32 {
+            if meta.is_dir() {0o755}
+            else if perms.readonly() {0o444}
+            else {0o644}
+        }
     }
 
     /// Finish writing this archive, emitting the termination sections.
     ///
     /// This function is required to be called to complete the archive, it will
     /// be invalid if this is not called.
-    pub fn finish(&self) -> IoResult<()> {
+    pub fn finish(&self) -> io::Result<()> {
         let b = [0; 1024];
         self.obj.borrow_mut().write_all(&b)
     }
 }
 
-impl<'a, R: Seek + Reader> Iterator for Files<'a, R> {
-    type Item = IoResult<File<'a, R>>;
+impl<'a, R: Seek + Read> Iterator for Files<'a, R> {
+    type Item = io::Result<File<'a, R>>;
 
-    fn next(&mut self) -> Option<IoResult<File<'a, R>>> {
+    fn next(&mut self) -> Option<io::Result<File<'a, R>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
 
         // Seek to the start of the next header in the archive
         try_iter!(self, self.archive.seek(self.offset));
 
-        fn doseek<R: Seek + Reader>(file: &File<R>) -> IoResult<()> {
+        fn doseek<R: Seek + Read>(file: &File<R>) -> io::Result<()> {
             file.archive.seek(file.tar_offset + file.pos)
         }
 
@@ -364,10 +409,10 @@ impl<'a, R: Seek + Reader> Iterator for Files<'a, R> {
 }
 
 
-impl<'a, R: Reader> Iterator for FilesMut<'a, R> {
-    type Item = IoResult<File<'a, R>>;
+impl<'a, R: Read> Iterator for FilesMut<'a, R> {
+    type Item = io::Result<File<'a, R>>;
 
-    fn next(&mut self) -> Option<IoResult<File<'a, R>>> {
+    fn next(&mut self) -> Option<io::Result<File<'a, R>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
 
@@ -376,7 +421,7 @@ impl<'a, R: Reader> Iterator for FilesMut<'a, R> {
         try_iter!(self, self.archive.skip(delta));
 
         // no-op because this reader can't seek
-        fn doseek<R>(_: &File<R>) -> IoResult<()> { Ok(()) }
+        fn doseek<R>(_: &File<R>) -> io::Result<()> { Ok(()) }
 
         // Parse the next file header
         match try_iter!(self, self.archive.next_file(&mut self.next, doseek)) {
@@ -387,8 +432,8 @@ impl<'a, R: Reader> Iterator for FilesMut<'a, R> {
 }
 
 impl Header {
-    fn size(&self) -> IoResult<u64> { octal(&self.size) }
-    fn cksum(&self) -> IoResult<u32> { octal(&self.cksum) }
+    fn size(&self) -> io::Result<u64> { octal(&self.size) }
+    fn cksum(&self) -> io::Result<u32> { octal(&self.cksum) }
     fn is_ustar(&self) -> bool {
         &self.ustar[..5] == b"ustar"
     }
@@ -411,31 +456,31 @@ impl<'a, R> File<'a, R> {
     }
 
     /// Returns the value of the owner's user ID field
-    pub fn uid(&self) -> IoResult<u32> { octal(&self.header.owner_id) }
+    pub fn uid(&self) -> io::Result<u32> { octal(&self.header.owner_id) }
     /// Returns the value of the group's user ID field
-    pub fn gid(&self) -> IoResult<u32> { octal(&self.header.group_id) }
+    pub fn gid(&self) -> io::Result<u32> { octal(&self.header.group_id) }
     /// Returns the last modification time in Unix time format
-    pub fn mtime(&self) -> IoResult<u64> { octal(&self.header.mtime) }
+    pub fn mtime(&self) -> io::Result<u64> { octal(&self.header.mtime) }
     /// Returns the mode bits for this file
-    pub fn mode(&self) -> IoResult<old_io::FilePermission> {
-        octal(&self.header.mode).map(old_io::FilePermission::from_bits_truncate)
+    pub fn mode(&self) -> io::Result<i32> {
+        octal(&self.header.mode)
     }
 
-    /// Classify the type of file that this entry represents
-    pub fn classify(&self) -> old_io::FileType {
-        match (self.header.is_ustar(), self.header.link[0]) {
-            (_, b'0') => old_io::FileType::RegularFile,
-            (_, b'1') => old_io::FileType::Unknown, // need a hard link enum?
-            (_, b'2') => old_io::FileType::Symlink,
-            (false, _) => old_io::FileType::Unknown, // not technically valid...
-
-            (_, b'3') => old_io::FileType::Unknown, // character special...
-            (_, b'4') => old_io::FileType::BlockSpecial,
-            (_, b'5') => old_io::FileType::Directory,
-            (_, b'6') => old_io::FileType::NamedPipe,
-            (_, _) => old_io::FileType::Unknown, // not technically valid...
-        }
-    }
+    // /// Classify the type of file that this entry represents
+    // pub fn classify(&self) -> old_io::FileType {
+    //     match (self.header.is_ustar(), self.header.link[0]) {
+    //         (_, b'0') => old_io::FileType::RegularFile,
+    //         (_, b'1') => old_io::FileType::Unknown, // need a hard link enum?
+    //         (_, b'2') => old_io::FileType::Symlink,
+    //         (false, _) => old_io::FileType::Unknown, // not technically valid...
+    //
+    //         (_, b'3') => old_io::FileType::Unknown, // character special...
+    //         (_, b'4') => old_io::FileType::BlockSpecial,
+    //         (_, b'5') => old_io::FileType::Directory,
+    //         (_, b'6') => old_io::FileType::NamedPipe,
+    //         (_, _) => old_io::FileType::Unknown, // not technically valid...
+    //     }
+    // }
 
     /// Returns the username of the owner of this file, if present
     pub fn username_bytes(&self) -> Option<&[u8]> {
@@ -469,7 +514,7 @@ impl<'a, R> File<'a, R> {
     /// This field is only present in UStar archives. A value of `None` means
     /// that this archive is not a UStar archive, while a value of `Some`
     /// represents the attempt to decode the field in the header.
-    pub fn device_major(&self) -> Option<IoResult<u32>> {
+    pub fn device_major(&self) -> Option<io::Result<u32>> {
         if self.header.is_ustar() {
             Some(octal(&self.header.dev_major))
         } else {
@@ -481,7 +526,7 @@ impl<'a, R> File<'a, R> {
     /// This field is only present in UStar archives. A value of `None` means
     /// that this archive is not a UStar archive, while a value of `Some`
     /// represents the attempt to decode the field in the header.
-    pub fn device_minor(&self) -> Option<IoResult<u32>> {
+    pub fn device_minor(&self) -> Option<io::Result<u32>> {
         if self.header.is_ustar() {
             Some(octal(&self.header.dev_minor))
         } else {
@@ -496,8 +541,8 @@ impl<'a, R> File<'a, R> {
     pub fn size(&self) -> u64 { self.size }
 }
 
-impl<'a, R: Reader> Reader for &'a Archive<R> {
-    fn read(&mut self, into: &mut [u8]) -> IoResult<usize> {
+impl<'a, R: Read> Read for &'a Archive<R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         self.obj.borrow_mut().read(into).map(|i| {
             self.pos.set(self.pos.get() + i as u64);
             i
@@ -505,48 +550,43 @@ impl<'a, R: Reader> Reader for &'a Archive<R> {
     }
 }
 
-impl<'a, R: Reader> Reader for File<'a, R> {
-    fn read(&mut self, into: &mut [u8]) -> IoResult<usize> {
-        if self.size == self.pos {
-            return Err(old_io::standard_error(old_io::EndOfFile))
-        }
+impl<'a, R: Read> Read for File<'a, R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        if self.size == self.pos { return Ok(0) }
 
         try!((self.seek)(self));
         let amt = cmp::min((self.size - self.pos) as usize, into.len());
-        let amt = try!(Reader::read(&mut self.archive, &mut into[..amt]));
+        let amt = try!(Read::read(&mut self.archive, &mut into[..amt]));
         self.pos += amt as u64;
         Ok(amt)
     }
 }
 
-impl<'a, R: Reader + Seek> Seek for File<'a, R> {
-    fn tell(&self) -> IoResult<u64> { Ok(self.pos) }
-    fn seek(&mut self, pos: i64, style: old_io::SeekStyle) -> IoResult<()> {
-        let next = match style {
-            old_io::SeekSet => pos as i64,
-            old_io::SeekCur => self.pos as i64 + pos,
-            old_io::SeekEnd => self.size as i64 + pos,
+impl<'a, R: Read + Seek> Seek for File<'a, R> {
+    fn seek(&mut self, how: SeekFrom) -> io::Result<u64> {
+        let next = match how {
+            SeekFrom::Start(pos) => pos as i64,
+            SeekFrom::Current(pos) => self.pos as i64 + pos,
+            SeekFrom::End(pos) => self.size as i64 + pos,
         };
         if next < 0 {
-            Err(old_io::standard_error(old_io::OtherIoError))
+            Err(Error::new(ErrorKind::Other, "cannot seek before position 0",
+                           None))
         } else if next as u64 > self.size {
-            Err(old_io::standard_error(old_io::OtherIoError))
+            Err(Error::new(ErrorKind::Other, "cannot seek past end of file",
+                           None))
         } else {
             self.pos = next as u64;
-            Ok(())
+            Ok(self.pos)
         }
     }
 }
 
-fn bad_archive() -> IoError {
-    IoError {
-        kind: old_io::OtherIoError,
-        desc: "invalid tar archive",
-        detail: None,
-    }
+fn bad_archive() -> Error {
+    Error::new(ErrorKind::Other, "invalid tar archive", None)
 }
 
-fn octal<T: num::FromStrRadix>(slice: &[u8]) -> IoResult<T> {
+fn octal<T: num::FromStrRadix>(slice: &[u8]) -> io::Result<T> {
     let num = match str::from_utf8(truncate(slice)) {
         Ok(n) => n,
         Err(_) => return Err(bad_archive()),
@@ -564,17 +604,21 @@ fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
     }
 }
 
+#[cfg(test)] mod tempdir;
+
 #[cfg(test)]
 mod tests {
+    use std::io::prelude::*;
+    use std::io::{Cursor, SeekFrom};
     use std::iter::repeat;
-    use std::old_io;
-    use std::old_io::{BufReader, MemWriter, MemReader, File, TempDir};
+    use std::fs::File;
+
+    use tempdir::TempDir;
     use super::Archive;
 
     #[test]
     fn simple() {
-        let rdr = BufReader::new(include_bytes!("tests/simple.tar"));
-        let ar = Archive::new(rdr);
+        let ar = Archive::new(Cursor::new(include_bytes!("tests/simple.tar")));
         for file in ar.files().unwrap() {
             file.unwrap();
         }
@@ -582,7 +626,7 @@ mod tests {
 
     #[test]
     fn reading_files() {
-        let rdr = BufReader::new(include_bytes!("tests/reading_files.tar"));
+        let rdr = Cursor::new(include_bytes!("tests/reading_files.tar"));
         let ar = Archive::new(rdr);
         let mut files = ar.files().unwrap();
         let mut a = files.next().unwrap().unwrap();
@@ -591,28 +635,31 @@ mod tests {
 
         assert_eq!(a.filename(), Some("a"));
         assert_eq!(b.filename(), Some("b"));
-        assert_eq!(a.read_to_string().unwrap().as_slice(),
-                   "a\na\na\na\na\na\na\na\na\na\na\n");
-        assert_eq!(b.read_to_string().unwrap().as_slice(),
-                   "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
-        a.seek(0, old_io::SeekSet).unwrap();
-        assert_eq!(a.read_to_string().unwrap().as_slice(),
-                   "a\na\na\na\na\na\na\na\na\na\na\n");
+        let mut s = String::new();
+        a.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
+        s.truncate(0);
+        b.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
+        a.seek(SeekFrom::Start(0)).unwrap();
+        s.truncate(0);
+        a.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
     }
 
     #[test]
     fn writing_files() {
-        let wr = MemWriter::new();
+        let wr = Cursor::new(Vec::new());
         let ar = Archive::new(wr);
         let td = TempDir::new("tar-rs").unwrap();
 
         let path = td.path().join("test");
-        File::create(&path).write_all(b"test").unwrap();
+        File::create(&path).unwrap().write_all(b"test").unwrap();
 
         ar.append("test2", &mut File::open(&path).unwrap()).unwrap();
         ar.finish().unwrap();
 
-        let rd = MemReader::new(ar.unwrap().into_inner());
+        let rd = Cursor::new(ar.into_inner().into_inner());
         let ar = Archive::new(rd);
         let mut files = ar.files().unwrap();
         let mut f = files.next().unwrap().unwrap();
@@ -620,16 +667,18 @@ mod tests {
 
         assert_eq!(f.filename(), Some("test2"));
         assert_eq!(f.size(), 4);
-        assert_eq!(f.read_to_string().unwrap().as_slice(), "test");
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "test");
     }
 
     #[test]
     fn large_filename() {
-        let ar = Archive::new(MemWriter::new());
+        let ar = Archive::new(Cursor::new(Vec::new()));
         let td = TempDir::new("tar-rs").unwrap();
 
         let path = td.path().join("test");
-        File::create(&path).write_all(b"test").unwrap();
+        File::create(&path).unwrap().write_all(b"test").unwrap();
 
         let filename = repeat("abcd/").take(50).collect::<String>();
         ar.append(filename.as_slice(), &mut File::open(&path).unwrap()).unwrap();
@@ -639,7 +688,7 @@ mod tests {
         ar.append(too_long.as_slice(), &mut File::open(&path).unwrap())
           .err().unwrap();
 
-        let rd = MemReader::new(ar.unwrap().into_inner());
+        let rd = Cursor::new(ar.into_inner().into_inner());
         let ar = Archive::new(rd);
         let mut files = ar.files().unwrap();
         let mut f = files.next().unwrap().unwrap();
@@ -647,33 +696,37 @@ mod tests {
 
         assert_eq!(f.filename(), Some(filename.as_slice()));
         assert_eq!(f.size(), 4);
-        assert_eq!(f.read_to_string().unwrap().as_slice(), "test");
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "test");
     }
 
     #[test]
     fn reading_files_mut() {
-        let rdr = BufReader::new(include_bytes!("tests/reading_files.tar"));
+        let rdr = Cursor::new(include_bytes!("tests/reading_files.tar"));
         let mut ar = Archive::new(rdr);
         let mut files = ar.files_mut().unwrap();
         let mut a = files.next().unwrap().unwrap();
         assert_eq!(a.filename(), Some("a"));
-        assert_eq!(a.read_to_string().unwrap().as_slice(),
-                   "a\na\na\na\na\na\na\na\na\na\na\n");
-        assert_eq!(a.read_to_string().unwrap().as_slice(), "");
+        let mut s = String::new();
+        a.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
+        s.truncate(0);
+        a.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "");
         let mut b = files.next().unwrap().unwrap();
 
         assert_eq!(b.filename(), Some("b"));
-        assert_eq!(b.read_to_string().unwrap().as_slice(),
-                   "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
+        s.truncate(0);
+        b.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
         assert!(files.next().is_none());
     }
 
     #[test]
     fn extracting_directories() {
-        use std::old_io::fs::PathExtensions;
-
         let td = TempDir::new("tar-rs").unwrap();
-        let rdr = BufReader::new(include_bytes!("tests/directory.tar"));
+        let rdr = Cursor::new(include_bytes!("tests/directory.tar"));
         let mut ar = Archive::new(rdr);
         ar.unpack(td.path()).unwrap();
 
@@ -688,11 +741,11 @@ mod tests {
     #[test]
     fn octal_spaces()
     {
-        let rdr = BufReader::new(include_bytes!("tests/spaces.tar"));
+        let rdr = Cursor::new(include_bytes!("tests/spaces.tar"));
         let ar = Archive::new(rdr);
 
         let file = ar.files().unwrap().next().unwrap().unwrap();
-        assert_eq!(file.mode().unwrap(), old_io::USER_RWX | old_io::GROUP_RWX | old_io::OTHER_RWX);
+        assert_eq!(file.mode().unwrap() & 0o777, 0o777);
         assert_eq!(file.uid().unwrap(), 0);
         assert_eq!(file.gid().unwrap(), 0);
         assert_eq!(file.size, 2);
