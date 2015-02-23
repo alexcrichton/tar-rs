@@ -18,11 +18,13 @@ git = "https://github.com/alexcrichton/tar-rs"
 # #![allow(unused_must_use, unstable)]
 extern crate tar;
 
+use std::io::prelude::*;
+use std::io::SeekFrom;
+use std::fs::File;
 use tar::Archive;
-use std::old_io::{File, SeekSet};
 
 fn main() {
-    let file = File::open(&Path::new("foo.tar")).unwrap();
+    let file = File::open("foo.tar").unwrap();
     let a = Archive::new(file);
 
     for file in a.files().unwrap() {
@@ -33,11 +35,13 @@ fn main() {
         println!("{:?}", file.filename());
         println!("{}", file.size());
 
-        // files implement the Reader trait
-        println!("{}", file.read_to_string().unwrap());
+        // files implement the Read trait
+        let mut s = String::new();
+        file.read_to_string(&mut s).unwrap();
+        println!("{}", s);
 
         // files also implement the Seek trait
-        file.seek(0, SeekSet);
+        file.seek(SeekFrom::Current(0)).unwrap();
     }
 }
 
@@ -49,15 +53,16 @@ fn main() {
 # #![allow(unused_must_use, unstable)]
 extern crate tar;
 
+use std::io::prelude::*;
+use std::fs::File;
 use tar::Archive;
-use std::old_io::File;
 
 fn main() {
-    let file = File::create(&Path::new("foo.tar")).unwrap();
+    let file = File::create("foo.tar").unwrap();
     let a = Archive::new(file);
 
-    a.append("file1.txt", &mut File::open(&Path::new("file1.txt")).unwrap());
-    a.append("file2.txt", &mut File::open(&Path::new("file2.txt")).unwrap());
+    a.append("file1.txt", &mut File::open("file1.txt").unwrap());
+    a.append("file2.txt", &mut File::open("file2.txt").unwrap());
     a.finish();
 }
 ```
