@@ -16,6 +16,3 @@ currently handle compression, but it is abstract over all I/O readers and
 writers. Additionally, great lengths are taken to ensure that the entire
 contents are never required to be entirely resident in memory all at once.
 """
-
-[dev-dependencies]
-rand = "0.1"

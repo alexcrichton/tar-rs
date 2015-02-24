@@ -10,7 +10,7 @@
 #![feature(core, collections, std_misc, io, path, fs, os)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
-#![cfg_attr(test, feature(env))]
+#![cfg_attr(test, feature(old_io, old_path))]
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
