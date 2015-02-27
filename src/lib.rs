@@ -363,10 +363,8 @@ impl<W: Write> Archive<W> {
 
         #[cfg(unix)]
         fn perm_bits(meta: &fs::Metadata) -> i32 {
-            // TODO: there should be a platform-specific accessor in the stdlib
-            // for this field
-            use std::mem;
-            unsafe { mem::transmute(meta.permissions()) }
+            use std::os::unix::prelude::*;
+            meta.permissions().mode()
         }
         #[cfg(windows)]
         fn perm_bits(meta: &fs::Metadata) -> i32 {
