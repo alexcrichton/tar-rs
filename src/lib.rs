@@ -371,7 +371,7 @@ impl<W: Write> Archive<W> {
         #[cfg(windows)]
         fn perm_bits(meta: &fs::Metadata) -> i32 {
             if meta.is_dir() {0o755}
-            else if perms.readonly() {0o444}
+            else if meta.permissions().readonly() {0o444}
             else {0o644}
         }
     }
