@@ -201,8 +201,8 @@ impl<R: Read> Archive<R> {
         #[cfg(windows)]
         fn push(path: &mut PathBuf, bytes: &[u8]) {
             use std::str;
-            let s = str::from_utf8(bytes).expect("only unicode paths are \
-                                                  supported on windows");
+            let s = str::from_utf8(bytes).ok().expect("only unicode paths are \
+                                                       supported on windows");
             path.push(s);
         }
     }
