@@ -227,9 +227,7 @@ impl<R: Read> Archive<R> {
         let mut cnt = 0;
         let mut me = self;
         loop {
-            if try!(Read::read(&mut me, &mut chunk)) != 512 {
-                return Err(bad_archive())
-            }
+            try!(read_all(&mut me, &mut chunk));
             *offset += 512;
             if chunk.iter().any(|i| *i != 0) { break }
             cnt += 1;
@@ -600,6 +598,17 @@ fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
         Some(i) => &slice[..i],
         None => slice,
     }
+}
+
+fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
+    let mut read = 0;
+    while read < buf.len() {
+        match try!(r.read(&mut buf[read..])) {
+            0 => return Err(bad_archive()),
+            n => read += n,
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)] mod tempdir;
