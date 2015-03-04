@@ -7,6 +7,7 @@
 //!
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
+#![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![feature(core, collections, std_misc, io, path, fs, os)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
