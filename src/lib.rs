@@ -8,7 +8,7 @@
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
-#![feature(core, collections, std_misc, io, path, fs, path_ext, fs_time)]
+#![feature(std_misc, io, path, fs, fs_time)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 #![cfg_attr(test, feature(old_io, old_path))]
@@ -20,11 +20,10 @@ use std::fmt;
 use std::fs;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, Seek, SeekFrom};
-use std::iter::{AdditiveIterator, repeat};
+use std::iter::repeat;
 use std::mem;
 use std::num;
 use std::path::{PathBuf, Path};
-use std::slice::bytes;
 use std::str;
 
 macro_rules! try_iter{ ($me:expr, $e:expr) => (
@@ -177,7 +176,7 @@ impl<R: Read> Archive<R> {
                     let mut dst = try!(fs::File::create(&dst));
                     try!(io::copy(&mut file, &mut dst));
                 }
-                let mut perm = try!(dst.metadata()).permissions();
+                let mut perm = try!(fs::metadata(&dst)).permissions();
                 set_perms(&mut perm, try!(file.mode()));
                 try!(fs::set_permissions(&dst, perm));
             }
@@ -235,8 +234,8 @@ impl<R: Read> Archive<R> {
             if cnt > 1 { return Ok(None) }
         }
 
-        let sum = chunk[..148].iter().map(|i| *i as u32).sum() +
-                  chunk[156..].iter().map(|i| *i as u32).sum() +
+        let sum = chunk[..148].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
+                  chunk[156..].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
                   32 * 8;
 
         let mut ret = File {
@@ -260,10 +259,10 @@ impl<R: Read> Archive<R> {
         *offset += size;
 
         if ret.header.is_ustar() && ret.header.prefix[0] != 0 {
-            ret.filename.push_all(truncate(&ret.header.prefix));
+            ret.filename.extend(truncate(&ret.header.prefix).iter().map(|x| *x));
             ret.filename.push(b'/');
         }
-        ret.filename.push_all(truncate(&ret.header.name));
+        ret.filename.extend(truncate(&ret.header.name).iter().map(|x| *x));
 
         return Ok(Some(ret));
     }
@@ -291,7 +290,7 @@ impl<W: Write> Archive<W> {
         let path = cstr.as_bytes();
         let (namelen, prefixlen) = (header.name.len(), header.prefix.len());
         if path.len() < namelen {
-            bytes::copy_memory(&mut header.name, path);
+            copy_memory(&mut header.name, path);
         } else if path.len() < namelen + prefixlen {
             let prefix = &path[..cmp::min(path.len(), prefixlen)];
             let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
@@ -300,8 +299,8 @@ impl<W: Write> Archive<W> {
                                               "path cannot be split to be \
                                                inserted into archive", None)),
             };
-            bytes::copy_memory(&mut header.name, &path[pos + 1..]);
-            bytes::copy_memory(&mut header.prefix, &path[..pos]);
+            copy_memory(&mut header.name, &path[pos + 1..]);
+            copy_memory(&mut header.prefix, &path[..pos]);
         } else {
             return Err(Error::new(ErrorKind::Other,
                                   "path is too long to insert into archive",
@@ -333,15 +332,15 @@ impl<W: Write> Archive<W> {
         // Final step, calculate the checksum
         let cksum = {
             let bytes = header.as_bytes();
-            bytes[..148].iter().map(|i| *i as u32).sum() +
-                bytes[156..].iter().map(|i| *i as u32).sum() +
+            bytes[..148].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
+                bytes[156..].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
                 32 * (header.cksum.len() as u32)
         };
         octal(&mut header.cksum, cksum);
 
         // Write out the header, the entire file, then pad with zeroes.
         let mut obj = self.obj.borrow_mut();
-        try!(obj.write_all(header.as_bytes().as_slice()));
+        try!(obj.write_all(header.as_bytes()));
         try!(io::copy(file, &mut *obj));
         let buf = [0; 512];
         let remaining = 512 - (stat.len() % 512);
@@ -354,7 +353,7 @@ impl<W: Write> Archive<W> {
 
         fn octal<T: fmt::Octal>(dst: &mut [u8], val: T) {
             let o = format!("{:o}", val);
-            let value = o.as_slice().bytes().rev().chain(repeat(b'0'));
+            let value = o.bytes().rev().chain(repeat(b'0'));
             for (slot, value) in dst.iter_mut().rev().skip(1).zip(value) {
                 *slot = value;
             }
@@ -380,6 +379,12 @@ impl<W: Write> Archive<W> {
     pub fn finish(&self) -> io::Result<()> {
         let b = [0; 1024];
         self.obj.borrow_mut().write_all(&b)
+    }
+}
+
+fn copy_memory(dst: &mut [u8], src: &[u8]) {
+    for (slot, val) in dst.iter_mut().zip(src.iter()) {
+        *slot = *val;
     }
 }
 
@@ -442,7 +447,7 @@ impl Header {
 impl<'a, R> File<'a, R> {
     /// Returns the filename of this archive as a byte array
     pub fn filename_bytes(&self) -> &[u8] {
-        self.filename.as_slice()
+        &self.filename
     }
 
     /// Returns the filename of this archive as a utf8 string.
@@ -689,11 +694,11 @@ mod tests {
         File::create(&path).unwrap().write_all(b"test").unwrap();
 
         let filename = repeat("abcd/").take(50).collect::<String>();
-        ar.append(filename.as_slice(), &mut File::open(&path).unwrap()).unwrap();
+        ar.append(&filename, &mut File::open(&path).unwrap()).unwrap();
         ar.finish().unwrap();
 
         let too_long = repeat("abcd").take(200).collect::<String>();
-        ar.append(too_long.as_slice(), &mut File::open(&path).unwrap())
+        ar.append(&too_long, &mut File::open(&path).unwrap())
           .err().unwrap();
 
         let rd = Cursor::new(ar.into_inner().into_inner());
@@ -702,7 +707,7 @@ mod tests {
         let mut f = files.next().unwrap().unwrap();
         assert!(files.next().is_none());
 
-        assert_eq!(f.filename(), Some(filename.as_slice()));
+        assert_eq!(f.filename(), Some(&filename[..]));
         assert_eq!(f.size(), 4);
         let mut s = String::new();
         f.read_to_string(&mut s).unwrap();
