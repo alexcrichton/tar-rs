@@ -8,10 +8,9 @@
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
-#![feature(std_misc, io, path, fs, fs_time)]
+#![feature(core, std_misc, io, fs, fs_time)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
-#![cfg_attr(test, feature(old_io, old_path))]
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
@@ -164,14 +163,13 @@ impl<R: Read> Archive<R> {
             }).collect::<Vec<_>>();
             let is_directory = bytes[bytes.len() - 1] == b'/';
             let mut dst = into.to_path_buf();
-            for part in <[u8] as SliceExt>::split(&bytes, |x| *x == b'/') {
+            for part in <[u8]>::split(&bytes, |x| *x == b'/') {
                 push(&mut dst, part);
             }
             if is_directory {
-                // TODO: this should not require `.parent().unwrap()`
-                try!(fs::create_dir_all(dst.parent().unwrap()));
+                try!(fs::create_dir_all(&dst));
             } else {
-                try!(fs::create_dir_all(dst.parent().unwrap()));
+                try!(fs::create_dir_all(&dst.parent().unwrap()));
                 {
                     let mut dst = try!(fs::File::create(&dst));
                     try!(io::copy(&mut file, &mut dst));
@@ -617,23 +615,29 @@ fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(test)] mod tempdir;
-
 #[cfg(test)]
 mod tests {
+    extern crate tempdir;
     use std::io::prelude::*;
     use std::io::{Cursor, SeekFrom};
     use std::iter::repeat;
-    use std::fs::File;
+    use std::fs::{self, File};
 
-    use tempdir::TempDir;
+    use self::tempdir::TempDir;
     use super::Archive;
+
+    macro_rules! t {
+        ($e:expr) => (match $e {
+            Ok(v) => v,
+            Err(e) => panic!("{} returned {}", stringify!($e), e),
+        })
+    }
 
     #[test]
     fn simple() {
         let ar = Archive::new(Cursor::new(include_bytes!("tests/simple.tar")));
-        for file in ar.files().unwrap() {
-            file.unwrap();
+        for file in t!(ar.files()) {
+            t!(file);
         }
     }
 
@@ -641,22 +645,22 @@ mod tests {
     fn reading_files() {
         let rdr = Cursor::new(include_bytes!("tests/reading_files.tar"));
         let ar = Archive::new(rdr);
-        let mut files = ar.files().unwrap();
-        let mut a = files.next().unwrap().unwrap();
-        let mut b = files.next().unwrap().unwrap();
+        let mut files = t!(ar.files());
+        let mut a = t!(files.next().unwrap());
+        let mut b = t!(files.next().unwrap());
         assert!(files.next().is_none());
 
         assert_eq!(a.filename(), Some("a"));
         assert_eq!(b.filename(), Some("b"));
         let mut s = String::new();
-        a.read_to_string(&mut s).unwrap();
+        t!(a.read_to_string(&mut s));
         assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
         s.truncate(0);
-        b.read_to_string(&mut s).unwrap();
+        t!(b.read_to_string(&mut s));
         assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
-        a.seek(SeekFrom::Start(0)).unwrap();
+        t!(a.seek(SeekFrom::Start(0)));
         s.truncate(0);
-        a.read_to_string(&mut s).unwrap();
+        t!(a.read_to_string(&mut s));
         assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
     }
 
@@ -664,53 +668,52 @@ mod tests {
     fn writing_files() {
         let wr = Cursor::new(Vec::new());
         let ar = Archive::new(wr);
-        let td = TempDir::new("tar-rs").unwrap();
+        let td = t!(TempDir::new("tar-rs"));
 
         let path = td.path().join("test");
-        File::create(&path).unwrap().write_all(b"test").unwrap();
+        t!(t!(File::create(&path)).write_all(b"test"));
 
-        ar.append("test2", &mut File::open(&path).unwrap()).unwrap();
-        ar.finish().unwrap();
+        t!(ar.append("test2", &mut t!(File::open(&path))));
+        t!(ar.finish());
 
         let rd = Cursor::new(ar.into_inner().into_inner());
         let ar = Archive::new(rd);
-        let mut files = ar.files().unwrap();
-        let mut f = files.next().unwrap().unwrap();
+        let mut files = t!(ar.files());
+        let mut f = t!(files.next().unwrap());
         assert!(files.next().is_none());
 
         assert_eq!(f.filename(), Some("test2"));
         assert_eq!(f.size(), 4);
         let mut s = String::new();
-        f.read_to_string(&mut s).unwrap();
+        t!(f.read_to_string(&mut s));
         assert_eq!(s, "test");
     }
 
     #[test]
     fn large_filename() {
         let ar = Archive::new(Cursor::new(Vec::new()));
-        let td = TempDir::new("tar-rs").unwrap();
+        let td = t!(TempDir::new("tar-rs"));
 
         let path = td.path().join("test");
-        File::create(&path).unwrap().write_all(b"test").unwrap();
+        t!(t!(File::create(&path)).write_all(b"test"));
 
         let filename = repeat("abcd/").take(50).collect::<String>();
-        ar.append(&filename, &mut File::open(&path).unwrap()).unwrap();
-        ar.finish().unwrap();
+        t!(ar.append(&filename, &mut t!(File::open(&path))));
+        t!(ar.finish());
 
         let too_long = repeat("abcd").take(200).collect::<String>();
-        ar.append(&too_long, &mut File::open(&path).unwrap())
-          .err().unwrap();
+        assert!(ar.append(&too_long, &mut t!(File::open(&path))).is_err());
 
         let rd = Cursor::new(ar.into_inner().into_inner());
         let ar = Archive::new(rd);
-        let mut files = ar.files().unwrap();
+        let mut files = t!(ar.files());
         let mut f = files.next().unwrap().unwrap();
         assert!(files.next().is_none());
 
         assert_eq!(f.filename(), Some(&filename[..]));
         assert_eq!(f.size(), 4);
         let mut s = String::new();
-        f.read_to_string(&mut s).unwrap();
+        t!(f.read_to_string(&mut s));
         assert_eq!(s, "test");
     }
 
@@ -718,37 +721,37 @@ mod tests {
     fn reading_files_mut() {
         let rdr = Cursor::new(include_bytes!("tests/reading_files.tar"));
         let mut ar = Archive::new(rdr);
-        let mut files = ar.files_mut().unwrap();
-        let mut a = files.next().unwrap().unwrap();
+        let mut files = t!(ar.files_mut());
+        let mut a = t!(files.next().unwrap());
         assert_eq!(a.filename(), Some("a"));
         let mut s = String::new();
-        a.read_to_string(&mut s).unwrap();
+        t!(a.read_to_string(&mut s));
         assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
         s.truncate(0);
-        a.read_to_string(&mut s).unwrap();
+        t!(a.read_to_string(&mut s));
         assert_eq!(s, "");
-        let mut b = files.next().unwrap().unwrap();
+        let mut b = t!(files.next().unwrap());
 
         assert_eq!(b.filename(), Some("b"));
         s.truncate(0);
-        b.read_to_string(&mut s).unwrap();
+        t!(b.read_to_string(&mut s));
         assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
         assert!(files.next().is_none());
     }
 
     #[test]
     fn extracting_directories() {
-        let td = TempDir::new("tar-rs").unwrap();
+        let td = t!(TempDir::new("tar-rs"));
         let rdr = Cursor::new(include_bytes!("tests/directory.tar"));
         let mut ar = Archive::new(rdr);
-        ar.unpack(td.path()).unwrap();
+        t!(ar.unpack(td.path()));
 
         let dir_a = td.path().join("a");
         let dir_b = td.path().join("a/b");
         let file_c = td.path().join("a/c");
-        assert!(dir_a.is_dir());
-        assert!(dir_b.is_dir());
-        assert!(file_c.is_file());
+        assert_eq!(fs::metadata(&dir_a).map(|m| m.is_dir()), Ok(true));
+        assert_eq!(fs::metadata(&dir_b).map(|m| m.is_dir()), Ok(true));
+        assert_eq!(fs::metadata(&file_c).map(|m| m.is_file()), Ok(true));
     }
 
     #[test]
