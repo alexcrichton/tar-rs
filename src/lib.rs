@@ -183,7 +183,7 @@ impl<R: Read> Archive<R> {
 
         #[cfg(unix)]
         fn set_perms(perm: &mut fs::Permissions, mode: i32) {
-            use std::os::unix::*;
+            use std::os::unix::prelude::*;
             perm.set_mode(mode);
         }
         #[cfg(windows)]
@@ -192,7 +192,7 @@ impl<R: Read> Archive<R> {
         }
         #[cfg(unix)]
         fn push(path: &mut PathBuf, bytes: &[u8]) {
-            use std::os::unix::*;
+            use std::os::unix::prelude::OsStrExt;
             use std::ffi::OsStr;
             path.push(<OsStr as OsStrExt>::from_bytes(bytes));
         }
