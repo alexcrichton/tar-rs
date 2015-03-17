@@ -192,7 +192,7 @@ impl<R: Read> Archive<R> {
         }
         #[cfg(unix)]
         fn push(path: &mut PathBuf, bytes: &[u8]) {
-            use std::os::unix::prelude::OsStrExt;
+            use std::os::unix::prelude::*;
             use std::ffi::OsStr;
             path.push(<OsStr as OsStrExt>::from_bytes(bytes));
         }
