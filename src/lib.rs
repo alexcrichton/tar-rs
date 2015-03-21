@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn simple() {
-        let ar = Archive::new(Cursor::new(include_bytes!("tests/simple.tar")));
+        let ar = Archive::new(Cursor::new(&include_bytes!("tests/simple.tar")[..]));
         for file in t!(ar.files()) {
             t!(file);
         }
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn reading_files() {
-        let rdr = Cursor::new(include_bytes!("tests/reading_files.tar"));
+        let rdr = Cursor::new(&include_bytes!("tests/reading_files.tar")[..]);
         let ar = Archive::new(rdr);
         let mut files = t!(ar.files());
         let mut a = t!(files.next().unwrap());
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn reading_files_mut() {
-        let rdr = Cursor::new(include_bytes!("tests/reading_files.tar"));
+        let rdr = Cursor::new(&include_bytes!("tests/reading_files.tar")[..]);
         let mut ar = Archive::new(rdr);
         let mut files = t!(ar.files_mut());
         let mut a = t!(files.next().unwrap());
@@ -742,7 +742,7 @@ mod tests {
     #[test]
     fn extracting_directories() {
         let td = t!(TempDir::new("tar-rs"));
-        let rdr = Cursor::new(include_bytes!("tests/directory.tar"));
+        let rdr = Cursor::new(&include_bytes!("tests/directory.tar")[..]);
         let mut ar = Archive::new(rdr);
         t!(ar.unpack(td.path()));
 
@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn octal_spaces()
     {
-        let rdr = Cursor::new(include_bytes!("tests/spaces.tar"));
+        let rdr = Cursor::new(&include_bytes!("tests/spaces.tar")[..]);
         let ar = Archive::new(rdr);
 
         let file = ar.files().unwrap().next().unwrap().unwrap();
