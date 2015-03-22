@@ -18,7 +18,7 @@ use std::ffi::CString;
 use std::fmt;
 use std::fs;
 use std::io::prelude::*;
-use std::io::{self, Error, ErrorKind, Seek, SeekFrom};
+use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::iter::repeat;
 use std::mem;
 use std::num;
