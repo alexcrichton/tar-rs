@@ -16,6 +16,7 @@ git = "https://github.com/alexcrichton/tar-rs"
 
 ```rust,no_run
 # #![allow(unused_must_use, unstable)]
+# #![feature(io)]
 extern crate tar;
 
 use std::io::prelude::*;
