@@ -210,8 +210,8 @@ impl<R: Read> Archive<R> {
         let mut me = self;
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
-            try!(Read::read(&mut me, &mut buf[..n as usize]));
-            amt -= n;
+            let n = try!(Read::read(&mut me, &mut buf[..n as usize]));
+            amt -= n as u64;
         }
         Ok(())
     }
