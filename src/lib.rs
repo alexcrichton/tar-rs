@@ -163,7 +163,7 @@ impl<R: Read> Archive<R> {
             }).collect::<Vec<_>>();
             let is_directory = bytes[bytes.len() - 1] == b'/';
             let mut dst = into.to_path_buf();
-            for part in <[u8]>::split(&bytes, |x| *x == b'/') {
+            for part in bytes.split(|x| *x == b'/') {
                 push(&mut dst, part);
             }
             if is_directory {
