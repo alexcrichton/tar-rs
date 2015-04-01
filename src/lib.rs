@@ -8,7 +8,7 @@
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
-#![feature(core, io, fs, fs_time, fs_ext)]
+#![feature(io, fs, fs_time, fs_ext)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
@@ -21,7 +21,6 @@ use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::iter::repeat;
 use std::mem;
-use std::num;
 use std::path::{PathBuf, Path};
 use std::str;
 
@@ -433,7 +432,7 @@ impl<'a, R: Read> Iterator for FilesMut<'a, R> {
 
 impl Header {
     fn size(&self) -> io::Result<u64> { octal(&self.size) }
-    fn cksum(&self) -> io::Result<u32> { octal(&self.cksum) }
+    fn cksum(&self) -> io::Result<u32> { octal(&self.cksum).map(|u| u as u32) }
     fn is_ustar(&self) -> bool {
         &self.ustar[..5] == b"ustar"
     }
@@ -456,14 +455,20 @@ impl<'a, R> File<'a, R> {
     }
 
     /// Returns the value of the owner's user ID field
-    pub fn uid(&self) -> io::Result<u32> { octal(&self.header.owner_id) }
+    pub fn uid(&self) -> io::Result<u32> {
+        octal(&self.header.owner_id).map(|u| u as u32)
+    }
     /// Returns the value of the group's user ID field
-    pub fn gid(&self) -> io::Result<u32> { octal(&self.header.group_id) }
+    pub fn gid(&self) -> io::Result<u32> {
+        octal(&self.header.group_id).map(|u| u as u32)
+    }
     /// Returns the last modification time in Unix time format
-    pub fn mtime(&self) -> io::Result<u64> { octal(&self.header.mtime) }
+    pub fn mtime(&self) -> io::Result<u64> {
+        octal(&self.header.mtime)
+    }
     /// Returns the mode bits for this file
     pub fn mode(&self) -> io::Result<i32> {
-        octal(&self.header.mode)
+        octal(&self.header.mode).map(|u| u as i32)
     }
 
     // /// Classify the type of file that this entry represents
@@ -516,7 +521,7 @@ impl<'a, R> File<'a, R> {
     /// represents the attempt to decode the field in the header.
     pub fn device_major(&self) -> Option<io::Result<u32>> {
         if self.header.is_ustar() {
-            Some(octal(&self.header.dev_major))
+            Some(octal(&self.header.dev_major).map(|u| u as u32))
         } else {
             None
         }
@@ -528,7 +533,7 @@ impl<'a, R> File<'a, R> {
     /// represents the attempt to decode the field in the header.
     pub fn device_minor(&self) -> Option<io::Result<u32>> {
         if self.header.is_ustar() {
-            Some(octal(&self.header.dev_minor))
+            Some(octal(&self.header.dev_minor).map(|u| u as u32))
         } else {
             None
         }
@@ -586,12 +591,12 @@ fn bad_archive() -> Error {
     Error::new(ErrorKind::Other, "invalid tar archive", None)
 }
 
-fn octal<T: num::FromStrRadix>(slice: &[u8]) -> io::Result<T> {
+fn octal(slice: &[u8]) -> io::Result<u64> {
     let num = match str::from_utf8(truncate(slice)) {
         Ok(n) => n,
         Err(_) => return Err(bad_archive()),
     };
-    match num::from_str_radix(num.trim(), 8) {
+    match u64::from_str_radix(num.trim(), 8) {
         Ok(n) => Ok(n),
         Err(_) => Err(bad_archive())
     }
