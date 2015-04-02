@@ -8,7 +8,7 @@
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
-#![feature(io, fs, fs_time, fs_ext)]
+#![feature(fs, fs_time, fs_ext)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
@@ -294,14 +294,13 @@ impl<W: Write> Archive<W> {
                 Some(i) => i,
                 None => return Err(Error::new(ErrorKind::Other,
                                               "path cannot be split to be \
-                                               inserted into archive", None)),
+                                               inserted into archive")),
             };
             copy_memory(&mut header.name, &path[pos + 1..]);
             copy_memory(&mut header.prefix, &path[..pos]);
         } else {
             return Err(Error::new(ErrorKind::Other,
-                                  "path is too long to insert into archive",
-                                  None))
+                                  "path is too long to insert into archive"))
         }
 
         // Prepare the metadata fields.
@@ -575,11 +574,9 @@ impl<'a, R: Read + Seek> Seek for File<'a, R> {
             SeekFrom::End(pos) => self.size as i64 + pos,
         };
         if next < 0 {
-            Err(Error::new(ErrorKind::Other, "cannot seek before position 0",
-                           None))
+            Err(Error::new(ErrorKind::Other, "cannot seek before position 0"))
         } else if next as u64 > self.size {
-            Err(Error::new(ErrorKind::Other, "cannot seek past end of file",
-                           None))
+            Err(Error::new(ErrorKind::Other, "cannot seek past end of file"))
         } else {
             self.pos = next as u64;
             Ok(self.pos)
@@ -588,7 +585,7 @@ impl<'a, R: Read + Seek> Seek for File<'a, R> {
 }
 
 fn bad_archive() -> Error {
-    Error::new(ErrorKind::Other, "invalid tar archive", None)
+    Error::new(ErrorKind::Other, "invalid tar archive")
 }
 
 fn octal(slice: &[u8]) -> io::Result<u64> {
@@ -754,9 +751,9 @@ mod tests {
         let dir_a = td.path().join("a");
         let dir_b = td.path().join("a/b");
         let file_c = td.path().join("a/c");
-        assert_eq!(fs::metadata(&dir_a).map(|m| m.is_dir()), Ok(true));
-        assert_eq!(fs::metadata(&dir_b).map(|m| m.is_dir()), Ok(true));
-        assert_eq!(fs::metadata(&file_c).map(|m| m.is_file()), Ok(true));
+        assert!(fs::metadata(&dir_a).map(|m| m.is_dir()).unwrap_or(false));
+        assert!(fs::metadata(&dir_b).map(|m| m.is_dir()).unwrap_or(false));
+        assert!(fs::metadata(&file_c).map(|m| m.is_file()).unwrap_or(false));
     }
 
     #[test]
