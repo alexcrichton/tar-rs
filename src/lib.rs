@@ -305,7 +305,7 @@ impl<W: Write> Archive<W> {
 
         // Prepare the metadata fields.
         octal(&mut header.mode, perm_bits(&stat)); // TODO: is this right?
-        octal(&mut header.mtime, stat.modified() / 1000);
+        octal(&mut header.mtime, relative_to_1970(stat.modified() / 1000));
         // octal(&mut header.owner_id, stat.unstable.uid);
         // octal(&mut header.group_id, stat.unstable.gid);
         octal(&mut header.owner_id, 0); // TODO: fill this in
@@ -365,6 +365,17 @@ impl<W: Write> Archive<W> {
             if meta.is_dir() {0o755}
             else if meta.permissions().readonly() {0o444}
             else {0o644}
+        }
+
+        // The dates listed in tarballs are always seconds relative to
+        // January 1, 1970. On Windows, however, the timestamps are returned as
+        // dates relative to January 1, 1601, so we need to add in some offset
+        // for those dates.
+        #[cfg(unix)]
+        fn relative_to_1970(s: u64) -> u64 { s }
+        #[cfg(windows)]
+        fn relative_to_1970(s: u64) -> u64 {
+            s - 11644473600
         }
     }
 
