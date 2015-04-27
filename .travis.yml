@@ -1,4 +1,7 @@
 language: rust
+rust:
+  - nightly
+  - beta
 sudo: false
 script:
   - cargo build --verbose
