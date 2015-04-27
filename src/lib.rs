@@ -279,8 +279,8 @@ impl<W: Write> Archive<W> {
 
         // Prepare the header, flagging it as a UStar archive
         let mut header: Header = unsafe { mem::zeroed() };
-        header.ustar = [b'u', b's', b't', b'a', b'r', 0];
-        header.ustar_version = [b'0', b'0'];
+        header.ustar = *b"ustar\0";
+        header.ustar_version = *b"00";
 
         // Prepare the filename
         let cstr = try!(CString::new(path.replace(r"\", "/")));
