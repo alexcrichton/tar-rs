@@ -8,8 +8,9 @@
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
-#![feature(fs, fs_time, fs_ext)]
+#![feature(fs, fs_time)]
 #![deny(missing_docs)]
+#![cfg_attr(unix, fs_ext)]
 #![cfg_attr(test, deny(warnings))]
 
 use std::cell::{RefCell, Cell};
