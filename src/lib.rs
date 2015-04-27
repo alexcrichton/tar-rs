@@ -10,7 +10,7 @@
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![feature(fs, fs_time)]
 #![deny(missing_docs)]
-#![cfg_attr(unix, fs_ext)]
+#![cfg_attr(unix, feature(fs_ext))]
 #![cfg_attr(test, deny(warnings))]
 
 use std::cell::{RefCell, Cell};
