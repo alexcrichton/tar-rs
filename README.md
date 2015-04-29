@@ -1,6 +1,7 @@
 # tar-rs
 
 [![Build Status](https://travis-ci.org/alexcrichton/tar-rs.svg?branch=master)](https://travis-ci.org/alexcrichton/tar-rs)
+[![Build status](https://ci.appveyor.com/api/projects/status/0udgokm2fc6ljorj?svg=true)](https://ci.appveyor.com/project/alexcrichton/tar-rs)
 
 [Documentation](http://alexcrichton.com/tar-rs/tar/index.html)
 
