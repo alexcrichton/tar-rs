@@ -182,12 +182,12 @@ impl<R: Read> Archive<R> {
         return Ok(());
 
         #[cfg(unix)]
-        fn set_perms(perm: &mut fs::Permissions, mode: i32) {
+        fn set_perms(perm: &mut fs::Permissions, mode: u32) {
             use std::os::unix::prelude::*;
             perm.set_mode(mode);
         }
         #[cfg(windows)]
-        fn set_perms(perm: &mut fs::Permissions, mode: i32) {
+        fn set_perms(perm: &mut fs::Permissions, mode: u32) {
             perm.set_readonly(mode & 0o200 != 0o200);
         }
         #[cfg(unix)]
@@ -357,12 +357,12 @@ impl<W: Write> Archive<W> {
         }
 
         #[cfg(unix)]
-        fn perm_bits(meta: &fs::Metadata) -> i32 {
+        fn perm_bits(meta: &fs::Metadata) -> u32 {
             use std::os::unix::prelude::*;
             meta.permissions().mode()
         }
         #[cfg(windows)]
-        fn perm_bits(meta: &fs::Metadata) -> i32 {
+        fn perm_bits(meta: &fs::Metadata) -> u32 {
             if meta.is_dir() {0o755}
             else if meta.permissions().readonly() {0o444}
             else {0o644}
@@ -478,8 +478,8 @@ impl<'a, R> File<'a, R> {
         octal(&self.header.mtime)
     }
     /// Returns the mode bits for this file
-    pub fn mode(&self) -> io::Result<i32> {
-        octal(&self.header.mode).map(|u| u as i32)
+    pub fn mode(&self) -> io::Result<u32> {
+        octal(&self.header.mode).map(|u| u as u32)
     }
 
     // /// Classify the type of file that this entry represents
