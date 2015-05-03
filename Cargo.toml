@@ -17,5 +17,8 @@ writers. Additionally, great lengths are taken to ensure that the entire
 contents are never required to be entirely resident in memory all at once.
 """
 
+[dependencies]
+libc = "0.1"
+
 [dev-dependencies]
 tempdir = "0.3"

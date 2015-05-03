@@ -8,10 +8,13 @@
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
-#![feature(fs, fs_time)]
+#![feature(metadata_ext, fs)]
 #![deny(missing_docs)]
 #![cfg_attr(unix, feature(fs_ext))]
+#![cfg_attr(windows, feature(file_type))]
 #![cfg_attr(test, deny(warnings))]
+
+extern crate libc;
 
 use std::cell::{RefCell, Cell};
 use std::cmp;
@@ -182,19 +185,19 @@ impl<R: Read> Archive<R> {
         return Ok(());
 
         #[cfg(unix)]
-        fn set_perms(perm: &mut fs::Permissions, mode: u32) {
+        fn set_perms(perm: &mut fs::Permissions, mode: i32) {
             use std::os::unix::prelude::*;
-            perm.set_mode(mode);
+            perm.set_mode(mode as libc::mode_t);
         }
         #[cfg(windows)]
-        fn set_perms(perm: &mut fs::Permissions, mode: u32) {
+        fn set_perms(perm: &mut fs::Permissions, mode: i32) {
             perm.set_readonly(mode & 0o200 != 0o200);
         }
         #[cfg(unix)]
         fn push(path: &mut PathBuf, bytes: &[u8]) {
             use std::os::unix::prelude::*;
             use std::ffi::OsStr;
-            path.push(<OsStr as OsStrExt>::from_bytes(bytes));
+            path.push(OsStr::from_bytes(bytes));
         }
         #[cfg(windows)]
         fn push(path: &mut PathBuf, bytes: &[u8]) {
@@ -304,27 +307,7 @@ impl<W: Write> Archive<W> {
                                   "path is too long to insert into archive"))
         }
 
-        // Prepare the metadata fields.
-        octal(&mut header.mode, perm_bits(&stat)); // TODO: is this right?
-        octal(&mut header.mtime, relative_to_1970(stat.modified() / 1000));
-        // octal(&mut header.owner_id, stat.unstable.uid);
-        // octal(&mut header.group_id, stat.unstable.gid);
-        octal(&mut header.owner_id, 0); // TODO: fill this in
-        octal(&mut header.group_id, 0); // TODO: fill this in
-        octal(&mut header.size, stat.len());
-        octal(&mut header.dev_minor, 0);
-        octal(&mut header.dev_major, 0);
-
-        // TODO: need to bind more file types
-        header.link[0] = if stat.is_dir() {b'5'} else {b'0'};
-        // header.link[0] = match stat.kind {
-        //     old_io::FileType::RegularFile => b'0',
-        //     old_io::FileType::Directory => b'5',
-        //     old_io::FileType::NamedPipe => b'6',
-        //     old_io::FileType::BlockSpecial => b'4',
-        //     old_io::FileType::Symlink => b'2',
-        //     old_io::FileType::Unknown => b' ',
-        // };
+        header.fill_from(&stat);
 
         // Final step, calculate the checksum
         let cksum = {
@@ -333,7 +316,7 @@ impl<W: Write> Archive<W> {
                 bytes[156..].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
                 32 * (header.cksum.len() as u32)
         };
-        octal(&mut header.cksum, cksum);
+        octal_into(&mut header.cksum, cksum);
 
         // Write out the header, the entire file, then pad with zeroes.
         let mut obj = self.obj.borrow_mut();
@@ -347,37 +330,6 @@ impl<W: Write> Archive<W> {
 
         // And we're done!
         return Ok(());
-
-        fn octal<T: fmt::Octal>(dst: &mut [u8], val: T) {
-            let o = format!("{:o}", val);
-            let value = o.bytes().rev().chain(repeat(b'0'));
-            for (slot, value) in dst.iter_mut().rev().skip(1).zip(value) {
-                *slot = value;
-            }
-        }
-
-        #[cfg(unix)]
-        fn perm_bits(meta: &fs::Metadata) -> u32 {
-            use std::os::unix::prelude::*;
-            meta.permissions().mode()
-        }
-        #[cfg(windows)]
-        fn perm_bits(meta: &fs::Metadata) -> u32 {
-            if meta.is_dir() {0o755}
-            else if meta.permissions().readonly() {0o444}
-            else {0o644}
-        }
-
-        // The dates listed in tarballs are always seconds relative to
-        // January 1, 1970. On Windows, however, the timestamps are returned as
-        // dates relative to January 1, 1601, so we need to add in some offset
-        // for those dates.
-        #[cfg(unix)]
-        fn relative_to_1970(s: u64) -> u64 { s }
-        #[cfg(windows)]
-        fn relative_to_1970(s: u64) -> u64 {
-            s - 11644473600
-        }
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -442,13 +394,78 @@ impl<'a, R: Read> Iterator for FilesMut<'a, R> {
 }
 
 impl Header {
-    fn size(&self) -> io::Result<u64> { octal(&self.size) }
-    fn cksum(&self) -> io::Result<u32> { octal(&self.cksum).map(|u| u as u32) }
+    fn size(&self) -> io::Result<u64> { octal_from(&self.size) }
+    fn cksum(&self) -> io::Result<u32> { octal_from(&self.cksum).map(|u| u as u32) }
     fn is_ustar(&self) -> bool {
         &self.ustar[..5] == b"ustar"
     }
     fn as_bytes(&self) -> &[u8; 512] {
         unsafe { &*(self as *const _ as *const [u8; 512]) }
+    }
+
+    #[cfg(unix)]
+    fn fill_from(&mut self, meta: &fs::Metadata) {
+        use std::os::unix::prelude::*;
+        let meta = meta.as_raw();
+        // Prepare the metadata fields.
+        octal_into(&mut self.mode, meta.mode() & 0o3777);
+        octal_into(&mut self.mtime, meta.mtime());
+        octal_into(&mut self.owner_id, meta.uid());
+        octal_into(&mut self.group_id, meta.gid());
+        octal_into(&mut self.size, meta.size());
+        octal_into(&mut self.dev_minor, 0);
+        octal_into(&mut self.dev_major, 0);
+
+        // TODO: need to bind more file types
+        self.link[0] = match meta.mode() & libc::S_IFMT {
+            libc::S_IFREG => b'0',
+            libc::S_IFLNK => b'2',
+            libc::S_IFCHR => b'3',
+            libc::S_IFBLK => b'4',
+            libc::S_IFDIR => b'5',
+            libc::S_IFIFO => b'6',
+            _ => b' ',
+        };
+    }
+
+    #[cfg(windows)]
+    fn fill_from(&mut self, meta: &fs::Metadata) {
+        use std::os::windows::prelude::*;
+
+        let readonly = meta.file_attributes() & libc::FILE_ATTRIBUTE_READONLY;
+
+        // There's no concept of a mode on windows, so do a best approximation
+        // here.
+        let mode = match (meta.is_dir(), readonly != 0) {
+            (true, false) => 0o755,
+            (true, true) => 0o555,
+            (false, false) => 0o644,
+            (false, true) => 0o444,
+        };
+        octal_into(&mut self.mode, mode);
+        octal_into(&mut self.owner_id, 0);
+        octal_into(&mut self.group_id, 0);
+        octal_into(&mut self.size, meta.len());
+        octal_into(&mut self.dev_minor, 0);
+        octal_into(&mut self.dev_major, 0);
+
+        let ft = meta.file_type();
+        self.link[0] = if ft.is_dir() {
+            b'5'
+        } else if ft.is_file() {
+            b'0'
+        } else if ft.is_symlink() {
+            b'2'
+        } else {
+            b' '
+        };
+
+        // The dates listed in tarballs are always seconds relative to
+        // January 1, 1970. On Windows, however, the timestamps are returned as
+        // dates relative to January 1, 1601 (in 100ns intervals), so we need to
+        // add in some offset for those dates.
+        let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
+        octal_into(&mut self.mtime, mtime);
     }
 }
 
@@ -467,19 +484,19 @@ impl<'a, R> File<'a, R> {
 
     /// Returns the value of the owner's user ID field
     pub fn uid(&self) -> io::Result<u32> {
-        octal(&self.header.owner_id).map(|u| u as u32)
+        octal_from(&self.header.owner_id).map(|u| u as u32)
     }
     /// Returns the value of the group's user ID field
     pub fn gid(&self) -> io::Result<u32> {
-        octal(&self.header.group_id).map(|u| u as u32)
+        octal_from(&self.header.group_id).map(|u| u as u32)
     }
     /// Returns the last modification time in Unix time format
     pub fn mtime(&self) -> io::Result<u64> {
-        octal(&self.header.mtime)
+        octal_from(&self.header.mtime)
     }
     /// Returns the mode bits for this file
-    pub fn mode(&self) -> io::Result<u32> {
-        octal(&self.header.mode).map(|u| u as u32)
+    pub fn mode(&self) -> io::Result<i32> {
+        octal_from(&self.header.mode).map(|u| u as i32)
     }
 
     // /// Classify the type of file that this entry represents
@@ -532,7 +549,7 @@ impl<'a, R> File<'a, R> {
     /// represents the attempt to decode the field in the header.
     pub fn device_major(&self) -> Option<io::Result<u32>> {
         if self.header.is_ustar() {
-            Some(octal(&self.header.dev_major).map(|u| u as u32))
+            Some(octal_from(&self.header.dev_major).map(|u| u as u32))
         } else {
             None
         }
@@ -544,7 +561,7 @@ impl<'a, R> File<'a, R> {
     /// represents the attempt to decode the field in the header.
     pub fn device_minor(&self) -> Option<io::Result<u32>> {
         if self.header.is_ustar() {
-            Some(octal(&self.header.dev_minor).map(|u| u as u32))
+            Some(octal_from(&self.header.dev_minor).map(|u| u as u32))
         } else {
             None
         }
@@ -600,7 +617,7 @@ fn bad_archive() -> Error {
     Error::new(ErrorKind::Other, "invalid tar archive")
 }
 
-fn octal(slice: &[u8]) -> io::Result<u64> {
+fn octal_from(slice: &[u8]) -> io::Result<u64> {
     let num = match str::from_utf8(truncate(slice)) {
         Ok(n) => n,
         Err(_) => return Err(bad_archive()),
@@ -608,6 +625,14 @@ fn octal(slice: &[u8]) -> io::Result<u64> {
     match u64::from_str_radix(num.trim(), 8) {
         Ok(n) => Ok(n),
         Err(_) => Err(bad_archive())
+    }
+}
+
+fn octal_into<T: fmt::Octal>(dst: &mut [u8], val: T) {
+    let o = format!("{:o}", val);
+    let value = o.bytes().rev().chain(repeat(b'0'));
+    for (slot, value) in dst.iter_mut().rev().skip(1).zip(value) {
+        *slot = value;
     }
 }
 
