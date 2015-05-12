@@ -164,6 +164,10 @@ impl<R: Read> Archive<R> {
             let bytes = file.filename_bytes().iter().map(|&b| {
                 if b == b'\\' {b'/'} else {b}
             }).collect::<Vec<_>>();
+            if bytes.len() == 0 {
+                return Err(io::Error::new(io::ErrorKind::Other,
+                                          "empty file name in tarball"))
+            }
             let is_directory = bytes[bytes.len() - 1] == b'/';
             let mut dst = into.to_path_buf();
             for part in bytes.split(|x| *x == b'/') {
@@ -794,8 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn octal_spaces()
-    {
+    fn octal_spaces() {
         let rdr = Cursor::new(&include_bytes!("tests/spaces.tar")[..]);
         let ar = Archive::new(rdr);
 
@@ -806,5 +809,14 @@ mod tests {
         assert_eq!(file.size, 2);
         assert_eq!(file.mtime().unwrap(), 0o12440016664);
         assert_eq!(file.header.cksum().unwrap(), 0o4253);
+    }
+
+    #[test]
+    fn empty_filename()
+    {
+        let td = t!(TempDir::new("tar-rs"));
+        let rdr = Cursor::new(&include_bytes!("tests/empty_filename.tar")[..]);
+        let mut ar = Archive::new(rdr);
+        assert!(ar.unpack(td.path()).is_err());
     }
 }
