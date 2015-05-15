@@ -8,10 +8,10 @@
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
-#![feature(metadata_ext, fs)]
 #![deny(missing_docs)]
-#![cfg_attr(unix, feature(fs_ext))]
-#![cfg_attr(windows, feature(file_type))]
+#![cfg_attr(feature = "nightly", feature(metadata_ext, fs))]
+#![cfg_attr(all(unix, feature = "nightly"), feature(fs_ext))]
+#![cfg_attr(all(windows, feature = "nightly"), feature(file_type))]
 #![cfg_attr(test, deny(warnings))]
 
 extern crate libc;
@@ -25,8 +25,10 @@ use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::iter::repeat;
 use std::mem;
-use std::path::{PathBuf, Path};
 use std::str;
+
+#[cfg(feature = "nightly")]
+use std::path::{PathBuf, Path};
 
 macro_rules! try_iter{ ($me:expr, $e:expr) => (
     match $e {
@@ -158,6 +160,7 @@ impl<R: Read> Archive<R> {
     }
 
     /// Unpacks this tarball into the specified path
+    #[cfg(feature = "nightly")]
     pub fn unpack(&mut self, into: &Path) -> io::Result<()> {
         for file in try!(self.files_mut()) {
             let mut file = try!(file);
@@ -407,7 +410,26 @@ impl Header {
         unsafe { &*(self as *const _ as *const [u8; 512]) }
     }
 
-    #[cfg(unix)]
+    #[cfg(not(feature = "nightly"))]
+    fn fill_from(&mut self, meta: &fs::Metadata) {
+        let perms = meta.permissions();
+        let is_dir = meta.is_dir();
+        octal_into(&mut self.mode, if is_dir {
+            0o755
+        } else if perms.readonly() {
+            0o444
+        } else {
+            0o644
+        });
+        octal_into(&mut self.mtime, 0);
+        octal_into(&mut self.owner_id, 0);
+        octal_into(&mut self.group_id, 0);
+        octal_into(&mut self.size, meta.len());
+        octal_into(&mut self.dev_minor, 0);
+        octal_into(&mut self.dev_major, 0);
+    }
+
+    #[cfg(all(unix, feature = "nightly"))]
     fn fill_from(&mut self, meta: &fs::Metadata) {
         use std::os::unix::prelude::*;
         let meta = meta.as_raw();
@@ -432,7 +454,7 @@ impl Header {
         };
     }
 
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "nightly"))]
     fn fill_from(&mut self, meta: &fs::Metadata) {
         use std::os::windows::prelude::*;
 
@@ -664,7 +686,7 @@ mod tests {
     use std::io::prelude::*;
     use std::io::{Cursor, SeekFrom};
     use std::iter::repeat;
-    use std::fs::{self, File};
+    use std::fs::File;
 
     use self::tempdir::TempDir;
     use super::Archive;
@@ -783,7 +805,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "nightly")]
     fn extracting_directories() {
+        use std::fs;
+
         let td = t!(TempDir::new("tar-rs"));
         let rdr = Cursor::new(&include_bytes!("tests/directory.tar")[..]);
         let mut ar = Archive::new(rdr);
@@ -812,6 +837,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "nightly")]
     fn empty_filename()
     {
         let td = t!(TempDir::new("tar-rs"));
