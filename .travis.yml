@@ -7,7 +7,8 @@ sudo: false
 script:
   - cargo build --verbose
   - cargo test --verbose
-  - [ $TRAVIS_RUST_VERSION != nightly ] || cargo test --features nightly
+  - |
+    [ $TRAVIS_RUST_VERSION != nightly ] || cargo test --features nightly
   - rustdoc --test README.md -L target/debug -L target/debug/deps
   - cargo doc
 after_success: |
