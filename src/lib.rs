@@ -9,7 +9,8 @@
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![deny(missing_docs)]
-#![cfg_attr(feature = "nightly", feature(metadata_ext, fs))]
+#![cfg_attr(feature = "nightly", feature(metadata_ext))]
+#![cfg_attr(feature = "nightly", feature(fs))]
 #![cfg_attr(all(unix, feature = "nightly"), feature(fs_ext))]
 #![cfg_attr(all(windows, feature = "nightly"), feature(file_type))]
 #![cfg_attr(test, deny(warnings))]
@@ -25,10 +26,8 @@ use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::iter::repeat;
 use std::mem;
+use std::path::{Path, PathBuf};
 use std::str;
-
-#[cfg(feature = "nightly")]
-use std::path::{PathBuf, Path};
 
 macro_rules! try_iter{ ($me:expr, $e:expr) => (
     match $e {
@@ -160,9 +159,8 @@ impl<R: Read> Archive<R> {
     }
 
     /// Unpacks this tarball into the specified path
-    #[cfg(feature = "nightly")]
     pub fn unpack(&mut self, into: &Path) -> io::Result<()> {
-        for file in try!(self.files_mut()) {
+        'outer: for file in try!(self.files_mut()) {
             let mut file = try!(file);
             let bytes = file.filename_bytes().iter().map(|&b| {
                 if b == b'\\' {b'/'} else {b}
@@ -172,34 +170,95 @@ impl<R: Read> Archive<R> {
                                           "empty file name in tarball"))
             }
             let is_directory = bytes[bytes.len() - 1] == b'/';
+
+            // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
+            // * Leading '/'s are trimmed. For example, `///test` is treated as
+            //   `test`.
+            // * If the filename contains '..', then the file is skipped when
+            //   extracting the tarball.
+            // * '//' within a filename is effectively skipped. An error is
+            //   logged, but otherwise the effect is as if any two or more
+            //   adjacent '/'s within the filename were consolidated into one
+            //   '/'.
+
             let mut dst = into.to_path_buf();
+            let mut seen_non_empty_part = false;
             for part in bytes.split(|x| *x == b'/') {
+                // If any part of the filename is '..', then skip over unpacking
+                // the file to prevent directory traversal security issues.  See,
+                // e.g.: CVE-2001-1267, CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
+                if part == b".." {
+                    continue 'outer;
+                }
+
+                // If empty or '.', skip this part.
+                // This effectively results in trimming leading '/'s as well as
+                // merging adjacent '/'s.
+                if part.len() == 0 || part == b"." {
+                    continue;
+                }
+
+                seen_non_empty_part = true;
                 push(&mut dst, part);
             }
+
+            // Skip cases where only slashes or '.' parts were seen, because this
+            // is effectively an empty filename.
+            if !seen_non_empty_part {
+                continue;
+            }
+
             if is_directory {
-                try!(fs::create_dir_all(&dst));
+                if let Err(e) = fs::create_dir_all(&dst) {
+                    if e.kind() != ErrorKind::AlreadyExists {
+                        return Err(e);
+                    }
+                }
             } else {
-                try!(fs::create_dir_all(&dst.parent().unwrap()));
+                if let Err(e) = fs::create_dir_all(&dst.parent().unwrap()) {
+                    if e.kind() != ErrorKind::AlreadyExists {
+                        return Err(e);
+                    }
+                }
+
                 {
                     let mut dst = try!(fs::File::create(&dst));
                     try!(io::copy(&mut file, &mut dst));
                 }
-                let mut perm = try!(fs::metadata(&dst)).permissions();
-                set_perms(&mut perm, try!(file.mode()));
-                try!(fs::set_permissions(&dst, perm));
+
+                try!(set_perms(&dst, try!(file.mode())));
             }
         }
         return Ok(());
 
-        #[cfg(unix)]
-        fn set_perms(perm: &mut fs::Permissions, mode: i32) {
+        #[cfg(all(unix, feature = "nightly"))]
+        fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
             use std::os::unix::prelude::*;
+            let mut perm = try!(fs::metadata(dst)).permissions();
             perm.set_mode(mode as libc::mode_t);
+            fs::set_permissions(dst, perm)
         }
-        #[cfg(windows)]
-        fn set_perms(perm: &mut fs::Permissions, mode: i32) {
-            perm.set_readonly(mode & 0o200 != 0o200);
+        #[cfg(all(unix, not(feature = "nightly")))]
+        fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
+            use std::ffi::CString;
+            use std::os::unix::ffi::OsStringExt;
+            let dst_cstring = try!(CString::new(dst.as_os_str().to_os_string().into_vec()));
+            unsafe {
+                libc::chmod(dst_cstring.as_ptr(), mode as libc::mode_t);
+                return Ok(())
+            }
         }
+        #[cfg(not(unix))]
+        fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
+            if cfg!(feature = "nightly") {
+                let mut perm = try!(fs::metadata(dst)).permissions();
+                perm.set_readonly(mode & 0o200 != 0o200);
+                fs::set_permissions(dst, perm)
+            } else {
+                Ok(())
+            }
+        }
+
         #[cfg(unix)]
         fn push(path: &mut PathBuf, bytes: &[u8]) {
             use std::os::unix::prelude::*;
@@ -805,7 +864,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "nightly")]
     fn extracting_directories() {
         use std::fs;
 
@@ -820,6 +878,88 @@ mod tests {
         assert!(fs::metadata(&dir_a).map(|m| m.is_dir()).unwrap_or(false));
         assert!(fs::metadata(&dir_b).map(|m| m.is_dir()).unwrap_or(false));
         assert!(fs::metadata(&file_c).map(|m| m.is_file()).unwrap_or(false));
+    }
+
+    #[test]
+    fn extracting_duplicate_dirs() {
+        use std::fs;
+
+        let td = t!(TempDir::new("tar-rs"));
+        let rdr = Cursor::new(&include_bytes!("tests/duplicate_dirs.tar")[..]);
+        let mut ar = Archive::new(rdr);
+        t!(ar.unpack(td.path()));
+
+        let some_dir = td.path().join("some_dir");
+        assert!(fs::metadata(&some_dir).map(|m| m.is_dir()).unwrap_or(false));
+    }
+
+    #[test]
+    fn extracting_malicious_tarball() {
+        use std::fs;
+        use std::fs::OpenOptions;
+        use std::io::{Seek, Write};
+
+        let td = t!(TempDir::new("tar-rs"));
+
+        let mut evil_tar_f = t!(OpenOptions::new().read(true).write(true).create(true).open(td.path().join("evil.tar")));
+
+        {
+            let a = Archive::new(&mut evil_tar_f);
+            let mut evil_txt_f = t!(OpenOptions::new().read(true).write(true).create(true).open(td.path().join("evil.txt")));
+            t!(writeln!(evil_txt_f, "This is an evil file."));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("/tmp/abs_evil.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("//tmp/abs_evil2.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("///tmp/abs_evil3.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("/./tmp/abs_evil4.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("//./tmp/abs_evil5.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("///./tmp/abs_evil6.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("/../tmp/rel_evil.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("../rel_evil2.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("./../rel_evil3.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("some/../../rel_evil4.txt", &mut evil_txt_f));
+            t!(a.finish());
+        }
+
+        t!(evil_tar_f.seek(SeekFrom::Start(0)));
+        let mut ar = Archive::new(&mut evil_tar_f);
+        t!(ar.unpack(td.path()));
+
+        assert!(fs::metadata("/tmp/abs_evil.txt").is_err());
+        assert!(fs::metadata("/tmp/abs_evil.txt2").is_err());
+        assert!(fs::metadata("/tmp/abs_evil.txt3").is_err());
+        assert!(fs::metadata("/tmp/abs_evil.txt4").is_err());
+        assert!(fs::metadata("/tmp/abs_evil.txt5").is_err());
+        assert!(fs::metadata("/tmp/abs_evil.txt6").is_err());
+        assert!(fs::metadata("/tmp/rel_evil.txt").is_err());
+        assert!(fs::metadata("/tmp/rel_evil.txt").is_err());
+        assert!(fs::metadata(td.path().join("..").join("tmp").join("rel_evil.txt")).is_err());
+        assert!(fs::metadata(td.path().join("..").join("rel_evil2.txt")).is_err());
+        assert!(fs::metadata(td.path().join("..").join("rel_evil3.txt")).is_err());
+        assert!(fs::metadata(td.path().join("..").join("rel_evil4.txt")).is_err());
+
+        // The `some` subdirectory should not be created because the only filename
+        // that references this has '..'.
+        assert!(fs::metadata(td.path().join("some")).is_err());
+
+        // The `tmp` subdirectory should be created and within this subdirectory,
+        // there should be files named `abs_evil.txt` through `abs_evil6.txt`.
+        assert!(fs::metadata(td.path().join("tmp")).map(|m| m.is_dir()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil.txt")).map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil2.txt")).map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil3.txt")).map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil4.txt")).map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil5.txt")).map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil6.txt")).map(|m| m.is_file()).unwrap_or(false));
     }
 
     #[test]
