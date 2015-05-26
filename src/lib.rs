@@ -247,7 +247,7 @@ impl<R: Read> Archive<R> {
             fs::set_permissions(dst, perm)
         }
         #[cfg(all(windows, not(feature = "nightly")))]
-        fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
+        fn set_perms(_dst: &PathBuf, _mode: i32) -> io::Result<()> {
             Ok(())
         }
 
@@ -942,10 +942,10 @@ mod tests {
         assert!(fs::metadata("/tmp/abs_evil.txt6").is_err());
         assert!(fs::metadata("/tmp/rel_evil.txt").is_err());
         assert!(fs::metadata("/tmp/rel_evil.txt").is_err());
-        assert!(fs::metadata(td.path().join("..").join("tmp").join("rel_evil.txt")).is_err());
-        assert!(fs::metadata(td.path().join("..").join("rel_evil2.txt")).is_err());
-        assert!(fs::metadata(td.path().join("..").join("rel_evil3.txt")).is_err());
-        assert!(fs::metadata(td.path().join("..").join("rel_evil4.txt")).is_err());
+        assert!(fs::metadata(td.path().join("../tmp/rel_evil.txt")).is_err());
+        assert!(fs::metadata(td.path().join("../rel_evil2.txt")).is_err());
+        assert!(fs::metadata(td.path().join("../rel_evil3.txt")).is_err());
+        assert!(fs::metadata(td.path().join("../rel_evil4.txt")).is_err());
 
         // The `some` subdirectory should not be created because the only
         // filename that references this has '..'.
@@ -956,17 +956,17 @@ mod tests {
         // `abs_evil6.txt`.
         assert!(fs::metadata(td.path().join("tmp")).map(|m| m.is_dir())
                    .unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil.txt"))
+        assert!(fs::metadata(td.path().join("tmp/abs_evil.txt"))
                    .map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil2.txt"))
+        assert!(fs::metadata(td.path().join("tmp/abs_evil2.txt"))
                    .map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil3.txt"))
+        assert!(fs::metadata(td.path().join("tmp/abs_evil3.txt"))
                    .map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil4.txt"))
+        assert!(fs::metadata(td.path().join("tmp/abs_evil4.txt"))
                    .map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil5.txt"))
+        assert!(fs::metadata(td.path().join("tmp/abs_evil5.txt"))
                    .map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil6.txt"))
+        assert!(fs::metadata(td.path().join("tmp/abs_evil6.txt"))
                    .map(|m| m.is_file()).unwrap_or(false));
     }
 
