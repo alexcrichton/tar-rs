@@ -9,9 +9,8 @@
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![deny(missing_docs)]
-#![cfg_attr(feature = "nightly", feature(metadata_ext))]
-#![cfg_attr(feature = "nightly", feature(fs))]
-#![cfg_attr(all(unix, feature = "nightly"), feature(fs_ext))]
+#![cfg_attr(feature = "nightly", feature(fs, metadata_ext))]
+#![cfg_attr(all(unix, feature = "nightly"), feature(fs_ext, raw_ext))]
 #![cfg_attr(all(windows, feature = "nightly"), feature(file_type))]
 #![cfg_attr(test, deny(warnings))]
 
@@ -234,29 +233,32 @@ impl<R: Read> Archive<R> {
         #[cfg(all(unix, feature = "nightly"))]
         fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
             use std::os::unix::prelude::*;
-            let mut perm = try!(fs::metadata(dst)).permissions();
-            perm.set_mode(mode as libc::mode_t);
+            use std::os::unix::raw;
+            let perm = fs::Permissions::from_mode(mode as raw::mode_t);
             fs::set_permissions(dst, perm)
         }
         #[cfg(all(unix, not(feature = "nightly")))]
         fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
             use std::ffi::CString;
-            use std::os::unix::ffi::OsStringExt;
-            let dst_cstring = try!(CString::new(dst.as_os_str().to_os_string().into_vec()));
+            use std::os::unix::prelude::*;
+            let dst_cstring = try!(CString::new(dst.as_os_str().as_bytes()));
             unsafe {
-                libc::chmod(dst_cstring.as_ptr(), mode as libc::mode_t);
-                return Ok(())
+                if libc::chmod(dst_cstring.as_ptr(), mode as libc::mode_t) != 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(all(windows, feature = "nightly"))]
         fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
-            if cfg!(feature = "nightly") {
-                let mut perm = try!(fs::metadata(dst)).permissions();
-                perm.set_readonly(mode & 0o200 != 0o200);
-                fs::set_permissions(dst, perm)
-            } else {
-                Ok(())
-            }
+            let mut perm = try!(fs::metadata(dst)).permissions();
+            perm.set_readonly(mode & 0o200 != 0o200);
+            fs::set_permissions(dst, perm)
+        }
+        #[cfg(all(windows, not(feature = "nightly")))]
+        fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
+            Ok(())
         }
 
         #[cfg(unix)]
