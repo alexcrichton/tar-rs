@@ -165,8 +165,7 @@ impl<R: Read> Archive<R> {
                 if b == b'\\' {b'/'} else {b}
             }).collect::<Vec<_>>();
             if bytes.len() == 0 {
-                return Err(io::Error::new(io::ErrorKind::Other,
-                                          "empty file name in tarball"))
+                continue
             }
             let is_directory = bytes[bytes.len() - 1] == b'/';
 
@@ -184,17 +183,17 @@ impl<R: Read> Archive<R> {
             let mut seen_non_empty_part = false;
             for part in bytes.split(|x| *x == b'/') {
                 // If any part of the filename is '..', then skip over unpacking
-                // the file to prevent directory traversal security issues.  See,
-                // e.g.: CVE-2001-1267, CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
+                // the file to prevent directory traversal security issues.
+                // See, e.g.: CVE-2001-1267, CVE-2002-0399, CVE-2005-1918,
+                // CVE-2007-4131
                 if part == b".." {
-                    continue 'outer;
+                    continue 'outer
                 }
 
-                // If empty or '.', skip this part.
-                // This effectively results in trimming leading '/'s as well as
-                // merging adjacent '/'s.
+                // If empty or '.', skip this part. This effectively results in
+                // trimming leading '/'s as well as merging adjacent '/'s.
                 if part.len() == 0 || part == b"." {
-                    continue;
+                    continue
                 }
 
                 seen_non_empty_part = true;
@@ -204,22 +203,13 @@ impl<R: Read> Archive<R> {
             // Skip cases where only slashes or '.' parts were seen, because this
             // is effectively an empty filename.
             if !seen_non_empty_part {
-                continue;
+                continue
             }
 
             if is_directory {
-                if let Err(e) = fs::create_dir_all(&dst) {
-                    if e.kind() != ErrorKind::AlreadyExists {
-                        return Err(e);
-                    }
-                }
+                try!(fs::create_dir_all(&dst));
             } else {
-                if let Err(e) = fs::create_dir_all(&dst.parent().unwrap()) {
-                    if e.kind() != ErrorKind::AlreadyExists {
-                        return Err(e);
-                    }
-                }
-
+                try!(fs::create_dir_all(&dst.parent().unwrap()));
                 {
                     let mut dst = try!(fs::File::create(&dst));
                     try!(io::copy(&mut file, &mut dst));
@@ -903,11 +893,13 @@ mod tests {
 
         let td = t!(TempDir::new("tar-rs"));
 
-        let mut evil_tar_f = t!(OpenOptions::new().read(true).write(true).create(true).open(td.path().join("evil.tar")));
+        let mut evil_tar = Cursor::new(Vec::new());
 
         {
-            let a = Archive::new(&mut evil_tar_f);
-            let mut evil_txt_f = t!(OpenOptions::new().read(true).write(true).create(true).open(td.path().join("evil.txt")));
+            let a = Archive::new(&mut evil_tar);
+            let mut evil_txt_f = t!(OpenOptions::new().read(true).write(true)
+                                                .create(true)
+                                                .open(td.path().join("evil.txt")));
             t!(writeln!(evil_txt_f, "This is an evil file."));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
             t!(a.append("/tmp/abs_evil.txt", &mut evil_txt_f));
@@ -929,11 +921,17 @@ mod tests {
             t!(a.append("./../rel_evil3.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
             t!(a.append("some/../../rel_evil4.txt", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append("././//./", &mut evil_txt_f));
+            t!(evil_txt_f.seek(SeekFrom::Start(0)));
+            t!(a.append(".", &mut evil_txt_f));
             t!(a.finish());
         }
 
-        t!(evil_tar_f.seek(SeekFrom::Start(0)));
-        let mut ar = Archive::new(&mut evil_tar_f);
+        t!(evil_tar.seek(SeekFrom::Start(0)));
+        let mut ar = Archive::new(&mut evil_tar);
         t!(ar.unpack(td.path()));
 
         assert!(fs::metadata("/tmp/abs_evil.txt").is_err());
@@ -949,19 +947,27 @@ mod tests {
         assert!(fs::metadata(td.path().join("..").join("rel_evil3.txt")).is_err());
         assert!(fs::metadata(td.path().join("..").join("rel_evil4.txt")).is_err());
 
-        // The `some` subdirectory should not be created because the only filename
-        // that references this has '..'.
+        // The `some` subdirectory should not be created because the only
+        // filename that references this has '..'.
         assert!(fs::metadata(td.path().join("some")).is_err());
 
-        // The `tmp` subdirectory should be created and within this subdirectory,
-        // there should be files named `abs_evil.txt` through `abs_evil6.txt`.
-        assert!(fs::metadata(td.path().join("tmp")).map(|m| m.is_dir()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil.txt")).map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil2.txt")).map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil3.txt")).map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil4.txt")).map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil5.txt")).map(|m| m.is_file()).unwrap_or(false));
-        assert!(fs::metadata(td.path().join("tmp").join("abs_evil6.txt")).map(|m| m.is_file()).unwrap_or(false));
+        // The `tmp` subdirectory should be created and within this
+        // subdirectory, there should be files named `abs_evil.txt` through
+        // `abs_evil6.txt`.
+        assert!(fs::metadata(td.path().join("tmp")).map(|m| m.is_dir())
+                   .unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil.txt"))
+                   .map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil2.txt"))
+                   .map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil3.txt"))
+                   .map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil4.txt"))
+                   .map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil5.txt"))
+                   .map(|m| m.is_file()).unwrap_or(false));
+        assert!(fs::metadata(td.path().join("tmp").join("abs_evil6.txt"))
+                   .map(|m| m.is_file()).unwrap_or(false));
     }
 
     #[test]
