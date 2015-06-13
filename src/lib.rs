@@ -9,9 +9,6 @@
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![deny(missing_docs)]
-#![cfg_attr(feature = "nightly", feature(fs, metadata_ext))]
-#![cfg_attr(all(unix, feature = "nightly"), feature(fs_ext, raw_ext))]
-#![cfg_attr(all(windows, feature = "nightly"), feature(file_type))]
 #![cfg_attr(test, deny(warnings))]
 
 extern crate libc;
@@ -483,7 +480,6 @@ impl Header {
     #[cfg(all(unix, feature = "nightly"))]
     fn fill_from(&mut self, meta: &fs::Metadata) {
         use std::os::unix::prelude::*;
-        let meta = meta.as_raw();
         // Prepare the metadata fields.
         octal_into(&mut self.mode, meta.mode() & 0o3777);
         octal_into(&mut self.mtime, meta.mtime());
