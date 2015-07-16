@@ -217,35 +217,18 @@ impl<R: Read> Archive<R> {
         }
         return Ok(());
 
-        #[cfg(all(unix, feature = "nightly"))]
+        #[cfg(unix)]
         fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
             use std::os::unix::prelude::*;
             use std::os::unix::raw;
             let perm = fs::Permissions::from_mode(mode as raw::mode_t);
             fs::set_permissions(dst, perm)
         }
-        #[cfg(all(unix, not(feature = "nightly")))]
-        fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
-            use std::ffi::CString;
-            use std::os::unix::prelude::*;
-            let dst_cstring = try!(CString::new(dst.as_os_str().as_bytes()));
-            unsafe {
-                if libc::chmod(dst_cstring.as_ptr(), mode as libc::mode_t) != 0 {
-                    Err(io::Error::last_os_error())
-                } else {
-                    Ok(())
-                }
-            }
-        }
-        #[cfg(all(windows, feature = "nightly"))]
+        #[cfg(windows)]
         fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
             let mut perm = try!(fs::metadata(dst)).permissions();
             perm.set_readonly(mode & 0o200 != 0o200);
             fs::set_permissions(dst, perm)
-        }
-        #[cfg(all(windows, not(feature = "nightly")))]
-        fn set_perms(_dst: &PathBuf, _mode: i32) -> io::Result<()> {
-            Ok(())
         }
 
         #[cfg(unix)]
@@ -458,26 +441,7 @@ impl Header {
         unsafe { &*(self as *const _ as *const [u8; 512]) }
     }
 
-    #[cfg(not(feature = "nightly"))]
-    fn fill_from(&mut self, meta: &fs::Metadata) {
-        let perms = meta.permissions();
-        let is_dir = meta.is_dir();
-        octal_into(&mut self.mode, if is_dir {
-            0o755
-        } else if perms.readonly() {
-            0o444
-        } else {
-            0o644
-        });
-        octal_into(&mut self.mtime, 0);
-        octal_into(&mut self.owner_id, 0);
-        octal_into(&mut self.group_id, 0);
-        octal_into(&mut self.size, meta.len());
-        octal_into(&mut self.dev_minor, 0);
-        octal_into(&mut self.dev_major, 0);
-    }
-
-    #[cfg(all(unix, feature = "nightly"))]
+    #[cfg(unix)]
     fn fill_from(&mut self, meta: &fs::Metadata) {
         use std::os::unix::prelude::*;
         // Prepare the metadata fields.
@@ -501,7 +465,7 @@ impl Header {
         };
     }
 
-    #[cfg(all(windows, feature = "nightly"))]
+    #[cfg(windows)]
     fn fill_from(&mut self, meta: &fs::Metadata) {
         use std::os::windows::prelude::*;
 
@@ -981,7 +945,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "nightly")]
     fn empty_filename()
     {
         let td = t!(TempDir::new("tar-rs"));
