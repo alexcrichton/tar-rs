@@ -524,13 +524,13 @@ impl Header {
                     let s = try!(str::from_utf8(bytes).map_err(|_| {
                         not_unicode()
                     }));
-                    Cow::Borrowed(Path::new(s))
+                    Ok(Cow::Borrowed(Path::new(s)))
                 }
                 Cow::Owned(bytes) => {
                     let s = try!(String::from_utf8(bytes).map_err(|_| {
                         not_unicode()
                     }));
-                    Cow::Owned(PathBuf::from(s))
+                    Ok(Cow::Owned(PathBuf::from(s)))
                 }
             }
         }
@@ -845,7 +845,7 @@ impl<'a, R: Read> File<'a, R> {
     ///
     /// for (i, file) in ar.files().unwrap().enumerate() {
     ///     let mut file = file.unwrap();
-    ///     file.unpack_to(format!("file-{}", i)).unwrap();
+    ///     file.unpack(format!("file-{}", i)).unwrap();
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {

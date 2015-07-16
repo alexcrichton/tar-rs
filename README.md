@@ -33,8 +33,8 @@ fn main() {
         let mut file = file.unwrap();
 
         // Inspect metadata about the file
-        println!("{:?}", file.filename());
-        println!("{}", file.size());
+        println!("{:?}", file.header().path().unwrap());
+        println!("{}", file.header().size().unwrap());
 
         // files implement the Read trait
         let mut s = String::new();
@@ -62,8 +62,8 @@ fn main() {
     let file = File::create("foo.tar").unwrap();
     let a = Archive::new(file);
 
-    a.append("file1.txt", &mut File::open("file1.txt").unwrap());
-    a.append("file2.txt", &mut File::open("file2.txt").unwrap());
+    a.append_path("file1.txt");
+    a.append_file("file2.txt", &mut File::open("file3.txt").unwrap());
     a.finish();
 }
 ```
