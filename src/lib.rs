@@ -9,14 +9,13 @@
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![deny(missing_docs)]
-// #![cfg_attr(test, deny(warnings))]
+#![cfg_attr(test, deny(warnings))]
 
 extern crate libc;
 
 use std::borrow::Cow;
 use std::cell::{RefCell, Cell};
 use std::cmp;
-use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::io::prelude::*;
@@ -27,6 +26,7 @@ use std::path::{Path, PathBuf, Component};
 use std::str;
 
 #[cfg(unix)] use std::os::unix::prelude::*;
+#[cfg(unix)] use std::ffi::{OsStr, OsString};
 #[cfg(windows)] use std::os::windows::prelude::*;
 
 macro_rules! try_iter{ ($me:expr, $e:expr) => (
