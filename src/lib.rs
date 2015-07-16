@@ -9,21 +9,25 @@
 
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![deny(missing_docs)]
-#![cfg_attr(test, deny(warnings))]
+// #![cfg_attr(test, deny(warnings))]
 
 extern crate libc;
 
+use std::borrow::Cow;
 use std::cell::{RefCell, Cell};
 use std::cmp;
-use std::ffi::CString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::iter::repeat;
 use std::mem;
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, Component};
 use std::str;
+
+#[cfg(unix)] use std::os::unix::prelude::*;
+#[cfg(windows)] use std::os::windows::prelude::*;
 
 macro_rules! try_iter{ ($me:expr, $e:expr) => (
     match $e {
@@ -61,7 +65,7 @@ pub struct FilesMut<'a, R:'a> {
 
 /// A read-only view into a file of an archive.
 ///
-/// This structure is a windows into a portion of a borrowed archive which can
+/// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader and Seek
 /// traits. A file cannot be rewritten once inserted into an archive.
 pub struct File<'a, R: 'a> {
@@ -69,7 +73,6 @@ pub struct File<'a, R: 'a> {
     archive: &'a Archive<R>,
     pos: u64,
     size: u64,
-    filename: Vec<u8>,
 
     // Used in read() to make sure we're positioned at the next byte. For a
     // `Files` iterator these are meaningful while for a `FilesMut` iterator
@@ -154,17 +157,32 @@ impl<R: Read> Archive<R> {
         Ok(FilesMut { archive: self, done: false, next: 0 })
     }
 
-    /// Unpacks this tarball into the specified path
-    pub fn unpack(&mut self, into: &Path) -> io::Result<()> {
+    /// Unpacks the contents tarball into the specified `dst`.
+    ///
+    /// This function will iterate over the entire contents of this tarball,
+    /// extracting each file in turn to the location specified by the entry's
+    /// path name.
+    ///
+    /// This operation is relatively sensitive in that it will not write files
+    /// outside of the path specified by `into`. Files in the archive which have
+    /// a '..' in their path are skipped during the unpacking process.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tar::Archive;
+    ///
+    /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
+    /// ar.unpack("foo").unwrap();
+    /// ```
+    pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
+        self.unpack2(dst.as_ref())
+    }
+
+    fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
         'outer: for file in try!(self.files_mut()) {
             let mut file = try!(file);
-            let bytes = file.filename_bytes().iter().map(|&b| {
-                if b == b'\\' {b'/'} else {b}
-            }).collect::<Vec<_>>();
-            if bytes.len() == 0 {
-                continue
-            }
-            let is_directory = bytes[bytes.len() - 1] == b'/';
 
             // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
             // * Leading '/'s are trimmed. For example, `///test` is treated as
@@ -175,75 +193,43 @@ impl<R: Read> Archive<R> {
             //   logged, but otherwise the effect is as if any two or more
             //   adjacent '/'s within the filename were consolidated into one
             //   '/'.
+            //
+            // Most of this is handled by the `path` module of the standard
+            // library, but we specially handle a few cases here as well.
 
-            let mut dst = into.to_path_buf();
-            let mut seen_non_empty_part = false;
-            for part in bytes.split(|x| *x == b'/') {
-                // If any part of the filename is '..', then skip over unpacking
-                // the file to prevent directory traversal security issues.
-                // See, e.g.: CVE-2001-1267, CVE-2002-0399, CVE-2005-1918,
-                // CVE-2007-4131
-                if part == b".." {
-                    continue 'outer
+            let mut file_dst = dst.to_path_buf();
+            for part in try!(file.header().path()).components() {
+                match part {
+                    // Leading '/' characters, root paths, and '.' components
+                    // are just ignored and treated as "empty components"
+                    Component::Prefix(..) |
+                    Component::RootDir |
+                    Component::CurDir => continue,
+
+                    // If any part of the filename is '..', then skip over
+                    // unpacking the file to prevent directory traversal
+                    // security issues.  See, e.g.: CVE-2001-1267,
+                    // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
+                    Component::ParentDir => continue 'outer,
+
+                    Component::Normal(part) => file_dst.push(part),
                 }
-
-                // If empty or '.', skip this part. This effectively results in
-                // trimming leading '/'s as well as merging adjacent '/'s.
-                if part.len() == 0 || part == b"." {
-                    continue
-                }
-
-                seen_non_empty_part = true;
-                push(&mut dst, part);
             }
 
-            // Skip cases where only slashes or '.' parts were seen, because this
-            // is effectively an empty filename.
-            if !seen_non_empty_part {
+            // Skip cases where only slashes or '.' parts were seen, because
+            // this is effectively an empty filename.
+            if *dst == *file_dst {
                 continue
             }
 
-            if is_directory {
-                try!(fs::create_dir_all(&dst));
+            if file.header().link[0] == b'5' {
+                try!(fs::create_dir_all(&file_dst));
             } else {
-                try!(fs::create_dir_all(&dst.parent().unwrap()));
-                {
-                    let mut dst = try!(fs::File::create(&dst));
-                    try!(io::copy(&mut file, &mut dst));
-                }
-
-                try!(set_perms(&dst, try!(file.mode())));
+                try!(fs::create_dir_all(&file_dst.parent().unwrap()));
+                try!(file.unpack(&file_dst));
             }
         }
-        return Ok(());
-
-        #[cfg(unix)]
-        fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
-            use std::os::unix::prelude::*;
-            use std::os::unix::raw;
-            let perm = fs::Permissions::from_mode(mode as raw::mode_t);
-            fs::set_permissions(dst, perm)
-        }
-        #[cfg(windows)]
-        fn set_perms(dst: &PathBuf, mode: i32) -> io::Result<()> {
-            let mut perm = try!(fs::metadata(dst)).permissions();
-            perm.set_readonly(mode & 0o200 != 0o200);
-            fs::set_permissions(dst, perm)
-        }
-
-        #[cfg(unix)]
-        fn push(path: &mut PathBuf, bytes: &[u8]) {
-            use std::os::unix::prelude::*;
-            use std::ffi::OsStr;
-            path.push(OsStr::from_bytes(bytes));
-        }
-        #[cfg(windows)]
-        fn push(path: &mut PathBuf, bytes: &[u8]) {
-            use std::str;
-            let s = str::from_utf8(bytes).ok().expect("only unicode paths are \
-                                                       supported on windows");
-            path.push(s);
-        }
+        Ok(())
     }
 
     fn skip(&self, mut amt: u64) -> io::Result<()> {
@@ -277,13 +263,13 @@ impl<R: Read> Archive<R> {
                   chunk[156..].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
                   32 * 8;
 
-        let mut ret = File {
+        let header: Header = unsafe { mem::transmute(chunk) };
+        let ret = File {
             archive: self,
-            header: unsafe { mem::transmute(chunk) },
             pos: 0,
-            size: 0,
+            size: try!(header.size()),
+            header: header,
             tar_offset: *offset,
-            filename: Vec::new(),
             seek: seek,
         };
 
@@ -292,82 +278,138 @@ impl<R: Read> Archive<R> {
         if sum != cksum { return Err(bad_archive()) }
 
         // Figure out where the next file is
-        let size = try!(ret.header.size());
-        ret.size = size;
-        let size = (size + 511) & !(512 - 1);
+        let size = (ret.size + 511) & !(512 - 1);
         *offset += size;
-
-        if ret.header.is_ustar() && ret.header.prefix[0] != 0 {
-            ret.filename.extend(truncate(&ret.header.prefix).iter().map(|x| *x));
-            ret.filename.push(b'/');
-        }
-        ret.filename.extend(truncate(&ret.header.name).iter().map(|x| *x));
 
         return Ok(Some(ret));
     }
 }
 
 impl<W: Write> Archive<W> {
-    /// Add the file at the specified path to this archive.
+    /// Adds a new entry to this archive.
     ///
-    /// This function will insert the file into the archive with the appropriate
-    /// metadata set, returning any I/O error which occurs while writing.
+    /// This function will append the header specified, followed by contents of
+    /// the stream specified by `data`. To produce a valid archive the `size`
+    /// field of `header` must be the same as the length of the stream that's
+    /// being written. Additionally the checksum for the header should have been
+    /// set via the `set_cksum` method.
     ///
     /// Note that this will not attempt to seek the archive to a valid position,
     /// so if the archive is in the middle of a read or some other similar
     /// operation then this may corrupt the archive.
-    pub fn append(&self, path: &str, file: &mut fs::File) -> io::Result<()> {
-        let stat = try!(file.metadata());
-
-        // Prepare the header, flagging it as a UStar archive
-        let mut header: Header = unsafe { mem::zeroed() };
-        header.ustar = *b"ustar\0";
-        header.ustar_version = *b"00";
-
-        // Prepare the filename
-        let cstr = try!(CString::new(path.replace(r"\", "/")));
-        let path = cstr.as_bytes();
-        let (namelen, prefixlen) = (header.name.len(), header.prefix.len());
-        if path.len() < namelen {
-            copy_memory(&mut header.name, path);
-        } else if path.len() < namelen + prefixlen {
-            let prefix = &path[..cmp::min(path.len(), prefixlen)];
-            let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
-                Some(i) => i,
-                None => return Err(Error::new(ErrorKind::Other,
-                                              "path cannot be split to be \
-                                               inserted into archive")),
-            };
-            copy_memory(&mut header.name, &path[pos + 1..]);
-            copy_memory(&mut header.prefix, &path[..pos]);
-        } else {
-            return Err(Error::new(ErrorKind::Other,
-                                  "path is too long to insert into archive"))
-        }
-
-        header.fill_from(&stat);
-
-        // Final step, calculate the checksum
-        let cksum = {
-            let bytes = header.as_bytes();
-            bytes[..148].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
-                bytes[156..].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
-                32 * (header.cksum.len() as u32)
-        };
-        octal_into(&mut header.cksum, cksum);
-
-        // Write out the header, the entire file, then pad with zeroes.
+    ///
+    /// Also note that after all files have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when either reading or writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tar::{Archive, Header};
+    ///
+    /// let mut header = Header::new();
+    /// header.set_path("foo");
+    /// header.set_size(4);
+    /// header.set_cksum();
+    ///
+    /// let mut data: &[u8] = &[1, 2, 3, 4];
+    ///
+    /// let mut ar = Archive::new(Vec::new());
+    /// ar.append(&header, &mut data).unwrap();
+    /// let archive = ar.into_inner();
+    /// ```
+    pub fn append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
         let mut obj = self.obj.borrow_mut();
         try!(obj.write_all(header.as_bytes()));
-        try!(io::copy(file, &mut *obj));
+        let len = try!(io::copy(&mut data, &mut *obj));
+
+        // Pad with zeros if necessary.
         let buf = [0; 512];
-        let remaining = 512 - (stat.len() % 512);
+        let remaining = 512 - (len % 512);
         if remaining < 512 {
             try!(obj.write_all(&buf[..remaining as usize]));
         }
 
-        // And we're done!
-        return Ok(());
+        Ok(())
+    }
+
+    /// Adds a file on the local filesystem to this archive.
+    ///
+    /// This function will open the file specified by `path` and insert the file
+    /// into the archive with the appropriate metadata set, returning any I/O
+    /// error which occurs while writing. The path name for the file inside of
+    /// this archive will be the same as `path`, and it is recommended that the
+    /// path is a relative path.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all files have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tar::Archive;
+    ///
+    /// let mut ar = Archive::new(Vec::new());
+    ///
+    /// ar.append_path("foo/bar.txt").unwrap();
+    /// ```
+    pub fn append_path<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        self.append_path2(path.as_ref())
+    }
+
+    fn append_path2(&self, path: &Path) -> io::Result<()> {
+        let mut file = try!(fs::File::open(path));
+        self.append_file(path, &mut file)
+    }
+
+    /// Adds a file to this archive with the given path as the name of the file
+    /// in the archive.
+    ///
+    /// This will use the metadata of `file` to populate a `Header`, and it will
+    /// then append the file to the archive with the name `path`.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all files have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tar::Archive;
+    ///
+    /// let mut ar = Archive::new(Vec::new());
+    ///
+    /// // Open the file at one location, but insert it into the archive with a
+    /// // different name.
+    /// let mut f = File::open("foo/bar/baz.txt").unwrap();
+    /// ar.append_path("bar/baz.txt").unwrap();
+    /// ```
+    pub fn append_file<P: AsRef<Path>>(&self, path: P, file: &mut fs::File)
+                                       -> io::Result<()> {
+        self.append_file2(path.as_ref(), file)
+    }
+
+    fn append_file2(&self, path: &Path, file: &mut fs::File) -> io::Result<()> {
+        let stat = try!(file.metadata());
+
+        let mut header = Header::new();
+        try!(header.set_path(path));
+        header.set_metadata(&stat);
+        header.set_cksum();
+
+        self.append(&header, file)
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -377,12 +419,6 @@ impl<W: Write> Archive<W> {
     pub fn finish(&self) -> io::Result<()> {
         let b = [0; 1024];
         self.obj.borrow_mut().write_all(&b)
-    }
-}
-
-fn copy_memory(dst: &mut [u8], src: &[u8]) {
-    for (slot, val) in dst.iter_mut().zip(src.iter()) {
-        *slot = *val;
     }
 }
 
@@ -432,26 +468,305 @@ impl<'a, R: Read> Iterator for FilesMut<'a, R> {
 }
 
 impl Header {
-    fn size(&self) -> io::Result<u64> { octal_from(&self.size) }
-    fn cksum(&self) -> io::Result<u32> { octal_from(&self.cksum).map(|u| u as u32) }
+    /// Creates a new blank header ready to be filled in
+    pub fn new() -> Header {
+        let mut header: Header = unsafe { mem::zeroed() };
+        // Flag this header as a UStar archive
+        header.ustar = *b"ustar\0";
+        header.ustar_version = *b"00";
+        return header
+    }
+
     fn is_ustar(&self) -> bool {
         &self.ustar[..5] == b"ustar"
     }
+
+    /// Returns a view into this header as a byte array.
     fn as_bytes(&self) -> &[u8; 512] {
         unsafe { &*(self as *const _ as *const [u8; 512]) }
     }
 
+    /// Blanket sets the metadata in this header from the metadata argument
+    /// provided.
+    ///
+    /// This is useful for initializing a `Header` from the OS's metadata from a
+    /// file.
+    pub fn set_metadata(&mut self, meta: &fs::Metadata) {
+        self.fill_from(meta);
+    }
+
+    /// Returns the file size this header represents.
+    ///
+    /// May return an error if the field is corrupted.
+    pub fn size(&self) -> io::Result<u64> {
+        octal_from(&self.size)
+    }
+
+    /// Encodes the `size` argument into the size field of this header.
+    pub fn set_size(&mut self, size: u64) {
+        octal_into(&mut self.size, size)
+    }
+
+    /// Returns the pathname stored in this header.
+    ///
+    /// This method may fail if the pathname is not valid unicode and this is
+    /// called on a Windows platform.
+    ///
+    /// Note that this function will convert any `\` characters to directory
+    /// separators.
+    pub fn path(&self) -> io::Result<Cow<Path>> {
+        return bytes2path(self.path_bytes());
+
+        #[cfg(windows)]
+        fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+            match bytes {
+                Cow::Borrowed(bytes) => {
+                    let s = try!(str::from_utf8(bytes).map_err(|_| {
+                        not_unicode()
+                    }));
+                    Cow::Borrowed(Path::new(s))
+                }
+                Cow::Owned(bytes) => {
+                    let s = try!(String::from_utf8(bytes).map_err(|_| {
+                        not_unicode()
+                    }));
+                    Cow::Owned(PathBuf::from(s))
+                }
+            }
+        }
+        #[cfg(unix)]
+        fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+            Ok(match bytes {
+                Cow::Borrowed(bytes) => Cow::Borrowed({
+                    Path::new(OsStr::from_bytes(bytes))
+                }),
+                Cow::Owned(bytes) => Cow::Owned({
+                    PathBuf::from(OsString::from_vec(bytes))
+                })
+            })
+        }
+    }
+
+    /// Returns the pathname stored in this header as a byte array.
+    ///
+    /// This function is guaranteed to succeed, but you may wish to call the
+    /// `path` method to convert to a `Path`.
+    ///
+    /// Note that this function will convert any `\` characters to directory
+    /// separators.
+    pub fn path_bytes(&self) -> Cow<[u8]> {
+        if (!self.is_ustar() || self.prefix[0] == 0) &&
+           !self.name.contains(&b'\\') {
+            Cow::Borrowed(truncate(&self.name))
+        } else {
+            Cow::Owned(truncate(&self.prefix).iter().cloned()
+                            .chain(Some(b'/'))
+                            .chain(truncate(&self.name).iter().cloned())
+                            .map(|b| if b == b'\\' {b'/'} else {b})
+                            .collect())
+        }
+    }
+
+    /// Sets the path name for this header.
+    ///
+    /// This function will set the pathname listed in this header, encoding it
+    /// in the appropriate format. May fail if the path is too long or if the
+    /// path specified is not unicode and this is a Windows platform.
+    pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        self.set_path2(p.as_ref())
+    }
+
+    fn set_path2(&mut self, path: &Path) -> io::Result<()> {
+        let bytes = match bytes(path) {
+            Some(b) => b,
+            None => return Err(Error::new(ErrorKind::Other, "path was not \
+                                                             valid unicode")),
+        };
+        if bytes.iter().any(|b| *b == 0) {
+            return Err(Error::new(ErrorKind::Other, "path contained a nul byte"))
+        }
+
+        let (namelen, prefixlen) = (self.name.len(), self.prefix.len());
+        if bytes.len() < namelen {
+            try!(copy_into(&mut self.name, bytes, true));
+        } else {
+            let prefix = &bytes[..cmp::min(bytes.len(), prefixlen)];
+            let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
+                Some(i) => i,
+                None => return Err(Error::new(ErrorKind::Other,
+                                              "path cannot be split to be \
+                                               inserted into archive")),
+            };
+            try!(copy_into(&mut self.name, &bytes[pos + 1..], true));
+            try!(copy_into(&mut self.prefix, &bytes[..pos], true));
+        }
+        return Ok(());
+
+        #[cfg(windows)]
+        fn bytes(p: &Path) -> Option<&[u8]> {
+            p.as_os_str().to_str().map(|s| s.as_bytes())
+        }
+        #[cfg(unix)]
+        fn bytes(p: &Path) -> Option<&[u8]> {
+            Some(p.as_os_str().as_bytes())
+        }
+    }
+
+    /// Returns the mode bits for this file
+    ///
+    /// May return an error if the field is corrupted.
+    pub fn mode(&self) -> io::Result<u32> {
+        octal_from(&self.mode).map(|u| u as u32)
+    }
+
+    /// Encodes the `mode` provided into this header.
+    pub fn set_mode(&mut self, mode: u32) {
+        octal_into(&mut self.mode, mode & 0o3777);
+    }
+
+    /// Returns the value of the owner's user ID field
+    ///
+    /// May return an error if the field is corrupted.
+    pub fn uid(&self) -> io::Result<u32> {
+        octal_from(&self.owner_id).map(|u| u as u32)
+    }
+
+    /// Encodes the `uid` provided into this header.
+    pub fn set_uid(&mut self, uid: u32) {
+        octal_into(&mut self.owner_id, uid);
+    }
+
+    /// Returns the value of the group's user ID field
+    pub fn gid(&self) -> io::Result<u32> {
+        octal_from(&self.group_id).map(|u| u as u32)
+    }
+
+    /// Encodes the `gid` provided into this header.
+    pub fn set_gid(&mut self, gid: u32) {
+        octal_into(&mut self.group_id, gid);
+    }
+
+    /// Returns the last modification time in Unix time format
+    pub fn mtime(&self) -> io::Result<u64> {
+        octal_from(&self.mtime)
+    }
+
+    /// Encodes the `mtime` provided into this header.
+    ///
+    /// Note that this time is typically a number of seconds passed since
+    /// January 1, 1970.
+    pub fn set_mtime(&mut self, mtime: u64) {
+        octal_into(&mut self.mtime, mtime);
+    }
+
+    /// Return the username of the owner of this file, if present and if valid
+    /// utf8
+    pub fn username(&self) -> Option<&str> {
+        self.username_bytes().and_then(|s| str::from_utf8(s).ok())
+    }
+
+    /// Returns the username of the owner of this file, if present
+    pub fn username_bytes(&self) -> Option<&[u8]> {
+        if self.is_ustar() {
+            Some(truncate(&self.owner_name))
+        } else {
+            None
+        }
+    }
+
+    /// Sets the username inside this header.
+    ///
+    /// May return an error if the name provided is too long.
+    pub fn set_username(&mut self, name: &str) -> io::Result<()> {
+        copy_into(&mut self.owner_name, name.as_bytes(), false)
+    }
+
+    /// Return the group name of the owner of this file, if present and if valid
+    /// utf8
+    pub fn groupname(&self) -> Option<&str> {
+        self.groupname_bytes().and_then(|s| str::from_utf8(s).ok())
+    }
+
+    /// Returns the group name of the owner of this file, if present
+    pub fn groupname_bytes(&self) -> Option<&[u8]> {
+        if self.is_ustar() {
+            Some(truncate(&self.group_name))
+        } else {
+            None
+        }
+    }
+
+    /// Sets the group name inside this header.
+    ///
+    /// May return an error if the name provided is too long.
+    pub fn set_groupname(&mut self, name: &str) -> io::Result<()> {
+        copy_into(&mut self.group_name, name.as_bytes(), false)
+    }
+
+    /// Returns the device major number, if present.
+    ///
+    /// This field is only present in UStar archives. A value of `None` means
+    /// that this archive is not a UStar archive, while a value of `Some`
+    /// represents the attempt to decode the field in the header.
+    pub fn device_major(&self) -> Option<io::Result<u32>> {
+        if self.is_ustar() {
+            Some(octal_from(&self.dev_major).map(|u| u as u32))
+        } else {
+            None
+        }
+    }
+
+    /// Encodes the value `major` into the dev_major field of this header.
+    pub fn set_device_major(&mut self, major: u32) {
+        octal_into(&mut self.dev_major, major);
+    }
+
+    /// Returns the device minor number, if present.
+    ///
+    /// This field is only present in UStar archives. A value of `None` means
+    /// that this archive is not a UStar archive, while a value of `Some`
+    /// represents the attempt to decode the field in the header.
+    pub fn device_minor(&self) -> Option<io::Result<u32>> {
+        if self.is_ustar() {
+            Some(octal_from(&self.dev_minor).map(|u| u as u32))
+        } else {
+            None
+        }
+    }
+
+    /// Encodes the value `minor` into the dev_major field of this header.
+    pub fn set_device_minor(&mut self, minor: u32) {
+        octal_into(&mut self.dev_minor, minor);
+    }
+
+    /// Returns the checksum field of this header.
+    ///
+    /// May return an error if the field is corrupted.
+    pub fn cksum(&self) -> io::Result<u32> {
+        octal_from(&self.cksum).map(|u| u as u32)
+    }
+
+    /// Sets the checksum field of this header based on the current fields in
+    /// this header.
+    pub fn set_cksum(&mut self) {
+        let cksum = {
+            let bytes = self.as_bytes();
+            bytes[..148].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
+                bytes[156..].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
+                32 * (self.cksum.len() as u32)
+        };
+        octal_into(&mut self.cksum, cksum);
+    }
+
     #[cfg(unix)]
     fn fill_from(&mut self, meta: &fs::Metadata) {
-        use std::os::unix::prelude::*;
-        // Prepare the metadata fields.
-        octal_into(&mut self.mode, meta.mode() & 0o3777);
-        octal_into(&mut self.mtime, meta.mtime());
-        octal_into(&mut self.owner_id, meta.uid());
-        octal_into(&mut self.group_id, meta.gid());
-        octal_into(&mut self.size, meta.size());
-        octal_into(&mut self.dev_minor, 0);
-        octal_into(&mut self.dev_major, 0);
+        self.set_mode((meta.mode() & 0o3777) as u32);
+        self.set_mtime(meta.mtime() as u64);
+        self.set_uid(meta.uid() as u32);
+        self.set_gid(meta.gid() as u32);
+        self.set_size(meta.size() as u64);
+        self.set_device_major(0);
+        self.set_device_minor(0);
 
         // TODO: need to bind more file types
         self.link[0] = match meta.mode() & libc::S_IFMT {
@@ -467,8 +782,6 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_from(&mut self, meta: &fs::Metadata) {
-        use std::os::windows::prelude::*;
-
         let readonly = meta.file_attributes() & libc::FILE_ATTRIBUTE_READONLY;
 
         // There's no concept of a mode on windows, so do a best approximation
@@ -479,12 +792,12 @@ impl Header {
             (false, false) => 0o644,
             (false, true) => 0o444,
         };
-        octal_into(&mut self.mode, mode);
-        octal_into(&mut self.owner_id, 0);
-        octal_into(&mut self.group_id, 0);
-        octal_into(&mut self.size, meta.len());
-        octal_into(&mut self.dev_minor, 0);
-        octal_into(&mut self.dev_major, 0);
+        self.set_mode(mode);
+        self.set_uid(0);
+        self.set_gid(0);
+        self.set_size(meta.len());
+        self.set_device_major(0);
+        self.set_device_minor(0);
 
         let ft = meta.file_type();
         self.link[0] = if ft.is_dir() {
@@ -502,113 +815,61 @@ impl Header {
         // dates relative to January 1, 1601 (in 100ns intervals), so we need to
         // add in some offset for those dates.
         let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
-        octal_into(&mut self.mtime, mtime);
+        self.set_mtime(mtime);
     }
 }
 
-impl<'a, R> File<'a, R> {
-    /// Returns the filename of this archive as a byte array
-    pub fn filename_bytes(&self) -> &[u8] {
-        &self.filename
-    }
-
-    /// Returns the filename of this archive as a utf8 string.
+impl<'a, R: Read> File<'a, R> {
+    /// Returns access to the header of this file in the archive.
     ///
-    /// If `None` is returned, then the filename is not valid utf8
-    pub fn filename(&self) -> Option<&str> {
-        str::from_utf8(self.filename_bytes()).ok()
-    }
+    /// This provides access to the the metadata for this file in the archive.
+    pub fn header(&self) -> &Header { &self.header }
 
-    /// Returns the value of the owner's user ID field
-    pub fn uid(&self) -> io::Result<u32> {
-        octal_from(&self.header.owner_id).map(|u| u as u32)
-    }
-    /// Returns the value of the group's user ID field
-    pub fn gid(&self) -> io::Result<u32> {
-        octal_from(&self.header.group_id).map(|u| u as u32)
-    }
-    /// Returns the last modification time in Unix time format
-    pub fn mtime(&self) -> io::Result<u64> {
-        octal_from(&self.header.mtime)
-    }
-    /// Returns the mode bits for this file
-    pub fn mode(&self) -> io::Result<i32> {
-        octal_from(&self.header.mode).map(|u| u as i32)
-    }
-
-    // /// Classify the type of file that this entry represents
-    // pub fn classify(&self) -> old_io::FileType {
-    //     match (self.header.is_ustar(), self.header.link[0]) {
-    //         (_, b'0') => old_io::FileType::RegularFile,
-    //         (_, b'1') => old_io::FileType::Unknown, // need a hard link enum?
-    //         (_, b'2') => old_io::FileType::Symlink,
-    //         (false, _) => old_io::FileType::Unknown, // not technically valid...
-    //
-    //         (_, b'3') => old_io::FileType::Unknown, // character special...
-    //         (_, b'4') => old_io::FileType::BlockSpecial,
-    //         (_, b'5') => old_io::FileType::Directory,
-    //         (_, b'6') => old_io::FileType::NamedPipe,
-    //         (_, _) => old_io::FileType::Unknown, // not technically valid...
-    //     }
-    // }
-
-    /// Returns the username of the owner of this file, if present
-    pub fn username_bytes(&self) -> Option<&[u8]> {
-        if self.header.is_ustar() {
-            Some(truncate(&self.header.owner_name))
-        } else {
-            None
-        }
-    }
-    /// Returns the group name of the owner of this file, if present
-    pub fn groupname_bytes(&self) -> Option<&[u8]> {
-        if self.header.is_ustar() {
-            Some(truncate(&self.header.group_name))
-        } else {
-            None
-        }
-    }
-    /// Return the username of the owner of this file, if present and if valid
-    /// utf8
-    pub fn username(&self) -> Option<&str> {
-        self.username_bytes().and_then(|s| str::from_utf8(s).ok())
-    }
-    /// Return the group name of the owner of this file, if present and if valid
-    /// utf8
-    pub fn groupname(&self) -> Option<&str> {
-        self.groupname_bytes().and_then(|s| str::from_utf8(s).ok())
-    }
-
-    /// Returns the device major number, if present.
+    /// Writes this file to the specified location.
     ///
-    /// This field is only present in UStar archives. A value of `None` means
-    /// that this archive is not a UStar archive, while a value of `Some`
-    /// represents the attempt to decode the field in the header.
-    pub fn device_major(&self) -> Option<io::Result<u32>> {
-        if self.header.is_ustar() {
-            Some(octal_from(&self.header.dev_major).map(|u| u as u32))
-        } else {
-            None
-        }
-    }
-    /// Returns the device minor number, if present.
+    /// This function will write the entire contents of this file into the
+    /// location specified by `dst`. Metadata will also be propagated to the
+    /// path `dst`.
     ///
-    /// This field is only present in UStar archives. A value of `None` means
-    /// that this archive is not a UStar archive, while a value of `Some`
-    /// represents the attempt to decode the field in the header.
-    pub fn device_minor(&self) -> Option<io::Result<u32>> {
-        if self.header.is_ustar() {
-            Some(octal_from(&self.header.dev_minor).map(|u| u as u32))
-        } else {
-            None
-        }
+    /// This function will create a file at the path `dst`, and it is required
+    /// that the intermediate directories are created. Any existing file at the
+    /// location `dst` will be overwritten.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tar::Archive;
+    ///
+    /// let ar = Archive::new(File::open("foo.tar").unwrap());
+    ///
+    /// for (i, file) in ar.files().unwrap().enumerate() {
+    ///     let mut file = file.unwrap();
+    ///     file.unpack_to(format!("file-{}", i)).unwrap();
+    /// }
+    /// ```
+    pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
+        self.unpack2(dst.as_ref())
     }
 
-    /// Returns raw access to the header of this file in the archive.
-    pub fn raw_header(&self) -> &Header { &self.header }
+    fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
+        try!(io::copy(self, &mut try!(fs::File::create(dst))));
+        try!(set_perms(dst, try!(self.header().mode())));
+        return Ok(());
 
-    /// Returns the size of the file in the archive.
-    pub fn size(&self) -> u64 { self.size }
+        #[cfg(unix)]
+        fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
+            use std::os::unix::raw;
+            let perm = fs::Permissions::from_mode(mode as raw::mode_t);
+            fs::set_permissions(dst, perm)
+        }
+        #[cfg(windows)]
+        fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
+            let mut perm = try!(fs::metadata(dst)).permissions();
+            perm.set_readonly(mode & 0o200 != 0o200);
+            fs::set_permissions(dst, perm)
+        }
+    }
 }
 
 impl<'a, R: Read> Read for &'a Archive<R> {
@@ -691,13 +952,42 @@ fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// Copies `bytes` into the `slot` provided, returning an error if the `bytes`
+/// array is too long or if it contains any nul bytes.
+///
+/// Also provides the option to map '\' characters to '/' characters for the
+/// names of paths in archives. The `tar` utility doesn't seem to like windows
+/// backslashes when unpacking on Unix.
+fn copy_into(slot: &mut [u8], bytes: &[u8], map_slashes: bool) -> io::Result<()> {
+    if bytes.len() > slot.len() {
+        Err(Error::new(ErrorKind::Other, "provided value is too long"))
+    } else if bytes.iter().any(|b| *b == 0) {
+        Err(Error::new(ErrorKind::Other, "provided value contains a nul byte"))
+    } else {
+        for (slot, val) in slot.iter_mut().zip(bytes) {
+            if map_slashes && *val == b'\\' {
+                *slot = b'/';
+            } else {
+                *slot = *val;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn not_unicode() -> Error {
+    Error::new(ErrorKind::Other, "only unicode paths are supported on windows")
+}
+
 #[cfg(test)]
 mod tests {
     extern crate tempdir;
+
     use std::io::prelude::*;
     use std::io::{Cursor, SeekFrom};
     use std::iter::repeat;
-    use std::fs::File;
+    use std::fs::{self, File};
 
     use self::tempdir::TempDir;
     use super::Archive;
@@ -726,8 +1016,8 @@ mod tests {
         let mut b = t!(files.next().unwrap());
         assert!(files.next().is_none());
 
-        assert_eq!(a.filename(), Some("a"));
-        assert_eq!(b.filename(), Some("b"));
+        assert_eq!(&*a.header().path_bytes(), b"a");
+        assert_eq!(&*b.header().path_bytes(), b"b");
         let mut s = String::new();
         t!(a.read_to_string(&mut s));
         assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
@@ -749,7 +1039,7 @@ mod tests {
         let path = td.path().join("test");
         t!(t!(File::create(&path)).write_all(b"test"));
 
-        t!(ar.append("test2", &mut t!(File::open(&path))));
+        t!(ar.append_file("test2", &mut t!(File::open(&path))));
         t!(ar.finish());
 
         let rd = Cursor::new(ar.into_inner().into_inner());
@@ -758,8 +1048,8 @@ mod tests {
         let mut f = t!(files.next().unwrap());
         assert!(files.next().is_none());
 
-        assert_eq!(f.filename(), Some("test2"));
-        assert_eq!(f.size(), 4);
+        assert_eq!(&*f.header().path_bytes(), b"test2");
+        assert_eq!(f.header().size().unwrap(), 4);
         let mut s = String::new();
         t!(f.read_to_string(&mut s));
         assert_eq!(s, "test");
@@ -774,11 +1064,11 @@ mod tests {
         t!(t!(File::create(&path)).write_all(b"test"));
 
         let filename = repeat("abcd/").take(50).collect::<String>();
-        t!(ar.append(&filename, &mut t!(File::open(&path))));
+        t!(ar.append_file(&filename, &mut t!(File::open(&path))));
         t!(ar.finish());
 
         let too_long = repeat("abcd").take(200).collect::<String>();
-        assert!(ar.append(&too_long, &mut t!(File::open(&path))).is_err());
+        assert!(ar.append_file(&too_long, &mut t!(File::open(&path))).is_err());
 
         let rd = Cursor::new(ar.into_inner().into_inner());
         let ar = Archive::new(rd);
@@ -786,8 +1076,8 @@ mod tests {
         let mut f = files.next().unwrap().unwrap();
         assert!(files.next().is_none());
 
-        assert_eq!(f.filename(), Some(&filename[..]));
-        assert_eq!(f.size(), 4);
+        assert_eq!(&*f.header().path_bytes(), filename.as_bytes());
+        assert_eq!(f.header().size().unwrap(), 4);
         let mut s = String::new();
         t!(f.read_to_string(&mut s));
         assert_eq!(s, "test");
@@ -799,7 +1089,7 @@ mod tests {
         let mut ar = Archive::new(rdr);
         let mut files = t!(ar.files_mut());
         let mut a = t!(files.next().unwrap());
-        assert_eq!(a.filename(), Some("a"));
+        assert_eq!(&*a.header().path_bytes(), b"a");
         let mut s = String::new();
         t!(a.read_to_string(&mut s));
         assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
@@ -808,7 +1098,7 @@ mod tests {
         assert_eq!(s, "");
         let mut b = t!(files.next().unwrap());
 
-        assert_eq!(b.filename(), Some("b"));
+        assert_eq!(&*b.header().path_bytes(), b"b");
         s.truncate(0);
         t!(b.read_to_string(&mut s));
         assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
@@ -817,8 +1107,6 @@ mod tests {
 
     #[test]
     fn extracting_directories() {
-        use std::fs;
-
         let td = t!(TempDir::new("tar-rs"));
         let rdr = Cursor::new(&include_bytes!("tests/directory.tar")[..]);
         let mut ar = Archive::new(rdr);
@@ -834,8 +1122,6 @@ mod tests {
 
     #[test]
     fn extracting_duplicate_dirs() {
-        use std::fs;
-
         let td = t!(TempDir::new("tar-rs"));
         let rdr = Cursor::new(&include_bytes!("tests/duplicate_dirs.tar")[..]);
         let mut ar = Archive::new(rdr);
@@ -862,31 +1148,31 @@ mod tests {
                                                 .open(td.path().join("evil.txt")));
             t!(writeln!(evil_txt_f, "This is an evil file."));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("/tmp/abs_evil.txt", &mut evil_txt_f));
+            t!(a.append_file("/tmp/abs_evil.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("//tmp/abs_evil2.txt", &mut evil_txt_f));
+            t!(a.append_file("//tmp/abs_evil2.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("///tmp/abs_evil3.txt", &mut evil_txt_f));
+            t!(a.append_file("///tmp/abs_evil3.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("/./tmp/abs_evil4.txt", &mut evil_txt_f));
+            t!(a.append_file("/./tmp/abs_evil4.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("//./tmp/abs_evil5.txt", &mut evil_txt_f));
+            t!(a.append_file("//./tmp/abs_evil5.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("///./tmp/abs_evil6.txt", &mut evil_txt_f));
+            t!(a.append_file("///./tmp/abs_evil6.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("/../tmp/rel_evil.txt", &mut evil_txt_f));
+            t!(a.append_file("/../tmp/rel_evil.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("../rel_evil2.txt", &mut evil_txt_f));
+            t!(a.append_file("../rel_evil2.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("./../rel_evil3.txt", &mut evil_txt_f));
+            t!(a.append_file("./../rel_evil3.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("some/../../rel_evil4.txt", &mut evil_txt_f));
+            t!(a.append_file("some/../../rel_evil4.txt", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("", &mut evil_txt_f));
+            t!(a.append_file("", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append("././//./", &mut evil_txt_f));
+            t!(a.append_file("././//./", &mut evil_txt_f));
             t!(evil_txt_f.seek(SeekFrom::Start(0)));
-            t!(a.append(".", &mut evil_txt_f));
+            t!(a.append_file(".", &mut evil_txt_f));
             t!(a.finish());
         }
 
@@ -936,12 +1222,12 @@ mod tests {
         let ar = Archive::new(rdr);
 
         let file = ar.files().unwrap().next().unwrap().unwrap();
-        assert_eq!(file.mode().unwrap() & 0o777, 0o777);
-        assert_eq!(file.uid().unwrap(), 0);
-        assert_eq!(file.gid().unwrap(), 0);
-        assert_eq!(file.size, 2);
-        assert_eq!(file.mtime().unwrap(), 0o12440016664);
-        assert_eq!(file.header.cksum().unwrap(), 0o4253);
+        assert_eq!(file.header().mode().unwrap() & 0o777, 0o777);
+        assert_eq!(file.header().uid().unwrap(), 0);
+        assert_eq!(file.header().gid().unwrap(), 0);
+        assert_eq!(file.header().size().unwrap(), 2);
+        assert_eq!(file.header().mtime().unwrap(), 0o12440016664);
+        assert_eq!(file.header().cksum().unwrap(), 0o4253);
     }
 
     #[test]
