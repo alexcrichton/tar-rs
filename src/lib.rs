@@ -987,6 +987,7 @@ fn not_unicode() -> Error {
 #[cfg(test)]
 mod tests {
     extern crate tempdir;
+    extern crate utime;
 
     use std::io::prelude::*;
     use std::io::{Cursor, SeekFrom};
@@ -1241,5 +1242,17 @@ mod tests {
         let rdr = Cursor::new(&include_bytes!("tests/empty_filename.tar")[..]);
         let mut ar = Archive::new(rdr);
         assert!(ar.unpack(td.path()).is_err());
+    }
+
+    #[test]
+    fn file_times()
+    {
+        let td = t!(TempDir::new("tar-rs"));
+        let rdr = Cursor::new(&include_bytes!("tests/file_times.tar")[..]);
+        let mut ar = Archive::new(rdr);
+        t!(ar.unpack(td.path()));
+
+        let a = td.path().join("a");
+        assert_eq!(t!(utime::get_file_times(&a)), (1000000000, 1000000000));
     }
 }
