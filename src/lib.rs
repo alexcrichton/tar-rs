@@ -12,6 +12,7 @@
 #![cfg_attr(test, deny(warnings))]
 
 extern crate libc;
+extern crate utime;
 
 use std::borrow::Cow;
 use std::cell::{RefCell, Cell};
@@ -854,6 +855,9 @@ impl<'a, R: Read> File<'a, R> {
 
     fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
         try!(io::copy(self, &mut try!(fs::File::create(dst))));
+
+        let newtime = try!(self.header().mtime());
+        try!(utime::set_file_times(dst, newtime, newtime));
         try!(set_perms(dst, try!(self.header().mode())));
         return Ok(());
 
