@@ -12,7 +12,7 @@
 #![cfg_attr(test, deny(warnings))]
 
 extern crate libc;
-extern crate utime;
+extern crate filetime;
 
 use std::borrow::Cow;
 use std::cell::{RefCell, Cell};
@@ -25,6 +25,8 @@ use std::iter::repeat;
 use std::mem;
 use std::path::{Path, PathBuf, Component};
 use std::str;
+
+use filetime::FileTime;
 
 #[cfg(unix)] use std::os::unix::prelude::*;
 #[cfg(unix)] use std::ffi::{OsStr, OsString};
@@ -856,8 +858,9 @@ impl<'a, R: Read> File<'a, R> {
     fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
         try!(io::copy(self, &mut try!(fs::File::create(dst))));
 
-        let newtime = try!(self.header().mtime());
-        try!(utime::set_file_times(dst, newtime, newtime));
+        let mtime = try!(self.header().mtime());
+        let mtime = FileTime::from_seconds_since_1970(mtime, 0);
+        try!(filetime::set_file_times(dst, mtime, mtime));
         try!(set_perms(dst, try!(self.header().mode())));
         return Ok(());
 
@@ -987,13 +990,13 @@ fn not_unicode() -> Error {
 #[cfg(test)]
 mod tests {
     extern crate tempdir;
-    extern crate utime;
 
     use std::io::prelude::*;
     use std::io::{Cursor, SeekFrom};
     use std::iter::repeat;
     use std::fs::{self, File};
 
+    use filetime::FileTime;
     use self::tempdir::TempDir;
     use super::Archive;
 
@@ -1245,14 +1248,18 @@ mod tests {
     }
 
     #[test]
-    fn file_times()
-    {
+    fn file_times() {
         let td = t!(TempDir::new("tar-rs"));
         let rdr = Cursor::new(&include_bytes!("tests/file_times.tar")[..]);
         let mut ar = Archive::new(rdr);
         t!(ar.unpack(td.path()));
 
-        let a = td.path().join("a");
-        assert_eq!(t!(utime::get_file_times(&a)), (1000000000, 1000000000));
+        let meta = fs::metadata(td.path().join("a")).unwrap();
+        let mtime = FileTime::from_last_modification_time(&meta);
+        let atime = FileTime::from_last_access_time(&meta);
+        assert_eq!(mtime.seconds_relative_to_1970(), 1000000000);
+        assert_eq!(mtime.nanoseconds(), 0);
+        assert_eq!(atime.seconds_relative_to_1970(), 1000000000);
+        assert_eq!(atime.nanoseconds(), 0);
     }
 }
