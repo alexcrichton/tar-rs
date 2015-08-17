@@ -10,7 +10,7 @@ script:
   - cargo build --verbose
   - cargo test --verbose
   - rustdoc --test README.md -L target/debug -L target/debug/deps
-  - cargo doc
+  - cargo doc --no-deps
 after_success:
   - travis-cargo --only nightly doc-upload
   - travis-cargo coveralls --no-sudo
