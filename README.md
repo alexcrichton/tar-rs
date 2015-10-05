@@ -10,8 +10,8 @@ A tar archive reading/writing library for Rust.
 
 ```toml
 # Cargo.toml
-[dependencies.tar]
-git = "https://github.com/alexcrichton/tar-rs"
+[dependencies]
+tar = "0.3"
 ```
 
 ## Reading an archive
