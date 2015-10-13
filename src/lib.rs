@@ -42,6 +42,10 @@ macro_rules! try_iter{ ($me:expr, $e:expr) => (
 /// A top-level representation of an archive file.
 ///
 /// This archive can have a file added to it and it can be iterated over.
+///
+/// Concurrent read or write access to the archive may panic unless
+/// synchronised. Interleaved read and write access may corrupt the archive, as
+/// described below.
 pub struct Archive<R> {
     obj: RefCell<R>,
     pos: Cell<u64>,
