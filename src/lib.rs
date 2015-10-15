@@ -369,8 +369,16 @@ impl<W: Write> Archive<W> {
     }
 
     fn append_path2(&self, path: &Path) -> io::Result<()> {
-        let mut file = try!(fs::File::open(path));
-        self.append_file(path, &mut file)
+        let stat = try!(fs::metadata(path));
+        let header = try!(Header::from_path_and_metadata(path, &stat));
+        if stat.is_file() {
+            let mut file = try!(fs::File::open(path));
+            self.append(&header, &mut file)
+        } else if stat.is_dir() {
+            self.append(&header, &mut io::empty())
+        } else {
+            Err(Error::new(ErrorKind::Other, "path has unknown file type"))
+        }
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -397,7 +405,7 @@ impl<W: Write> Archive<W> {
     /// // Open the file at one location, but insert it into the archive with a
     /// // different name.
     /// let mut f = File::open("foo/bar/baz.txt").unwrap();
-    /// ar.append_path("bar/baz.txt").unwrap();
+    /// ar.append_file("bar/baz.txt", &mut f).unwrap();
     /// ```
     pub fn append_file<P: AsRef<Path>>(&self, path: P, file: &mut fs::File)
                                        -> io::Result<()> {
@@ -406,13 +414,44 @@ impl<W: Write> Archive<W> {
 
     fn append_file2(&self, path: &Path, file: &mut fs::File) -> io::Result<()> {
         let stat = try!(file.metadata());
-
-        let mut header = Header::new();
-        try!(header.set_path(path));
-        header.set_metadata(&stat);
-        header.set_cksum();
-
+        let header = try!(Header::from_path_and_metadata(path, &stat));
         self.append(&header, file)
+    }
+
+    /// Adds a directory to this archive with the given path as the name of the
+    /// directory in the archive.
+    ///
+    /// This will use `stat` to populate a `Header`, and it will then append the
+    /// directory to the archive with the name `path`.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all files have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs;
+    /// use tar::Archive;
+    ///
+    /// let mut ar = Archive::new(Vec::new());
+    ///
+    /// // Use the directory at one location, but insert it into the archive
+    /// // with a different name.
+    /// ar.append_dir("bardir", ".").unwrap();
+    /// ```
+    pub fn append_dir<P: AsRef<Path>, P2: AsRef<Path>>(
+                      &self, path: P, src_path: P2) -> io::Result<()> {
+        self.append_dir2(path.as_ref(), src_path.as_ref())
+    }
+
+    fn append_dir2(&self, path: &Path, src_path: &Path) -> io::Result<()> {
+        let stat = try!(fs::metadata(src_path));
+        let header = try!(Header::from_path_and_metadata(path, &stat));
+        self.append(&header, &mut io::empty())
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -471,13 +510,26 @@ impl<'a, R: Read> Iterator for FilesMut<'a, R> {
 }
 
 impl Header {
-    /// Creates a new blank header ready to be filled in
+    /// Creates a new blank ustar header ready to be filled in
     pub fn new() -> Header {
         let mut header: Header = unsafe { mem::zeroed() };
         // Flag this header as a UStar archive
         header.ustar = *b"ustar\0";
         header.ustar_version = *b"00";
         return header
+    }
+
+    fn from_path_and_metadata(path: &Path, stat: &fs::Metadata)
+                              -> io::Result<Header> {
+        let mut header = Header::new();
+        // TODO: add trailing path::MAIN_SEPARATOR onto directories for
+        // compatibility. Requires either the std::path to allow it or OsStr
+        // to permit character checks
+        // https://github.com/rust-lang/rust/issues/29008
+        try!(header.set_path(path));
+        header.set_metadata(&stat);
+        header.set_cksum();
+        Ok(header)
     }
 
     fn is_ustar(&self) -> bool {
@@ -495,7 +547,13 @@ impl Header {
     /// This is useful for initializing a `Header` from the OS's metadata from a
     /// file.
     pub fn set_metadata(&mut self, meta: &fs::Metadata) {
+        // Platform-specific fill
         self.fill_from(meta);
+        // Platform-agnostic fill
+        // Set size of directories to zero
+        self.set_size(if meta.is_dir() { 0 } else { meta.len() });
+        self.set_device_major(0);
+        self.set_device_minor(0);
     }
 
     /// Returns the file size this header represents.
@@ -767,9 +825,6 @@ impl Header {
         self.set_mtime(meta.mtime() as u64);
         self.set_uid(meta.uid() as u32);
         self.set_gid(meta.gid() as u32);
-        self.set_size(meta.size() as u64);
-        self.set_device_major(0);
-        self.set_device_minor(0);
 
         // TODO: need to bind more file types
         self.link[0] = match meta.mode() & libc::S_IFMT {
@@ -798,9 +853,6 @@ impl Header {
         self.set_mode(mode);
         self.set_uid(0);
         self.set_gid(0);
-        self.set_size(meta.len());
-        self.set_device_major(0);
-        self.set_device_minor(0);
 
         let ft = meta.file_type();
         self.link[0] = if ft.is_dir() {
@@ -1113,19 +1165,41 @@ mod tests {
         assert!(files.next().is_none());
     }
 
-    #[test]
-    fn extracting_directories() {
-        let td = t!(TempDir::new("tar-rs"));
-        let rdr = Cursor::new(&include_bytes!("tests/directory.tar")[..]);
-        let mut ar = Archive::new(rdr);
-        t!(ar.unpack(td.path()));
-
+    fn check_dirtree(td: &TempDir) {
         let dir_a = td.path().join("a");
         let dir_b = td.path().join("a/b");
         let file_c = td.path().join("a/c");
         assert!(fs::metadata(&dir_a).map(|m| m.is_dir()).unwrap_or(false));
         assert!(fs::metadata(&dir_b).map(|m| m.is_dir()).unwrap_or(false));
         assert!(fs::metadata(&file_c).map(|m| m.is_file()).unwrap_or(false));
+    }
+
+    #[test]
+    fn extracting_directories() {
+        let td = t!(TempDir::new("tar-rs"));
+        let rdr = Cursor::new(&include_bytes!("tests/directory.tar")[..]);
+        let mut ar = Archive::new(rdr);
+        t!(ar.unpack(td.path()));
+        check_dirtree(&td);
+    }
+
+    #[test]
+    fn writing_and_extracting_directories() {
+        let td = t!(TempDir::new("tar-rs"));
+
+        let cur = Cursor::new(Vec::new());
+        let ar = Archive::new(cur);
+        let tmppath = td.path().join("tmpfile");
+        t!(t!(File::create(&tmppath)).write_all(b"c"));
+        t!(ar.append_dir("a", "."));
+        t!(ar.append_dir("a/b", "."));
+        t!(ar.append_file("a/c", &mut t!(File::open(&tmppath))));
+        t!(ar.finish());
+
+        let rdr = Cursor::new(ar.into_inner().into_inner());
+        let mut ar = Archive::new(rdr);
+        t!(ar.unpack(td.path()));
+        check_dirtree(&td);
     }
 
     #[test]
