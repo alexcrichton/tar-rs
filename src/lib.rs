@@ -252,14 +252,19 @@ impl<R: Read> Archive<R> {
                  -> io::Result<Option<File<R>>> {
         // If we have 2 or more sections of 0s, then we're done!
         let mut chunk = [0; 512];
-        let mut cnt = 0;
         let mut me = self;
-        loop {
+        try!(read_all(&mut me, &mut chunk));
+        *offset += 512;
+        // A block of 0s is never valid as a header (because of the checksum),
+        // so if it's all zero it must be the first of the two end blocks
+        if chunk.iter().all(|i| *i == 0) {
             try!(read_all(&mut me, &mut chunk));
             *offset += 512;
-            if chunk.iter().any(|i| *i != 0) { break }
-            cnt += 1;
-            if cnt > 1 { return Ok(None) }
+            return if chunk.iter().all(|i| *i == 0) {
+                Ok(None)
+            } else {
+                Err(bad_archive())
+            }
         }
 
         let sum = chunk[..148].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
@@ -1310,6 +1315,29 @@ mod tests {
         assert_eq!(file.header().size().unwrap(), 2);
         assert_eq!(file.header().mtime().unwrap(), 0o12440016664);
         assert_eq!(file.header().cksum().unwrap(), 0o4253);
+    }
+
+    #[test]
+    fn extracting_malformed_tar_null_blocks() {
+        let td = t!(TempDir::new("tar-rs"));
+
+        let cur = Cursor::new(Vec::new());
+        let ar = Archive::new(cur);
+
+        let path1 = td.path().join("tmpfile1");
+        let path2 = td.path().join("tmpfile2");
+        t!(File::create(&path1));
+        t!(File::create(&path2));
+        t!(ar.append_path(&path1));
+        let mut wrtr = ar.into_inner();
+        t!(wrtr.write_all(&[0; 512]));
+        let ar = Archive::new(wrtr);
+        t!(ar.append_path(&path2));
+        t!(ar.finish());
+
+        let rdr = Cursor::new(ar.into_inner().into_inner());
+        let mut ar = Archive::new(rdr);
+        assert!(ar.unpack(td.path()).is_err());
     }
 
     #[test]
