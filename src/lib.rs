@@ -157,6 +157,11 @@ impl<R: Read> Archive<R> {
     /// sequence. If files are processed out of sequence (from what the iterator
     /// returns), then the contents read for each file may be corrupted.
     pub fn files_mut(&mut self) -> io::Result<FilesMut<R>> {
+        if self.pos.get() != 0 {
+            return Err(Error::new(ErrorKind::Other, "cannot call files_mut \
+                                                     unless archive is at \
+                                                     position 0"))
+        }
         Ok(FilesMut { archive: self, done: false, next: 0 })
     }
 
@@ -629,11 +634,17 @@ impl Header {
            !self.name.contains(&b'\\') {
             Cow::Borrowed(truncate(&self.name))
         } else {
-            Cow::Owned(truncate(&self.prefix).iter().cloned()
-                            .chain(Some(b'/'))
-                            .chain(truncate(&self.name).iter().cloned())
-                            .map(|b| if b == b'\\' {b'/'} else {b})
-                            .collect())
+            fn noslash(b: &u8) -> u8 {
+                if *b == b'\\' {b'/'} else {*b}
+            }
+            let mut bytes = Vec::new();
+            let prefix = truncate(&self.prefix);
+            if prefix.len() > 0 {
+                bytes.extend(prefix.iter().map(noslash));
+                bytes.push(b'/');
+            }
+            bytes.extend(truncate(&self.name).iter().map(noslash));
+            Cow::Owned(bytes)
         }
     }
 
@@ -1056,9 +1067,10 @@ mod tests {
     extern crate tempdir;
 
     use std::io::prelude::*;
-    use std::io::{Cursor, SeekFrom};
+    use std::io::{self, Cursor, SeekFrom};
     use std::iter::repeat;
     use std::fs::{self, File};
+    use std::path::Path;
 
     use filetime::FileTime;
     use self::tempdir::TempDir;
@@ -1399,5 +1411,37 @@ mod tests {
         assert_eq!(mtime.nanoseconds(), 0);
         assert_eq!(atime.seconds_relative_to_1970(), 1000000000);
         assert_eq!(atime.nanoseconds(), 0);
+    }
+
+    #[test]
+    fn backslash_same_as_slash() {
+        // Insert a file into an archive with a backslash
+        let td = t!(TempDir::new("tar-rs"));
+        let ar = Archive::new(Vec::<u8>::new());
+        t!(ar.append_dir("foo\\bar", td.path()));
+        ar.finish().unwrap();
+        let ar = Archive::new(Cursor::new(ar.into_inner()));
+        let f = t!(t!(ar.files()).next().unwrap());
+        assert_eq!(&*f.header().path().unwrap(), Path::new("foo/bar"));
+
+        // Unpack an archive with a backslash in the name
+        let ar = Archive::new(Vec::<u8>::new());
+        let mut header = Header::new();
+        header.set_metadata(&t!(fs::metadata(td.path())));
+        header.set_size(0);
+        for (a, b) in header.name.iter_mut().zip(b"foo\\bar\x00") {
+            *a = *b;
+        }
+        header.set_cksum();
+        t!(ar.append(&header, &mut io::empty()));
+        ar.finish().unwrap();
+        let mut ar = Archive::new(Cursor::new(ar.into_inner()));
+        {
+            let f = t!(t!(ar.files()).next().unwrap());
+            assert_eq!(&*f.header().path().unwrap(), Path::new("foo/bar"));
+        }
+        t!(ar.files()); // seek to 0
+        t!(ar.unpack(td.path()));
+        assert!(fs::metadata(td.path().join("foo/bar")).is_ok());
     }
 }
