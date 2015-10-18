@@ -241,6 +241,10 @@ impl<R: Read> Archive<R> {
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
             let n = try!(Read::read(&mut me, &mut buf[..n as usize]));
+            if n == 0 {
+                let errstr = "unexpected EOF during skip";
+                return Err(Error::new(ErrorKind::Other, errstr));
+            }
             amt -= n as u64;
         }
         Ok(())
@@ -913,7 +917,10 @@ impl<'a, R: Read> File<'a, R> {
     }
 
     fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
-        try!(io::copy(self, &mut try!(fs::File::create(dst))));
+        let unpackfile = &mut try!(fs::File::create(dst));
+        if try!(io::copy(self, unpackfile)) != self.size {
+            return Err(bad_archive());
+        }
 
         let mtime = try!(self.header().mtime());
         let mtime = FileTime::from_seconds_since_1970(mtime, 0);
@@ -1055,7 +1062,7 @@ mod tests {
 
     use filetime::FileTime;
     use self::tempdir::TempDir;
-    use super::Archive;
+    use super::{Archive, Header};
 
     macro_rules! t {
         ($e:expr) => (match $e {
@@ -1216,6 +1223,35 @@ mod tests {
 
         let some_dir = td.path().join("some_dir");
         assert!(fs::metadata(&some_dir).map(|m| m.is_dir()).unwrap_or(false));
+    }
+
+    #[test]
+    fn handling_incorrect_file_size() {
+        let td = t!(TempDir::new("tar-rs"));
+
+        let cur = Cursor::new(Vec::new());
+        let ar = Archive::new(cur);
+
+        let path = td.path().join("tmpfile");
+        t!(File::create(&path));
+        let mut file = t!(File::open(&path));
+        let mut header = Header::new();
+        t!(header.set_path("somepath"));
+        header.set_metadata(&t!(file.metadata()));
+        header.set_size(2048); // past the end of file null blocks
+        header.set_cksum();
+        t!(ar.append(&header, &mut file));
+        t!(ar.finish());
+
+        // Extracting
+        let rdr = Cursor::new(ar.into_inner().into_inner());
+        let mut ar = Archive::new(rdr);
+        assert!(ar.unpack(td.path()).is_err());
+
+        // Iterating
+        let rdr = Cursor::new(ar.into_inner().into_inner());
+        let mut ar = Archive::new(rdr);
+        assert!(t!(ar.files_mut()).any(|fr| fr.is_err()));
     }
 
     #[test]
