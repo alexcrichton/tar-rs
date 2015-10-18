@@ -241,6 +241,10 @@ impl<R: Read> Archive<R> {
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
             let n = try!(Read::read(&mut me, &mut buf[..n as usize]));
+            if n == 0 {
+                let errstr = "unexpected EOF during skip";
+                return Err(Error::new(ErrorKind::Other, errstr));
+            }
             amt -= n as u64;
         }
         Ok(())
@@ -1217,7 +1221,7 @@ mod tests {
     }
 
     #[test]
-    fn extracting_incorrect_file_size() {
+    fn handling_incorrect_file_size() {
         let td = t!(TempDir::new("tar-rs"));
 
         let cur = Cursor::new(Vec::new());
@@ -1234,9 +1238,15 @@ mod tests {
         t!(ar.append(&header, &mut file));
         t!(ar.finish());
 
+        // Extracting
         let rdr = Cursor::new(ar.into_inner().into_inner());
         let mut ar = Archive::new(rdr);
         assert!(ar.unpack(td.path()).is_err());
+
+        // Iterating
+        let rdr = Cursor::new(ar.into_inner().into_inner());
+        let mut ar = Archive::new(rdr);
+        assert!(t!(ar.files_mut()).any(|fr| fr.is_err()));
     }
 
     #[test]
