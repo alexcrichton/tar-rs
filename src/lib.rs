@@ -1444,4 +1444,17 @@ mod tests {
         t!(ar.unpack(td.path()));
         assert!(fs::metadata(td.path().join("foo/bar")).is_ok());
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn nul_bytes_in_path() {
+        use std::os::unix::prelude::*;
+        use std::ffi::OsStr;
+
+        let nul_path = OsStr::from_bytes(b"foo\0");
+        let td = t!(TempDir::new("tar-rs"));
+        let ar = Archive::new(Vec::<u8>::new());
+        let err = ar.append_dir(nul_path, td.path()).unwrap_err();
+        assert!(err.to_string().contains("contained a nul byte"));
+    }
 }
