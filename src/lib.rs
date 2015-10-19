@@ -127,7 +127,7 @@ impl<O> Archive<O> {
 impl<R: Seek + Read> Archive<R> {
     /// Construct an iterator over the files of this archive.
     ///
-    /// This function can return an error if any underlying I/O operation files
+    /// This function can return an error if any underlying I/O operation fails
     /// while attempting to construct the iterator.
     ///
     /// Additionally, the iterator yields `io::Result<File>` instead of `File` to
