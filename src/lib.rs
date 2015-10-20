@@ -43,50 +43,62 @@ macro_rules! try_iter{ ($me:expr, $e:expr) => (
 
 /// A top-level representation of an archive file.
 ///
-/// This archive can have a file added to it and it can be iterated over.
+/// This archive can have an entry added to it and it can be iterated over.
 pub struct Archive<R> {
     obj: RefCell<R>,
     pos: Cell<u64>,
 }
 
-/// An iterator over the files of an archive.
+/// Backwards compatible alias for `Entries`.
+#[doc(hidden)]
+pub type Files<'a, T> = Entries<'a, T>;
+
+/// An iterator over the entries of an archive.
 ///
 /// Requires that `R` implement `Seek`.
-pub struct Files<'a, R:'a> {
+pub struct Entries<'a, R:'a> {
     archive: &'a Archive<R>,
     done: bool,
     offset: u64,
 }
 
-/// An iterator over the files of an archive.
+/// Backwards compatible alias for `EntriesMut`.
+#[doc(hidden)]
+pub type FilesMut<'a, T> = EntriesMut<'a, T>;
+
+/// An iterator over the entries of an archive.
 ///
-/// Does not require that `R` implements `Seek`, but each file must be processed
-/// before the next.
-pub struct FilesMut<'a, R:'a> {
+/// Does not require that `R` implements `Seek`, but each entry must be
+/// processed before the next.
+pub struct EntriesMut<'a, R:'a> {
     archive: &'a Archive<R>,
     next: u64,
     done: bool,
 }
 
-/// A read-only view into a file of an archive.
+/// Backwards compatible alias for `Entry`.
+#[doc(hidden)]
+pub type File<'a, T> = Entry<'a, T>;
+
+/// A read-only view into an entry of an archive.
 ///
 /// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader and Seek
-/// traits. A file cannot be rewritten once inserted into an archive.
-pub struct File<'a, R: 'a> {
+/// traits. An entry cannot be rewritten once inserted into an archive.
+pub struct Entry<'a, R: 'a> {
     header: Header,
     archive: &'a Archive<R>,
     pos: u64,
     size: u64,
 
     // Used in read() to make sure we're positioned at the next byte. For a
-    // `Files` iterator these are meaningful while for a `FilesMut` iterator
+    // `Entries` iterator these are meaningful while for a `EntriesMut` iterator
     // these are both unused/noops.
-    seek: fn(&File<R>) -> io::Result<()>,
+    seek: fn(&Entry<R>) -> io::Result<()>,
     tar_offset: u64,
 }
 
-/// Representation of the header of a file in an archive
+/// Representation of the header of an entry in an archive
 #[repr(C)]
 #[allow(missing_docs)]
 pub struct Header {
@@ -134,17 +146,22 @@ impl<O> Archive<O> {
 }
 
 impl<R: Seek + Read> Archive<R> {
-    /// Construct an iterator over the files of this archive.
+    /// Backwards compatible alias for `entries`.
+    #[doc(hidden)]
+    pub fn files(&self) -> io::Result<Entries<R>> {
+        self.entries()
+    }
+    /// Construct an iterator over the entries of this archive.
     ///
     /// This function can return an error if any underlying I/O operation fails
     /// while attempting to construct the iterator.
     ///
-    /// Additionally, the iterator yields `io::Result<File>` instead of `File` to
-    /// handle invalid tar archives as well as any intermittent I/O error that
-    /// occurs.
-    pub fn files(&self) -> io::Result<Files<R>> {
+    /// Additionally, the iterator yields `io::Result<Entry>` instead of `Entry`
+    /// to handle invalid tar archives as well as any intermittent I/O error
+    /// that occurs.
+    pub fn entries(&self) -> io::Result<Entries<R>> {
         try!(self.seek(0));
-        Ok(Files { archive: self, done: false, offset: 0 })
+        Ok(Entries { archive: self, done: false, offset: 0 })
     }
 
     fn seek(&self, pos: u64) -> io::Result<()> {
@@ -156,22 +173,28 @@ impl<R: Seek + Read> Archive<R> {
 }
 
 impl<R: Read> Archive<R> {
-    /// Construct an iterator over the files in this archive.
+    /// Backwards compatible alias for `entries_mut`.
+    #[doc(hidden)]
+    pub fn files_mut(&mut self) -> io::Result<EntriesMut<R>> {
+        self.entries_mut()
+    }
+    /// Construct an iterator over the entries in this archive.
     ///
-    /// While similar to the `files` iterator, this iterator does not require
+    /// While similar to the `entries` iterator, this iterator does not require
     /// that `R` implement `Seek` and restricts the iterator to processing only
-    /// one file at a time in a streaming fashion.
+    /// one entry at a time in a streaming fashion.
     ///
-    /// Note that care must be taken to consider each file within an archive in
-    /// sequence. If files are processed out of sequence (from what the iterator
-    /// returns), then the contents read for each file may be corrupted.
-    pub fn files_mut(&mut self) -> io::Result<FilesMut<R>> {
+    /// Note that care must be taken to consider each entry within an archive in
+    /// sequence. If entries are processed out of sequence (from what the
+    /// iterator returns), then the contents read for each entry may be
+    /// corrupted.
+    pub fn entries_mut(&mut self) -> io::Result<EntriesMut<R>> {
         if self.pos.get() != 0 {
-            return Err(Error::new(ErrorKind::Other, "cannot call files_mut \
+            return Err(Error::new(ErrorKind::Other, "cannot call entries_mut \
                                                      unless archive is at \
                                                      position 0"))
         }
-        Ok(FilesMut { archive: self, done: false, next: 0 })
+        Ok(EntriesMut { archive: self, done: false, next: 0 })
     }
 
     /// Unpacks the contents tarball into the specified `dst`.
@@ -198,8 +221,10 @@ impl<R: Read> Archive<R> {
     }
 
     fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
-        'outer: for file in try!(self.files_mut()) {
-            let mut file = try!(file.map_err(|e| {
+        'outer: for entry in try!(self.entries_mut()) {
+            // TODO: although it may not be the case due to extended headers
+            // and GNU extensions, assume each entry is a file for now.
+            let mut file = try!(entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
             }));
 
@@ -281,8 +306,8 @@ impl<R: Read> Archive<R> {
 
     // Assumes that the underlying reader is positioned at the start of a valid
     // header to parse.
-    fn next_file(&self, offset: &mut u64, seek: fn(&File<R>) -> io::Result<()>)
-                 -> io::Result<Option<File<R>>> {
+    fn next_entry(&self, offset: &mut u64, seek: fn(&Entry<R>) -> io::Result<()>)
+                 -> io::Result<Option<Entry<R>>> {
         // If we have 2 or more sections of 0s, then we're done!
         let mut chunk = [0; 512];
         let mut me = self;
@@ -305,7 +330,7 @@ impl<R: Read> Archive<R> {
                   32 * 8;
 
         let header: Header = unsafe { mem::transmute(chunk) };
-        let ret = File {
+        let ret = Entry {
             archive: self,
             pos: 0,
             size: try!(header.size()),
@@ -318,7 +343,7 @@ impl<R: Read> Archive<R> {
         let cksum = try!(ret.header.cksum());
         if sum != cksum { return Err(bad_archive()) }
 
-        // Figure out where the next file is
+        // Figure out where the next entry is
         let size = (ret.size + 511) & !(512 - 1);
         *offset += size;
 
@@ -339,7 +364,7 @@ impl<W: Write> Archive<W> {
     /// so if the archive is in the middle of a read or some other similar
     /// operation then this may corrupt the archive.
     ///
-    /// Also note that after all files have been written to an archive the
+    /// Also note that after all entries have been written to an archive the
     /// `finish` function needs to be called to finish writing the archive.
     ///
     /// # Errors
@@ -502,22 +527,22 @@ impl<W: Write> Archive<W> {
     }
 }
 
-impl<'a, R: Seek + Read> Iterator for Files<'a, R> {
-    type Item = io::Result<File<'a, R>>;
+impl<'a, R: Seek + Read> Iterator for Entries<'a, R> {
+    type Item = io::Result<Entry<'a, R>>;
 
-    fn next(&mut self) -> Option<io::Result<File<'a, R>>> {
+    fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
 
         // Seek to the start of the next header in the archive
         try_iter!(self, self.archive.seek(self.offset));
 
-        fn doseek<R: Seek + Read>(file: &File<R>) -> io::Result<()> {
-            file.archive.seek(file.tar_offset + file.pos)
+        fn doseek<R: Seek + Read>(entry: &Entry<R>) -> io::Result<()> {
+            entry.archive.seek(entry.tar_offset + entry.pos)
         }
 
-        // Parse the next file header
-        match try_iter!(self, self.archive.next_file(&mut self.offset, doseek)) {
+        // Parse the next entry header
+        match try_iter!(self, self.archive.next_entry(&mut self.offset, doseek)) {
             None => { self.done = true; None }
             Some(f) => Some(Ok(f)),
         }
@@ -525,10 +550,10 @@ impl<'a, R: Seek + Read> Iterator for Files<'a, R> {
 }
 
 
-impl<'a, R: Read> Iterator for FilesMut<'a, R> {
-    type Item = io::Result<File<'a, R>>;
+impl<'a, R: Read> Iterator for EntriesMut<'a, R> {
+    type Item = io::Result<Entry<'a, R>>;
 
-    fn next(&mut self) -> Option<io::Result<File<'a, R>>> {
+    fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
 
@@ -537,10 +562,10 @@ impl<'a, R: Read> Iterator for FilesMut<'a, R> {
         try_iter!(self, self.archive.skip(delta));
 
         // no-op because this reader can't seek
-        fn doseek<R>(_: &File<R>) -> io::Result<()> { Ok(()) }
+        fn doseek<R>(_: &Entry<R>) -> io::Result<()> { Ok(()) }
 
-        // Parse the next file header
-        match try_iter!(self, self.archive.next_file(&mut self.next, doseek)) {
+        // Parse the next entry header
+        match try_iter!(self, self.archive.next_entry(&mut self.next, doseek)) {
             None => { self.done = true; None }
             Some(f) => Some(Ok(f)),
         }
@@ -925,10 +950,10 @@ impl Header {
     }
 }
 
-impl<'a, R: Read> File<'a, R> {
-    /// Returns access to the header of this file in the archive.
+impl<'a, R: Read> Entry<'a, R> {
+    /// Returns access to the header of this entry in the archive.
     ///
-    /// This provides access to the the metadata for this file in the archive.
+    /// This provides access to the the metadata for this entry in the archive.
     pub fn header(&self) -> &Header { &self.header }
 
     /// Writes this file to the specified location.
@@ -1010,7 +1035,7 @@ impl<'a, R: Read> Read for &'a Archive<R> {
     }
 }
 
-impl<'a, R: Read> Read for File<'a, R> {
+impl<'a, R: Read> Read for Entry<'a, R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         if self.size == self.pos { return Ok(0) }
 
@@ -1022,7 +1047,7 @@ impl<'a, R: Read> Read for File<'a, R> {
     }
 }
 
-impl<'a, R: Read + Seek> Seek for File<'a, R> {
+impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
     fn seek(&mut self, how: SeekFrom) -> io::Result<u64> {
         let next = match how {
             SeekFrom::Start(pos) => pos as i64,
