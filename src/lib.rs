@@ -523,6 +523,12 @@ impl<'a, R: Read> Iterator for FilesMut<'a, R> {
     }
 }
 
+impl Clone for Header {
+    fn clone(&self) -> Header {
+        Header { ..*self }
+    }
+}
+
 impl Header {
     /// Creates a new blank ustar header ready to be filled in
     pub fn new() -> Header {
@@ -551,7 +557,8 @@ impl Header {
     }
 
     /// Returns a view into this header as a byte array.
-    fn as_bytes(&self) -> &[u8; 512] {
+    pub fn as_bytes(&self) -> &[u8; 512] {
+        debug_assert_eq!(512, mem::size_of_val(self));
         unsafe { &*(self as *const _ as *const [u8; 512]) }
     }
 
@@ -1088,6 +1095,21 @@ mod tests {
         let ar = Archive::new(Cursor::new(&include_bytes!("tests/simple.tar")[..]));
         for file in t!(ar.files()) {
             t!(file);
+        }
+    }
+
+    #[test]
+    fn header_impls() {
+        let ar = Archive::new(Cursor::new(&include_bytes!("tests/simple.tar")[..]));
+        let hn = Header::new();
+        let hnb = hn.as_bytes();
+        for file in t!(ar.files()) {
+            let file = t!(file);
+            let h1 = file.header();
+            let h1b = h1.as_bytes();
+            let h2 = h1.clone();
+            let h2b = h2.as_bytes();
+            assert!(h1b[..] == h2b[..] && h2b[..] != hnb[..])
         }
     }
 
