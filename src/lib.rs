@@ -1189,8 +1189,8 @@ mod tests {
     #[test]
     fn simple() {
         let ar = Archive::new(Cursor::new(&include_bytes!("tests/simple.tar")[..]));
-        for file in t!(ar.files()) {
-            t!(file);
+        for entry in t!(ar.entries()) {
+            t!(entry);
         }
     }
 
@@ -1213,10 +1213,10 @@ mod tests {
     fn reading_files() {
         let rdr = Cursor::new(&include_bytes!("tests/reading_files.tar")[..]);
         let ar = Archive::new(rdr);
-        let mut files = t!(ar.files());
-        let mut a = t!(files.next().unwrap());
-        let mut b = t!(files.next().unwrap());
-        assert!(files.next().is_none());
+        let mut entries = t!(ar.entries());
+        let mut a = t!(entries.next().unwrap());
+        let mut b = t!(entries.next().unwrap());
+        assert!(entries.next().is_none());
 
         assert_eq!(&*a.header().path_bytes(), b"a");
         assert_eq!(&*b.header().path_bytes(), b"b");
@@ -1246,9 +1246,9 @@ mod tests {
 
         let rd = Cursor::new(ar.into_inner().into_inner());
         let ar = Archive::new(rd);
-        let mut files = t!(ar.files());
-        let mut f = t!(files.next().unwrap());
-        assert!(files.next().is_none());
+        let mut entries = t!(ar.entries());
+        let mut f = t!(entries.next().unwrap());
+        assert!(entries.next().is_none());
 
         assert_eq!(&*f.header().path_bytes(), b"test2");
         assert_eq!(f.header().size().unwrap(), 4);
@@ -1274,9 +1274,9 @@ mod tests {
 
         let rd = Cursor::new(ar.into_inner().into_inner());
         let ar = Archive::new(rd);
-        let mut files = t!(ar.files());
-        let mut f = files.next().unwrap().unwrap();
-        assert!(files.next().is_none());
+        let mut entries = t!(ar.entries());
+        let mut f = entries.next().unwrap().unwrap();
+        assert!(entries.next().is_none());
 
         assert_eq!(&*f.header().path_bytes(), filename.as_bytes());
         assert_eq!(f.header().size().unwrap(), 4);
@@ -1286,11 +1286,11 @@ mod tests {
     }
 
     #[test]
-    fn reading_files_mut() {
+    fn reading_entries_mut() {
         let rdr = Cursor::new(&include_bytes!("tests/reading_files.tar")[..]);
         let mut ar = Archive::new(rdr);
-        let mut files = t!(ar.files_mut());
-        let mut a = t!(files.next().unwrap());
+        let mut entries = t!(ar.entries_mut());
+        let mut a = t!(entries.next().unwrap());
         assert_eq!(&*a.header().path_bytes(), b"a");
         let mut s = String::new();
         t!(a.read_to_string(&mut s));
@@ -1298,13 +1298,13 @@ mod tests {
         s.truncate(0);
         t!(a.read_to_string(&mut s));
         assert_eq!(s, "");
-        let mut b = t!(files.next().unwrap());
+        let mut b = t!(entries.next().unwrap());
 
         assert_eq!(&*b.header().path_bytes(), b"b");
         s.truncate(0);
         t!(b.read_to_string(&mut s));
         assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
-        assert!(files.next().is_none());
+        assert!(entries.next().is_none());
     }
 
     fn check_dirtree(td: &TempDir) {
@@ -1381,7 +1381,7 @@ mod tests {
         // Iterating
         let rdr = Cursor::new(ar.into_inner().into_inner());
         let mut ar = Archive::new(rdr);
-        assert!(t!(ar.files_mut()).any(|fr| fr.is_err()));
+        assert!(t!(ar.entries_mut()).any(|fr| fr.is_err()));
     }
 
     #[test]
@@ -1474,13 +1474,13 @@ mod tests {
         let rdr = Cursor::new(&include_bytes!("tests/spaces.tar")[..]);
         let ar = Archive::new(rdr);
 
-        let file = ar.files().unwrap().next().unwrap().unwrap();
-        assert_eq!(file.header().mode().unwrap() & 0o777, 0o777);
-        assert_eq!(file.header().uid().unwrap(), 0);
-        assert_eq!(file.header().gid().unwrap(), 0);
-        assert_eq!(file.header().size().unwrap(), 2);
-        assert_eq!(file.header().mtime().unwrap(), 0o12440016664);
-        assert_eq!(file.header().cksum().unwrap(), 0o4253);
+        let entry = ar.entries().unwrap().next().unwrap().unwrap();
+        assert_eq!(entry.header().mode().unwrap() & 0o777, 0o777);
+        assert_eq!(entry.header().uid().unwrap(), 0);
+        assert_eq!(entry.header().gid().unwrap(), 0);
+        assert_eq!(entry.header().size().unwrap(), 2);
+        assert_eq!(entry.header().mtime().unwrap(), 0o12440016664);
+        assert_eq!(entry.header().cksum().unwrap(), 0o4253);
     }
 
     #[test]
@@ -1539,7 +1539,7 @@ mod tests {
         t!(ar.append_dir("foo\\bar", td.path()));
         ar.finish().unwrap();
         let ar = Archive::new(Cursor::new(ar.into_inner()));
-        let f = t!(t!(ar.files()).next().unwrap());
+        let f = t!(t!(ar.entries()).next().unwrap());
         assert_eq!(&*f.header().path().unwrap(), Path::new("foo/bar"));
 
         // Unpack an archive with a backslash in the name
@@ -1555,10 +1555,10 @@ mod tests {
         ar.finish().unwrap();
         let mut ar = Archive::new(Cursor::new(ar.into_inner()));
         {
-            let f = t!(t!(ar.files()).next().unwrap());
+            let f = t!(t!(ar.entries()).next().unwrap());
             assert_eq!(&*f.header().path().unwrap(), Path::new("foo/bar"));
         }
-        t!(ar.files()); // seek to 0
+        t!(ar.entries()); // seek to 0
         t!(ar.unpack(td.path()));
         assert!(fs::metadata(td.path().join("foo/bar")).is_ok());
     }
