@@ -12,6 +12,7 @@
 #![cfg_attr(test, deny(warnings))]
 
 extern crate libc;
+extern crate winapi;
 extern crate filetime;
 
 use std::borrow::Cow;
@@ -867,7 +868,7 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_from(&mut self, meta: &fs::Metadata) {
-        let readonly = meta.file_attributes() & libc::FILE_ATTRIBUTE_READONLY;
+        let readonly = meta.file_attributes() & winapi::FILE_ATTRIBUTE_READONLY;
 
         // There's no concept of a mode on windows, so do a best approximation
         // here.
