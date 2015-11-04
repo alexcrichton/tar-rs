@@ -18,6 +18,7 @@ extern crate filetime;
 use std::borrow::Cow;
 use std::cell::{RefCell, Cell};
 use std::cmp;
+use std::error;
 use std::fmt;
 use std::fs;
 use std::io::prelude::*;
@@ -110,6 +111,13 @@ pub struct Header {
     _rest: [u8; 12],
 }
 
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct TarError {
+    desc: String,
+    io: io::Error,
+}
+
 impl<O> Archive<O> {
     /// Create a new archive with the underlying object as the reader/writer.
     ///
@@ -191,7 +199,9 @@ impl<R: Read> Archive<R> {
 
     fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
         'outer: for file in try!(self.files_mut()) {
-            let mut file = try!(file);
+            let mut file = try!(file.map_err(|e| {
+                TarError::new("failed to iterate over archive", e)
+            }));
 
             // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
             // * Leading '/'s are trimmed. For example, `///test` is treated as
@@ -207,21 +217,27 @@ impl<R: Read> Archive<R> {
             // library, but we specially handle a few cases here as well.
 
             let mut file_dst = dst.to_path_buf();
-            for part in try!(file.header().path()).components() {
-                match part {
-                    // Leading '/' characters, root paths, and '.' components
-                    // are just ignored and treated as "empty components"
-                    Component::Prefix(..) |
-                    Component::RootDir |
-                    Component::CurDir => continue,
+            {
+                let path = try!(file.header().path().map_err(|e| {
+                    TarError::new("invalid path in entry header", e)
+                }));
+                for part in path.components() {
+                    match part {
+                        // Leading '/' characters, root paths, and '.'
+                        // components are just ignored and treated as "empty
+                        // components"
+                        Component::Prefix(..) |
+                        Component::RootDir |
+                        Component::CurDir => continue,
 
-                    // If any part of the filename is '..', then skip over
-                    // unpacking the file to prevent directory traversal
-                    // security issues.  See, e.g.: CVE-2001-1267,
-                    // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
-                    Component::ParentDir => continue 'outer,
+                        // If any part of the filename is '..', then skip over
+                        // unpacking the file to prevent directory traversal
+                        // security issues.  See, e.g.: CVE-2001-1267,
+                        // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
+                        Component::ParentDir => continue 'outer,
 
-                    Component::Normal(part) => file_dst.push(part),
+                        Component::Normal(part) => file_dst.push(part),
+                    }
                 }
             }
 
@@ -232,9 +248,16 @@ impl<R: Read> Archive<R> {
             }
 
             if file.header().link[0] == b'5' {
-                try!(fs::create_dir_all(&file_dst));
+                try!(fs::create_dir_all(&file_dst).map_err(|e| {
+                    TarError::new(&format!("failed to create `{}`",
+                                           file_dst.display()), e)
+                }));
             } else {
-                try!(fs::create_dir_all(&file_dst.parent().unwrap()));
+                let dir = file_dst.parent().unwrap();
+                try!(fs::create_dir_all(&dir).map_err(|e| {
+                    TarError::new(&format!("failed to create `{}`",
+                                           dir.display()), e)
+                }));
                 try!(file.unpack(&file_dst));
             }
         }
@@ -936,15 +959,31 @@ impl<'a, R: Read> File<'a, R> {
     }
 
     fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
-        let unpackfile = &mut try!(fs::File::create(dst));
-        if try!(io::copy(self, unpackfile)) != self.size {
-            return Err(bad_archive());
-        }
+        try!(fs::File::create(dst).and_then(|mut f| {
+            if try!(io::copy(self, &mut f)) != self.size {
+                return Err(bad_archive());
+            }
+            Ok(())
+        }).map_err(|e| {
+            let header = self.header().path_bytes();
+            TarError::new(&format!("failed to unpack `{}` into `{}`",
+                                   String::from_utf8_lossy(&header),
+                                   dst.display()), e)
+        }));
 
-        let mtime = try!(self.header().mtime());
-        let mtime = FileTime::from_seconds_since_1970(mtime, 0);
-        try!(filetime::set_file_times(dst, mtime, mtime));
-        try!(set_perms(dst, try!(self.header().mode())));
+        if let Ok(mtime) = self.header().mtime() {
+            let mtime = FileTime::from_seconds_since_1970(mtime, 0);
+            try!(filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
+                TarError::new(&format!("failed to set mtime for `{}`",
+                                       dst.display()), e)
+            }));
+        }
+        if let Ok(mode) = self.header().mode() {
+            try!(set_perms(dst, mode).map_err(|e| {
+                TarError::new(&format!("failed to set permissions to {:o} \
+                                        for `{}`", mode, dst.display()), e)
+            }));
+        }
         return Ok(());
 
         #[cfg(unix)]
@@ -1068,6 +1107,37 @@ fn copy_into(slot: &mut [u8], bytes: &[u8], map_slashes: bool) -> io::Result<()>
 #[cfg(windows)]
 fn not_unicode() -> Error {
     Error::new(ErrorKind::Other, "only unicode paths are supported on windows")
+}
+
+impl TarError {
+    fn new(desc: &str, err: Error) -> TarError {
+        TarError {
+            desc: desc.to_string(),
+            io: err,
+        }
+    }
+}
+
+impl error::Error for TarError {
+    fn description(&self) -> &str {
+        &self.desc
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        Some(&self.io)
+    }
+}
+
+impl fmt::Display for TarError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.desc.fmt(f)
+    }
+}
+
+impl From<TarError> for Error {
+    fn from(t: TarError) -> Error {
+        Error::new(t.io.kind(), t)
+    }
 }
 
 #[cfg(test)]
