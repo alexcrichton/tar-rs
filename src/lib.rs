@@ -41,6 +41,83 @@ macro_rules! try_iter{ ($me:expr, $e:expr) => (
     }
 ) }
 
+// https://golang.org/pkg/archive/tar/#pkg-constants
+/// Entry types recognised in the high level API
+#[derive(Clone, Copy, PartialEq)]
+enum EntryType {
+    /// Regular file
+    Regular,
+    /// Hard link
+    Link,
+    /// Symbolic link
+    Symlink,
+    /// Character device
+    Char,
+    /// Block device
+    Block,
+    /// Directory
+    Directory,
+    /// Named pipe (fifo)
+    Fifo,
+    /// Implementation-defined 'high-performance' type, treated as regular file
+    Continuous,
+    /// Extended Header
+    XHeader,
+    /// Global extended header
+    XGlobalHeader,
+    /// GNU extension - long file name
+    GNULongName,
+    /// GNU extension - long link name (link target)
+    GNULongLink,
+    /// GNU extension - sparse file
+    GNUSparse,
+
+    /// Unknown - special case to allow filling metadata into a header without
+    /// having to handle errors, converts into a ' '
+    Unknown,
+}
+
+impl EntryType {
+    fn from_byte(byte: u8) -> Option<EntryType> {
+        match byte {
+            b'\x00' |
+            b'0' => Some(EntryType::Regular),
+            b'1' => Some(EntryType::Link),
+            b'2' => Some(EntryType::Symlink),
+            b'3' => Some(EntryType::Char),
+            b'4' => Some(EntryType::Block),
+            b'5' => Some(EntryType::Directory),
+            b'6' => Some(EntryType::Fifo),
+            b'7' => Some(EntryType::Continuous),
+            b'x' => Some(EntryType::XHeader),
+            b'g' => Some(EntryType::XGlobalHeader),
+            b'L' => Some(EntryType::GNULongName),
+            b'K' => Some(EntryType::GNULongLink),
+            b'S' => Some(EntryType::GNUSparse),
+            _ => None,
+        }
+    }
+
+    fn to_byte(&self) -> u8 {
+        match self {
+            &EntryType::Regular       => b'0',
+            &EntryType::Link          => b'1',
+            &EntryType::Symlink       => b'2',
+            &EntryType::Char          => b'3',
+            &EntryType::Block         => b'4',
+            &EntryType::Directory     => b'5',
+            &EntryType::Fifo          => b'6',
+            &EntryType::Continuous    => b'7',
+            &EntryType::XHeader       => b'x',
+            &EntryType::XGlobalHeader => b'g',
+            &EntryType::GNULongName   => b'L',
+            &EntryType::GNULongLink   => b'K',
+            &EntryType::GNUSparse     => b'S',
+            &EntryType::Unknown       => b' ',
+        }
+    }
+}
+
 /// A top-level representation of an archive file.
 ///
 /// This archive can have an entry added to it and it can be iterated over.
@@ -272,7 +349,8 @@ impl<R: Read> Archive<R> {
                 continue
             }
 
-            if file.header().link[0] == b'5' {
+            let entry_type = EntryType::from_byte(file.header().link[0]);
+            if entry_type == Some(EntryType::Directory) {
                 try!(fs::create_dir_all(&file_dst).map_err(|e| {
                     TarError::new(&format!("failed to create `{}`",
                                            file_dst.display()), e)
@@ -904,14 +982,14 @@ impl Header {
 
         // TODO: need to bind more file types
         self.link[0] = match meta.mode() & libc::S_IFMT {
-            libc::S_IFREG => b'0',
-            libc::S_IFLNK => b'2',
-            libc::S_IFCHR => b'3',
-            libc::S_IFBLK => b'4',
-            libc::S_IFDIR => b'5',
-            libc::S_IFIFO => b'6',
-            _ => b' ',
-        };
+            libc::S_IFREG => EntryType::Regular,
+            libc::S_IFLNK => EntryType::Symlink,
+            libc::S_IFCHR => EntryType::Char,
+            libc::S_IFBLK => EntryType::Block,
+            libc::S_IFDIR => EntryType::Directory,
+            libc::S_IFIFO => EntryType::Fifo,
+            _ => EntryType::Unknown,
+        }.to_byte();
     }
 
     #[cfg(windows)]
@@ -932,14 +1010,14 @@ impl Header {
 
         let ft = meta.file_type();
         self.link[0] = if ft.is_dir() {
-            b'5'
+            EntryType::Directory
         } else if ft.is_file() {
-            b'0'
+            EntryType::Regular
         } else if ft.is_symlink() {
-            b'2'
+            EntryType::Symlink
         } else {
-            b' '
-        };
+            EntryType::Unknown
+        }.to_byte();
 
         // The dates listed in tarballs are always seconds relative to
         // January 1, 1970. On Windows, however, the timestamps are returned as
@@ -1190,6 +1268,10 @@ mod tests {
     fn simple() {
         let ar = Archive::new(Cursor::new(&include_bytes!("tests/simple.tar")[..]));
         for entry in t!(ar.entries()) {
+            t!(entry);
+        }
+        let mut ar = Archive::new(Cursor::new(&include_bytes!("tests/simple.tar")[..]));
+        for entry in t!(ar.entries_mut()) {
             t!(entry);
         }
     }
