@@ -7,6 +7,9 @@
 //!
 //! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
 
+// More docs about the detailed tar format can also be found here:
+// http://www.freebsd.org/cgi/man.cgi?query=tar&sektion=5&manpath=FreeBSD+8-current
+
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
