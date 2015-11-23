@@ -340,20 +340,16 @@ impl<'a> Archive<Read + 'a> {
                 continue
             }
 
-            let entry_type = EntryType::new(file.header.link[0]);
-            if entry_type.is_dir() {
-                try!(fs::create_dir_all(&file_dst).map_err(|e| {
+            if let Some(parent) = file_dst.parent() {
+                try!(fs::create_dir_all(&parent).map_err(|e| {
                     TarError::new(&format!("failed to create `{}`",
-                                           file_dst.display()), e)
+                                           parent.display()), e)
                 }));
-            } else {
-                let dir = file_dst.parent().unwrap();
-                try!(fs::create_dir_all(&dir).map_err(|e| {
-                    TarError::new(&format!("failed to create `{}`",
-                                           dir.display()), e)
-                }));
-                try!(file._unpack(&file_dst));
             }
+            try!(file._unpack(&file_dst).map_err(|e| {
+                TarError::new(&format!("failed to unpacked `{}`",
+                                       file_dst.display()), e)
+            }));
         }
         Ok(())
     }
@@ -1221,6 +1217,41 @@ impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
 
 impl<'a> EntryFields<'a> {
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+        let kind = self.header.entry_type();
+        if kind.is_dir() {
+            // If the directory already exists just let it slide
+            let prev = fs::metadata(&dst);
+            if prev.map(|m| m.is_dir()).unwrap_or(false) {
+                return Ok(())
+            }
+            return fs::create_dir(&dst)
+        } else if kind.is_hard_link() || kind.is_symlink() {
+            let src = match try!(self.header.link_name()) {
+                Some(name) => name,
+                None => return Err(other("hard link listed but no link \
+                                          name found"))
+            };
+
+            return if kind.is_hard_link() {
+                fs::hard_link(&src, dst)
+            } else {
+                symlink(&src, dst)
+            };
+
+            #[cfg(windows)]
+            fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
+                ::std::os::windows::fs::symlink_file(src, dst)
+            }
+            #[cfg(unix)]
+            fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
+                ::std::os::unix::fs::symlink(src, dst)
+            }
+        } else if !kind.is_file() {
+            // Right now we can only otherwise handle regular files
+            return Err(other(&format!("unknown file type 0x{:x}",
+                                      kind.as_byte())))
+        };
+
         try!(fs::File::create(dst).and_then(|mut f| {
             if try!(io::copy(self, &mut f)) != self.size {
                 return Err(bad_archive());
@@ -1872,5 +1903,19 @@ mod tests {
                    Some(Path::new("file")));
         let other = t!(entries.next().unwrap());
         assert!(t!(other.header().link_name()).is_none());
+    }
+
+    #[test]
+    #[cfg(unix)] // making symlinks on windows is hard
+    fn unpack_links() {
+        let td = t!(TempDir::new("tar-rs"));
+        let mut ar = Archive::new(Cursor::new(&include_bytes!("tests/link.tar")[..]));
+        t!(ar.unpack(td.path()));
+
+        let md = t!(fs::symlink_metadata(td.path().join("lnk")));
+        assert!(md.file_type().is_symlink());
+        assert_eq!(&*t!(fs::read_link(td.path().join("lnk"))),
+                   Path::new("file"));
+        t!(File::open(td.path().join("lnk")));
     }
 }
