@@ -278,9 +278,8 @@ impl<R: Read> Archive<R> {
 impl<'a> Archive<Read + 'a> {
     fn _entries_mut(&mut self) -> io::Result<EntriesMutFields> {
         if self.pos.get() != 0 {
-            return Err(Error::new(ErrorKind::Other, "cannot call entries_mut \
-                                                     unless archive is at \
-                                                     position 0"))
+            return Err(other("cannot call entries_mut unless archive is at \
+                              position 0"))
         }
         Ok(EntriesMutFields {
             archive: self,
@@ -366,8 +365,7 @@ impl<'a> Archive<Read + 'a> {
             let n = cmp::min(amt, buf.len() as u64);
             let n = try!(Read::read(&mut me, &mut buf[..n as usize]));
             if n == 0 {
-                let errstr = "unexpected EOF during skip";
-                return Err(Error::new(ErrorKind::Other, errstr));
+                return Err(other("unexpected EOF during skip"))
             }
             amt -= n as u64;
         }
@@ -593,7 +591,7 @@ impl<'a> Archive<Write + 'a> {
         } else if stat.is_dir() {
             self._append(&header, &mut io::empty())
         } else {
-            Err(Error::new(ErrorKind::Other, "path has unknown file type"))
+            Err(other("path has unknown file type"))
         }
     }
 
@@ -809,9 +807,8 @@ impl Header {
             let prefix = &bytes[..cmp::min(bytes.len(), prefixlen)];
             let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
                 Some(i) => i,
-                None => return Err(Error::new(ErrorKind::Other,
-                                              "path cannot be split to be \
-                                               inserted into archive")),
+                None => return Err(other("path cannot be split to be inserted \
+                                          into archive")),
             };
             try!(copy_into(&mut self.name, &bytes[pos + 1..], true));
             try!(copy_into(&mut self.prefix, &bytes[..pos], true));
@@ -1272,9 +1269,9 @@ impl<'a> EntryFields<'a> {
             SeekFrom::End(pos) => self.size as i64 + pos,
         };
         if next < 0 {
-            Err(Error::new(ErrorKind::Other, "cannot seek before position 0"))
+            Err(other("cannot seek before position 0"))
         } else if next as u64 > self.size {
-            Err(Error::new(ErrorKind::Other, "cannot seek past end of file"))
+            Err(other("cannot seek past end of file"))
         } else {
             self.pos = next as u64;
             Ok(self.pos)
@@ -1295,13 +1292,17 @@ impl<'a> Read for EntryFields<'a> {
 }
 
 fn bad_archive() -> Error {
-    Error::new(ErrorKind::Other, "invalid tar archive")
+    other("invalid tar archive")
+}
+
+fn other(msg: &str) -> Error {
+    Error::new(ErrorKind::Other, msg)
 }
 
 #[cfg(windows)]
 fn path2bytes(p: &Path) -> io::Result<&[u8]> {
     p.as_os_str().to_str().map(|s| s.as_bytes()).ok_or_else(|| {
-        Error::new(ErrorKind::Other, "path was not valid unicode")
+        other("path was not valid unicode")
     })
 }
 
@@ -1396,9 +1397,9 @@ fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
 /// backslashes when unpacking on Unix.
 fn copy_into(slot: &mut [u8], bytes: &[u8], map_slashes: bool) -> io::Result<()> {
     if bytes.len() > slot.len() {
-        Err(Error::new(ErrorKind::Other, "provided value is too long"))
+        Err(other("provided value is too long"))
     } else if bytes.iter().any(|b| *b == 0) {
-        Err(Error::new(ErrorKind::Other, "provided value contains a nul byte"))
+        Err(other("provided value contains a nul byte"))
     } else {
         for (slot, val) in slot.iter_mut().zip(bytes) {
             if map_slashes && *val == b'\\' {
@@ -1413,7 +1414,7 @@ fn copy_into(slot: &mut [u8], bytes: &[u8], map_slashes: bool) -> io::Result<()>
 
 #[cfg(windows)]
 fn not_unicode() -> Error {
-    Error::new(ErrorKind::Other, "only unicode paths are supported on windows")
+    other("only unicode paths are supported on windows")
 }
 
 impl TarError {
