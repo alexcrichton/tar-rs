@@ -1057,7 +1057,7 @@ impl Header {
 
         let ft = meta.file_type();
         self.set_entry_type(if ft.is_dir() {
-            EntryType::directory()
+            EntryType::dir()
         } else if ft.is_file() {
             EntryType::file()
         } else if ft.is_symlink() {
