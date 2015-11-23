@@ -1054,15 +1054,15 @@ impl Header {
         self.set_gid(0);
 
         let ft = meta.file_type();
-        self.link[0] = if ft.is_dir() {
-            EntryType::Directory
+        self.set_entry_type(if ft.is_dir() {
+            EntryType::directory()
         } else if ft.is_file() {
-            EntryType::Regular
+            EntryType::file()
         } else if ft.is_symlink() {
-            EntryType::Symlink
+            EntryType::symlink()
         } else {
-            EntryType::Unknown
-        }.to_byte();
+            EntryType::new(b' ')
+        });
 
         // The dates listed in tarballs are always seconds relative to
         // January 1, 1970. On Windows, however, the timestamps are returned as
