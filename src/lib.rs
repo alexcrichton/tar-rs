@@ -1861,4 +1861,15 @@ mod tests {
         let err = ar.append_dir(nul_path, td.path()).unwrap_err();
         assert!(err.to_string().contains("contains a nul byte"));
     }
+
+    #[test]
+    fn links() {
+        let ar = Archive::new(Cursor::new(&include_bytes!("tests/link.tar")[..]));
+        let mut entries = t!(ar.entries());
+        let link = t!(entries.next().unwrap());
+        assert_eq!(t!(link.header().link_name()).as_ref().map(|p| &**p),
+                   Some(Path::new("file")));
+        let other = t!(entries.next().unwrap());
+        assert!(t!(other.header().link_name()).is_none());
+    }
 }
