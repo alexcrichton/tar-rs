@@ -759,36 +759,7 @@ impl Header {
     /// Note that this function will convert any `\` characters to directory
     /// separators.
     pub fn path(&self) -> io::Result<Cow<Path>> {
-        return bytes2path(self.path_bytes());
-
-        #[cfg(windows)]
-        fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
-            match bytes {
-                Cow::Borrowed(bytes) => {
-                    let s = try!(str::from_utf8(bytes).map_err(|_| {
-                        not_unicode()
-                    }));
-                    Ok(Cow::Borrowed(Path::new(s)))
-                }
-                Cow::Owned(bytes) => {
-                    let s = try!(String::from_utf8(bytes).map_err(|_| {
-                        not_unicode()
-                    }));
-                    Ok(Cow::Owned(PathBuf::from(s)))
-                }
-            }
-        }
-        #[cfg(unix)]
-        fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
-            Ok(match bytes {
-                Cow::Borrowed(bytes) => Cow::Borrowed({
-                    Path::new(OsStr::from_bytes(bytes))
-                }),
-                Cow::Owned(bytes) => Cow::Owned({
-                    PathBuf::from(OsString::from_vec(bytes))
-                })
-            })
-        }
+        bytes2path(self.path_bytes())
     }
 
     /// Returns the pathname stored in this header as a byte array.
@@ -827,15 +798,7 @@ impl Header {
     }
 
     fn _set_path(&mut self, path: &Path) -> io::Result<()> {
-        let bytes = match bytes(path) {
-            Some(b) => b,
-            None => return Err(Error::new(ErrorKind::Other, "path was not \
-                                                             valid unicode")),
-        };
-        if bytes.iter().any(|b| *b == 0) {
-            return Err(Error::new(ErrorKind::Other, "path contained a nul byte"))
-        }
-
+        let bytes = try!(path2bytes(path));
         let (namelen, prefixlen) = (self.name.len(), self.prefix.len());
         if bytes.len() < namelen {
             try!(copy_into(&mut self.name, bytes, true));
@@ -850,16 +813,52 @@ impl Header {
             try!(copy_into(&mut self.name, &bytes[pos + 1..], true));
             try!(copy_into(&mut self.prefix, &bytes[..pos], true));
         }
-        return Ok(());
+        Ok(())
+    }
 
-        #[cfg(windows)]
-        fn bytes(p: &Path) -> Option<&[u8]> {
-            p.as_os_str().to_str().map(|s| s.as_bytes())
+    /// Returns the link name stored in this header, if any is found.
+    ///
+    /// This method may fail if the pathname is not valid unicode and this is
+    /// called on a Windows platform. `Ok(None)` being returned, however,
+    /// indicates that the link name was not present.
+    ///
+    /// Note that this function will convert any `\` characters to directory
+    /// separators.
+    pub fn link_name(&self) -> io::Result<Option<Cow<Path>>> {
+        match self.link_name_bytes() {
+            Some(bytes) => bytes2path(bytes).map(Some),
+            None => Ok(None),
         }
-        #[cfg(unix)]
-        fn bytes(p: &Path) -> Option<&[u8]> {
-            Some(p.as_os_str().as_bytes())
+    }
+
+    /// Returns the link name stored in this header as a byte array, if any.
+    ///
+    /// This function is guaranteed to succeed, but you may wish to call the
+    /// `link_name` method to convert to a `Path`.
+    ///
+    /// Note that this function will convert any `\` characters to directory
+    /// separators.
+    pub fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
+        if self.linkname[0] == 0 {
+            None
+        } else {
+            Some(deslash(&self.linkname))
         }
+    }
+
+    /// Sets the path name for this header.
+    ///
+    /// This function will set the pathname listed in this header, encoding it
+    /// in the appropriate format. May fail if the path is too long or if the
+    /// path specified is not unicode and this is a Windows platform.
+    pub fn set_link_name<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        self._set_link_name(p.as_ref())
+    }
+
+    fn _set_link_name(&mut self, path: &Path) -> io::Result<()> {
+        let bytes = try!(path2bytes(path));
+        try!(copy_into(&mut self.linkname, bytes, true));
+        Ok(())
     }
 
     /// Returns the mode bits for this file
@@ -1296,6 +1295,48 @@ fn bad_archive() -> Error {
     Error::new(ErrorKind::Other, "invalid tar archive")
 }
 
+#[cfg(windows)]
+fn path2bytes(p: &Path) -> io::Result<&[u8]> {
+    p.as_os_str().to_str().map(|s| s.as_bytes()).ok_or_else(|| {
+        Error::new(ErrorKind::Other, "path was not valid unicode")
+    })
+}
+
+#[cfg(unix)]
+fn path2bytes(p: &Path) -> io::Result<&[u8]> {
+    Ok(p.as_os_str().as_bytes())
+}
+
+#[cfg(windows)]
+fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+    match bytes {
+        Cow::Borrowed(bytes) => {
+            let s = try!(str::from_utf8(bytes).map_err(|_| {
+                not_unicode()
+            }));
+            Ok(Cow::Borrowed(Path::new(s)))
+        }
+        Cow::Owned(bytes) => {
+            let s = try!(String::from_utf8(bytes).map_err(|_| {
+                not_unicode()
+            }));
+            Ok(Cow::Owned(PathBuf::from(s)))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+    Ok(match bytes {
+        Cow::Borrowed(bytes) => Cow::Borrowed({
+            Path::new(OsStr::from_bytes(bytes))
+        }),
+        Cow::Owned(bytes) => Cow::Owned({
+            PathBuf::from(OsString::from_vec(bytes))
+        })
+    })
+}
+
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
     let num = match str::from_utf8(truncate(slice)) {
         Ok(n) => n,
@@ -1319,6 +1360,17 @@ fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
     match slice.iter().position(|i| *i == 0) {
         Some(i) => &slice[..i],
         None => slice,
+    }
+}
+
+fn deslash(bytes: &[u8]) -> Cow<[u8]> {
+    if !bytes.contains(&b'\\') {
+        Cow::Borrowed(truncate(bytes))
+    } else {
+        fn noslash(b: &u8) -> u8 {
+            if *b == b'\\' {b'/'} else {*b}
+        }
+        Cow::Owned(truncate(bytes).iter().map(noslash).collect())
     }
 }
 
@@ -1804,6 +1856,6 @@ mod tests {
         let td = t!(TempDir::new("tar-rs"));
         let ar = Archive::new(Vec::<u8>::new());
         let err = ar.append_dir(nul_path, td.path()).unwrap_err();
-        assert!(err.to_string().contains("contained a nul byte"));
+        assert!(err.to_string().contains("contains a nul byte"));
     }
 }
