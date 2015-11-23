@@ -24,6 +24,7 @@ use std::fs;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::iter::repeat;
+use std::marker;
 use std::mem;
 use std::path::{Path, PathBuf, Component};
 use std::str;
@@ -34,19 +35,26 @@ use filetime::FileTime;
 #[cfg(unix)] use std::ffi::{OsStr, OsString};
 #[cfg(windows)] use std::os::windows::prelude::*;
 
-macro_rules! try_iter{ ($me:expr, $e:expr) => (
-    match $e {
+macro_rules! try_iter {
+    ($me:expr, $e:expr) => (match $e {
         Ok(e) => e,
         Err(e) => { $me.done = true; return Some(Err(e)) }
-    }
-) }
+    })
+}
+
+// NB: some of the coding patterns and idioms here may seem a little strange.
+//     This is currently attempting to expose a super generic interface while
+//     also not forcing clients to codegen the entire crate each time they use
+//     it. To that end lots of work is done to ensure that concrete
+//     implementations are all found in this crate and the generic functions are
+//     all just super thin wrappers (e.g. easy to codegen).
 
 /// A top-level representation of an archive file.
 ///
 /// This archive can have an entry added to it and it can be iterated over.
-pub struct Archive<R> {
-    obj: RefCell<R>,
+pub struct Archive<R: ?Sized> {
     pos: Cell<u64>,
+    obj: RefCell<R>,
 }
 
 /// Backwards compatible alias for `Entries`.
@@ -56,8 +64,16 @@ pub type Files<'a, T> = Entries<'a, T>;
 /// An iterator over the entries of an archive.
 ///
 /// Requires that `R` implement `Seek`.
-pub struct Entries<'a, R:'a> {
-    archive: &'a Archive<R>,
+pub struct Entries<'a, R: 'a + ?Sized> {
+    fields: EntriesFields<'a>,
+    _ignored: marker::PhantomData<&'a R>,
+}
+
+struct EntriesFields<'a> {
+    // Need a version with Read + Seek so we can call _seek
+    archive: &'a Archive<ReadAndSeek + 'a>,
+    // ... but we also need a literal Read so we can call _next_entry
+    archive_read: &'a Archive<Read + 'a>,
     done: bool,
     offset: u64,
 }
@@ -70,8 +86,13 @@ pub type FilesMut<'a, T> = EntriesMut<'a, T>;
 ///
 /// Does not require that `R` implements `Seek`, but each entry must be
 /// processed before the next.
-pub struct EntriesMut<'a, R:'a> {
-    archive: &'a Archive<R>,
+pub struct EntriesMut<'a, R: 'a + ?Sized> {
+    fields: EntriesMutFields<'a>,
+    _ignored: marker::PhantomData<&'a R>,
+}
+
+struct EntriesMutFields<'a> {
+    archive: &'a Archive<Read + 'a>,
     next: u64,
     done: bool,
 }
@@ -85,16 +106,21 @@ pub type File<'a, T> = Entry<'a, T>;
 /// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader and Seek
 /// traits. An entry cannot be rewritten once inserted into an archive.
-pub struct Entry<'a, R: 'a> {
+pub struct Entry<'a, R: 'a + ?Sized> {
+    fields: EntryFields<'a>,
+    _ignored: marker::PhantomData<&'a R>,
+}
+
+struct EntryFields<'a> {
     header: Header,
-    archive: &'a Archive<R>,
+    archive: &'a Archive<Read + 'a>,
     pos: u64,
     size: u64,
 
     // Used in read() to make sure we're positioned at the next byte. For a
     // `Entries` iterator these are meaningful while for a `EntriesMut` iterator
     // these are both unused/noops.
-    seek: fn(&Entry<R>) -> io::Result<()>,
+    seek: Box<Fn(&EntryFields) -> io::Result<()> + 'a>,
     tar_offset: u64,
 }
 
@@ -159,6 +185,7 @@ impl<R: Seek + Read> Archive<R> {
     pub fn files(&self) -> io::Result<Entries<R>> {
         self.entries()
     }
+
     /// Construct an iterator over the entries of this archive.
     ///
     /// This function can return an error if any underlying I/O operation fails
@@ -168,12 +195,28 @@ impl<R: Seek + Read> Archive<R> {
     /// to handle invalid tar archives as well as any intermittent I/O error
     /// that occurs.
     pub fn entries(&self) -> io::Result<Entries<R>> {
-        try!(self.seek(0));
-        Ok(Entries { archive: self, done: false, offset: 0 })
+        let me: &Archive<ReadAndSeek> = self;
+        try!(me._seek(0));
+        Ok(Entries {
+            fields: EntriesFields {
+                archive: self,
+                archive_read: self,
+                done: false,
+                offset: 0,
+            },
+            _ignored: marker::PhantomData,
+        })
     }
+}
 
-    fn seek(&self, pos: u64) -> io::Result<()> {
-        if self.pos.get() == pos { return Ok(()) }
+trait ReadAndSeek: Read + Seek {}
+impl<R: ?Sized + Read + Seek> ReadAndSeek for R {}
+
+impl<'a> Archive<ReadAndSeek + 'a> {
+    fn _seek(&self, pos: u64) -> io::Result<()> {
+        if self.pos.get() == pos {
+            return Ok(())
+        }
         try!(self.obj.borrow_mut().seek(SeekFrom::Start(pos)));
         self.pos.set(pos);
         Ok(())
@@ -181,11 +224,6 @@ impl<R: Seek + Read> Archive<R> {
 }
 
 impl<R: Read> Archive<R> {
-    /// Backwards compatible alias for `entries_mut`.
-    #[doc(hidden)]
-    pub fn files_mut(&mut self) -> io::Result<EntriesMut<R>> {
-        self.entries_mut()
-    }
     /// Construct an iterator over the entries in this archive.
     ///
     /// While similar to the `entries` iterator, this iterator does not require
@@ -197,12 +235,16 @@ impl<R: Read> Archive<R> {
     /// iterator returns), then the contents read for each entry may be
     /// corrupted.
     pub fn entries_mut(&mut self) -> io::Result<EntriesMut<R>> {
-        if self.pos.get() != 0 {
-            return Err(Error::new(ErrorKind::Other, "cannot call entries_mut \
-                                                     unless archive is at \
-                                                     position 0"))
-        }
-        Ok(EntriesMut { archive: self, done: false, next: 0 })
+        let me: &mut Archive<Read> = self;
+        me._entries_mut().map(|fields| {
+            EntriesMut { fields: fields, _ignored: marker::PhantomData }
+        })
+    }
+
+    /// Backwards compatible alias for `entries_mut`.
+    #[doc(hidden)]
+    pub fn files_mut(&mut self) -> io::Result<EntriesMut<R>> {
+        self.entries_mut()
     }
 
     /// Unpacks the contents tarball into the specified `dst`.
@@ -225,11 +267,27 @@ impl<R: Read> Archive<R> {
     /// ar.unpack("foo").unwrap();
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.unpack2(dst.as_ref())
+        let me: &mut Archive<Read> = self;
+        me._unpack(dst.as_ref())
+    }
+}
+
+impl<'a> Archive<Read + 'a> {
+    fn _entries_mut(&mut self) -> io::Result<EntriesMutFields> {
+        if self.pos.get() != 0 {
+            return Err(Error::new(ErrorKind::Other, "cannot call entries_mut \
+                                                     unless archive is at \
+                                                     position 0"))
+        }
+        Ok(EntriesMutFields {
+            archive: self,
+            done: false,
+            next: 0,
+        })
     }
 
-    fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
-        'outer: for entry in try!(self.entries_mut()) {
+    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+        'outer: for entry in try!(self._entries_mut()) {
             // TODO: although it may not be the case due to extended headers
             // and GNU extensions, assume each entry is a file for now.
             let mut file = try!(entry.map_err(|e| {
@@ -251,7 +309,7 @@ impl<R: Read> Archive<R> {
 
             let mut file_dst = dst.to_path_buf();
             {
-                let path = try!(file.header().path().map_err(|e| {
+                let path = try!(file.header.path().map_err(|e| {
                     TarError::new("invalid path in entry header", e)
                 }));
                 for part in path.components() {
@@ -280,7 +338,7 @@ impl<R: Read> Archive<R> {
                 continue
             }
 
-            let entry_type = EntryType::new(file.header().link[0]);
+            let entry_type = EntryType::new(file.header.link[0]);
             if entry_type.is_dir() {
                 try!(fs::create_dir_all(&file_dst).map_err(|e| {
                     TarError::new(&format!("failed to create `{}`",
@@ -292,13 +350,13 @@ impl<R: Read> Archive<R> {
                     TarError::new(&format!("failed to create `{}`",
                                            dir.display()), e)
                 }));
-                try!(file.unpack(&file_dst));
+                try!(file._unpack(&file_dst));
             }
         }
         Ok(())
     }
 
-    fn skip(&self, mut amt: u64) -> io::Result<()> {
+    fn _skip(&self, mut amt: u64) -> io::Result<()> {
         let mut buf = [0u8; 4096 * 8];
         let mut me = self;
         while amt > 0 {
@@ -315,8 +373,10 @@ impl<R: Read> Archive<R> {
 
     // Assumes that the underlying reader is positioned at the start of a valid
     // header to parse.
-    fn next_entry(&self, offset: &mut u64, seek: fn(&Entry<R>) -> io::Result<()>)
-                 -> io::Result<Option<Entry<R>>> {
+    fn _next_entry(&self,
+                   offset: &mut u64,
+                   seek: Box<Fn(&EntryFields) -> io::Result<()> + 'a>)
+                   -> io::Result<Option<EntryFields>> {
         // If we have 2 or more sections of 0s, then we're done!
         let mut chunk = [0; 512];
         let mut me = self;
@@ -339,7 +399,7 @@ impl<R: Read> Archive<R> {
                   32 * 8;
 
         let header: Header = unsafe { mem::transmute(chunk) };
-        let ret = Entry {
+        let ret = EntryFields {
             archive: self,
             pos: 0,
             size: try!(header.size()),
@@ -397,19 +457,9 @@ impl<W: Write> Archive<W> {
     /// ar.append(&header, &mut data).unwrap();
     /// let archive = ar.into_inner();
     /// ```
-    pub fn append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
-        let mut obj = self.obj.borrow_mut();
-        try!(obj.write_all(header.as_bytes()));
-        let len = try!(io::copy(&mut data, &mut *obj));
-
-        // Pad with zeros if necessary.
-        let buf = [0; 512];
-        let remaining = 512 - (len % 512);
-        if remaining < 512 {
-            try!(obj.write_all(&buf[..remaining as usize]));
-        }
-
-        Ok(())
+    pub fn append(&self, header: &Header, data: &mut Read) -> io::Result<()> {
+        let me: &Archive<Write> = self;
+        me._append(header, data)
     }
 
     /// Adds a file on the local filesystem to this archive.
@@ -437,20 +487,8 @@ impl<W: Write> Archive<W> {
     /// ar.append_path("foo/bar.txt").unwrap();
     /// ```
     pub fn append_path<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        self.append_path2(path.as_ref())
-    }
-
-    fn append_path2(&self, path: &Path) -> io::Result<()> {
-        let stat = try!(fs::metadata(path));
-        let header = try!(Header::from_path_and_metadata(path, &stat));
-        if stat.is_file() {
-            let mut file = try!(fs::File::open(path));
-            self.append(&header, &mut file)
-        } else if stat.is_dir() {
-            self.append(&header, &mut io::empty())
-        } else {
-            Err(Error::new(ErrorKind::Other, "path has unknown file type"))
-        }
+        let me: &Archive<Write> = self;
+        me._append_path(path.as_ref())
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -481,13 +519,8 @@ impl<W: Write> Archive<W> {
     /// ```
     pub fn append_file<P: AsRef<Path>>(&self, path: P, file: &mut fs::File)
                                        -> io::Result<()> {
-        self.append_file2(path.as_ref(), file)
-    }
-
-    fn append_file2(&self, path: &Path, file: &mut fs::File) -> io::Result<()> {
-        let stat = try!(file.metadata());
-        let header = try!(Header::from_path_and_metadata(path, &stat));
-        self.append(&header, file)
+        let me: &Archive<Write> = self;
+        me._append_file(path.as_ref(), file)
     }
 
     /// Adds a directory to this archive with the given path as the name of the
@@ -515,15 +548,11 @@ impl<W: Write> Archive<W> {
     /// // with a different name.
     /// ar.append_dir("bardir", ".").unwrap();
     /// ```
-    pub fn append_dir<P: AsRef<Path>, P2: AsRef<Path>>(
-                      &self, path: P, src_path: P2) -> io::Result<()> {
-        self.append_dir2(path.as_ref(), src_path.as_ref())
-    }
-
-    fn append_dir2(&self, path: &Path, src_path: &Path) -> io::Result<()> {
-        let stat = try!(fs::metadata(src_path));
-        let header = try!(Header::from_path_and_metadata(path, &stat));
-        self.append(&header, &mut io::empty())
+    pub fn append_dir<P, Q>(&self, path: P, src_path: Q) -> io::Result<()>
+        where P: AsRef<Path>, Q: AsRef<Path>
+    {
+        let me: &Archive<Write> = self;
+        me._append_dir(path.as_ref(), src_path.as_ref())
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -531,8 +560,64 @@ impl<W: Write> Archive<W> {
     /// This function is required to be called to complete the archive, it will
     /// be invalid if this is not called.
     pub fn finish(&self) -> io::Result<()> {
+        let me: &Archive<Write> = self;
+        me._finish()
+    }
+}
+
+impl<'a> Archive<Write + 'a> {
+    fn _append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
+        let mut obj = self.obj.borrow_mut();
+        try!(obj.write_all(header.as_bytes()));
+        let len = try!(io::copy(&mut data, &mut *obj));
+
+        // Pad with zeros if necessary.
+        let buf = [0; 512];
+        let remaining = 512 - (len % 512);
+        if remaining < 512 {
+            try!(obj.write_all(&buf[..remaining as usize]));
+        }
+
+        Ok(())
+    }
+
+    fn _append_path(&self, path: &Path) -> io::Result<()> {
+        let stat = try!(fs::metadata(path));
+        let header = try!(Header::from_path_and_metadata(path, &stat));
+        if stat.is_file() {
+            let mut file = try!(fs::File::open(path));
+            self._append(&header, &mut file)
+        } else if stat.is_dir() {
+            self._append(&header, &mut io::empty())
+        } else {
+            Err(Error::new(ErrorKind::Other, "path has unknown file type"))
+        }
+    }
+
+    fn _append_file(&self, path: &Path, file: &mut fs::File) -> io::Result<()> {
+        let stat = try!(file.metadata());
+        let header = try!(Header::from_path_and_metadata(path, &stat));
+        self._append(&header, file)
+    }
+
+    fn _append_dir(&self, path: &Path, src_path: &Path) -> io::Result<()> {
+        let stat = try!(fs::metadata(src_path));
+        let header = try!(Header::from_path_and_metadata(path, &stat));
+        self._append(&header, &mut io::empty())
+    }
+
+    fn _finish(&self) -> io::Result<()> {
         let b = [0; 1024];
         self.obj.borrow_mut().write_all(&b)
+    }
+}
+
+impl<'a, R: Read + ?Sized> Read for &'a Archive<R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        self.obj.borrow_mut().read(into).map(|i| {
+            self.pos.set(self.pos.get() + i as u64);
+            i
+        })
     }
 }
 
@@ -540,50 +625,69 @@ impl<'a, R: Seek + Read> Iterator for Entries<'a, R> {
     type Item = io::Result<Entry<'a, R>>;
 
     fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
+        self.fields.next().map(|result| {
+            result.map(|fields| {
+                Entry { fields: fields, _ignored: marker::PhantomData }
+            })
+        })
+    }
+}
+
+impl<'a> Iterator for EntriesFields<'a> {
+    type Item = io::Result<EntryFields<'a>>;
+
+    fn next(&mut self) -> Option<io::Result<EntryFields<'a>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
 
         // Seek to the start of the next header in the archive
-        try_iter!(self, self.archive.seek(self.offset));
+        try_iter!(self, self.archive._seek(self.offset));
 
-        fn doseek<R: Seek + Read>(entry: &Entry<R>) -> io::Result<()> {
-            entry.archive.seek(entry.tar_offset + entry.pos)
-        }
+        let archive = self.archive;
+        let seek = Box::new(move |entry: &EntryFields| {
+            archive._seek(entry.tar_offset + entry.pos)
+        });
 
         // Parse the next entry header
-        match try_iter!(self, self.archive.next_entry(&mut self.offset, doseek)) {
-            None => { self.done = true; None }
+        let archive = self.archive_read;
+        match try_iter!(self, archive._next_entry(&mut self.offset, seek)) {
             Some(f) => Some(Ok(f)),
+            None => { self.done = true; None }
         }
     }
 }
 
-
-impl<'a, R: Read> Iterator for EntriesMut<'a, R> {
+impl<'a, R: Read + ?Sized> Iterator for EntriesMut<'a, R> {
     type Item = io::Result<Entry<'a, R>>;
 
     fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
+        self.fields.next().map(|result| {
+            result.map(|fields| {
+                Entry { fields: fields, _ignored: marker::PhantomData }
+            })
+        })
+    }
+}
+
+impl<'a> Iterator for EntriesMutFields<'a> {
+    type Item = io::Result<EntryFields<'a>>;
+
+    fn next(&mut self) -> Option<io::Result<EntryFields<'a>>> {
         // If we hit a previous error, or we reached the end, we're done here
         if self.done { return None }
 
         // Seek to the start of the next header in the archive
         let delta = self.next - self.archive.pos.get();
-        try_iter!(self, self.archive.skip(delta));
+        try_iter!(self, self.archive._skip(delta));
 
         // no-op because this reader can't seek
-        fn doseek<R>(_: &Entry<R>) -> io::Result<()> { Ok(()) }
+        let seek = Box::new(|_: &EntryFields| Ok(()));
 
         // Parse the next entry header
-        match try_iter!(self, self.archive.next_entry(&mut self.next, doseek)) {
-            None => { self.done = true; None }
+        match try_iter!(self, self.archive._next_entry(&mut self.next, seek)) {
             Some(f) => Some(Ok(f)),
+            None => { self.done = true; None }
         }
-    }
-}
-
-impl Clone for Header {
-    fn clone(&self) -> Header {
-        Header { ..*self }
     }
 }
 
@@ -719,10 +823,10 @@ impl Header {
     /// in the appropriate format. May fail if the path is too long or if the
     /// path specified is not unicode and this is a Windows platform.
     pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
-        self.set_path2(p.as_ref())
+        self._set_path(p.as_ref())
     }
 
-    fn set_path2(&mut self, path: &Path) -> io::Result<()> {
+    fn _set_path(&mut self, path: &Path) -> io::Result<()> {
         let bytes = match bytes(path) {
             Some(b) => b,
             None => return Err(Error::new(ErrorKind::Other, "path was not \
@@ -969,6 +1073,12 @@ impl Header {
     }
 }
 
+impl Clone for Header {
+    fn clone(&self) -> Header {
+        Header { ..*self }
+    }
+}
+
 impl EntryType {
     /// Creates a new entry type from a raw byte.
     ///
@@ -1068,7 +1178,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// Returns access to the header of this entry in the archive.
     ///
     /// This provides access to the the metadata for this entry in the archive.
-    pub fn header(&self) -> &Header { &self.header }
+    pub fn header(&self) -> &Header { &self.fields.header }
 
     /// Writes this file to the specified location.
     ///
@@ -1094,30 +1204,44 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.unpack2(dst.as_ref())
+        self.fields._unpack(dst.as_ref())
     }
+}
 
-    fn unpack2(&mut self, dst: &Path) -> io::Result<()> {
+impl<'a, R: Read> Read for Entry<'a, R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        self.fields.read(into)
+    }
+}
+
+impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
+    fn seek(&mut self, how: SeekFrom) -> io::Result<u64> {
+        self.fields._seek(how)
+    }
+}
+
+impl<'a> EntryFields<'a> {
+    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
         try!(fs::File::create(dst).and_then(|mut f| {
             if try!(io::copy(self, &mut f)) != self.size {
                 return Err(bad_archive());
             }
             Ok(())
         }).map_err(|e| {
-            let header = self.header().path_bytes();
+            let header = self.header.path_bytes();
             TarError::new(&format!("failed to unpack `{}` into `{}`",
                                    String::from_utf8_lossy(&header),
                                    dst.display()), e)
         }));
 
-        if let Ok(mtime) = self.header().mtime() {
+        if let Ok(mtime) = self.header.mtime() {
             let mtime = FileTime::from_seconds_since_1970(mtime, 0);
             try!(filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
                 TarError::new(&format!("failed to set mtime for `{}`",
                                        dst.display()), e)
             }));
         }
-        if let Ok(mode) = self.header().mode() {
+        if let Ok(mode) = self.header.mode() {
             try!(set_perms(dst, mode).map_err(|e| {
                 TarError::new(&format!("failed to set permissions to {:o} \
                                         for `{}`", mode, dst.display()), e)
@@ -1138,31 +1262,8 @@ impl<'a, R: Read> Entry<'a, R> {
             fs::set_permissions(dst, perm)
         }
     }
-}
 
-impl<'a, R: Read> Read for &'a Archive<R> {
-    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        self.obj.borrow_mut().read(into).map(|i| {
-            self.pos.set(self.pos.get() + i as u64);
-            i
-        })
-    }
-}
-
-impl<'a, R: Read> Read for Entry<'a, R> {
-    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        if self.size == self.pos { return Ok(0) }
-
-        try!((self.seek)(self));
-        let amt = cmp::min((self.size - self.pos) as usize, into.len());
-        let amt = try!(Read::read(&mut self.archive, &mut into[..amt]));
-        self.pos += amt as u64;
-        Ok(amt)
-    }
-}
-
-impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
-    fn seek(&mut self, how: SeekFrom) -> io::Result<u64> {
+    fn _seek(&mut self, how: SeekFrom) -> io::Result<u64> {
         let next = match how {
             SeekFrom::Start(pos) => pos as i64,
             SeekFrom::Current(pos) => self.pos as i64 + pos,
@@ -1176,6 +1277,18 @@ impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
             self.pos = next as u64;
             Ok(self.pos)
         }
+    }
+}
+
+impl<'a> Read for EntryFields<'a> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        if self.size == self.pos { return Ok(0) }
+
+        try!((self.seek)(self));
+        let amt = cmp::min((self.size - self.pos) as usize, into.len());
+        let amt = try!(Read::read(&mut self.archive, &mut into[..amt]));
+        self.pos += amt as u64;
+        Ok(amt)
     }
 }
 
