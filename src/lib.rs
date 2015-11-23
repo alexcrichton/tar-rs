@@ -569,7 +569,7 @@ impl<'a> Archive<Write + 'a> {
     fn _append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
         let mut obj = self.obj.borrow_mut();
         try!(obj.write_all(header.as_bytes()));
-        let len = try!(io::copy(&mut data, &mut *obj));
+        let len = try!(io::copy(&mut data, &mut &mut *obj));
 
         // Pad with zeros if necessary.
         let buf = [0; 512];
