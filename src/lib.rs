@@ -1657,4 +1657,24 @@ mod tests {
         let err = ar.append_dir(nul_path, td.path()).unwrap_err();
         assert!(err.to_string().contains("contained a nul byte"));
     }
+
+    #[test]
+    fn link() {
+        use std::io::Read;
+
+        let file = File::open("src/tests/link.tar").unwrap();
+        let tar = Archive::new(file);
+        let contents: Vec<_> = {
+            tar.files()
+               .unwrap()
+               .map(|f| {
+                   let mut s = String::new();
+                   f.unwrap().read_to_string(&mut s).unwrap();
+                   s
+               })
+               .collect()
+        };
+        let expected = vec!["file", "file_contents"];
+        assert_eq!(contents, expected);
+    }
 }
