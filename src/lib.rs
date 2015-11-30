@@ -55,10 +55,28 @@ macro_rules! try_iter {
 /// A top-level representation of an archive file.
 ///
 /// This archive can have an entry added to it and it can be iterated over.
-pub struct Archive<R: ?Sized> {
+pub struct Archive<R> {
     pos: Cell<u64>,
-    obj: RefCell<R>,
+
+    // FIXME(rust-lang/rust#30051): this can in theory just be `RefCell<R>`, but
+    //       that apparently causes 32-bit Windows CI to segfault. In order to
+    //       alleviate these problems we box things up to hopefully get better
+    //       padding/alignment. Unfortunately this means we can't go from
+    //       `Archive<R>` to `Archive<Read>` (like we want to be able to), so
+    //       the `Archive2` wrapper is a thin "borrowed version" of an archive
+    //       to alleviate this problem.
+    obj: Box<RefCell<R>>,
 }
+
+struct Archive2<'a, T: ?Sized + 'a> {
+    pos: &'a Cell<u64>,
+    obj: &'a RefCell<T>,
+}
+
+impl<'a, T: ?Sized> Clone for Archive2<'a, T> {
+    fn clone(&self) -> Self { *self }
+}
+impl<'a, T: ?Sized> Copy for Archive2<'a, T> {}
 
 /// Backwards compatible alias for `Entries`.
 #[doc(hidden)]
@@ -67,16 +85,16 @@ pub type Files<'a, T> = Entries<'a, T>;
 /// An iterator over the entries of an archive.
 ///
 /// Requires that `R` implement `Seek`.
-pub struct Entries<'a, R: 'a + ?Sized> {
+pub struct Entries<'a, R: 'a> {
     fields: EntriesFields<'a>,
-    _ignored: marker::PhantomData<&'a R>,
+    _ignored: marker::PhantomData<&'a Archive<R>>,
 }
 
 struct EntriesFields<'a> {
-    // Need a version with Read + Seek so we can call _seek
-    archive: &'a Archive<ReadAndSeek + 'a>,
-    // ... but we also need a literal Read so we can call _next_entry
-    archive_read: &'a Archive<Read + 'a>,
+    // Need a version with Read + Seek so we can call seek
+    archive: Archive2<'a, ReadAndSeek + 'a>,
+    // ... but we also need a literal Read so we can call next_entry
+    archive_read: Archive2<'a, Read + 'a>,
     done: bool,
     offset: u64,
 }
@@ -89,13 +107,13 @@ pub type FilesMut<'a, T> = EntriesMut<'a, T>;
 ///
 /// Does not require that `R` implements `Seek`, but each entry must be
 /// processed before the next.
-pub struct EntriesMut<'a, R: 'a + ?Sized> {
+pub struct EntriesMut<'a, R: 'a> {
     fields: EntriesMutFields<'a>,
-    _ignored: marker::PhantomData<&'a R>,
+    _ignored: marker::PhantomData<&'a Archive<R>>,
 }
 
 struct EntriesMutFields<'a> {
-    archive: &'a Archive<Read + 'a>,
+    archive: Archive2<'a, Read + 'a>,
     next: u64,
     done: bool,
 }
@@ -109,14 +127,14 @@ pub type File<'a, T> = Entry<'a, T>;
 /// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader and Seek
 /// traits. An entry cannot be rewritten once inserted into an archive.
-pub struct Entry<'a, R: 'a + ?Sized> {
+pub struct Entry<'a, R: 'a> {
     fields: EntryFields<'a>,
-    _ignored: marker::PhantomData<&'a R>,
+    _ignored: marker::PhantomData<&'a Archive<R>>,
 }
 
 struct EntryFields<'a> {
     header: Header,
-    archive: &'a Archive<Read + 'a>,
+    archive: Archive2<'a, Read + 'a>,
     pos: u64,
     size: u64,
 
@@ -173,7 +191,7 @@ impl<O> Archive<O> {
     /// Different methods are available on an archive depending on the traits
     /// that the underlying object implements.
     pub fn new(obj: O) -> Archive<O> {
-        Archive { obj: RefCell::new(obj), pos: Cell::new(0) }
+        Archive { obj: Box::new(RefCell::new(obj)), pos: Cell::new(0) }
     }
 
     /// Unwrap this archive, returning the underlying object.
@@ -198,12 +216,13 @@ impl<R: Seek + Read> Archive<R> {
     /// to handle invalid tar archives as well as any intermittent I/O error
     /// that occurs.
     pub fn entries(&self) -> io::Result<Entries<R>> {
-        let me: &Archive<ReadAndSeek> = self;
-        try!(me._seek(0));
+        let obj: &RefCell<ReadAndSeek> = &*self.obj;
+        let me = Archive2 { pos: &self.pos, obj: obj };
+        try!(me.seek(0));
         Ok(Entries {
             fields: EntriesFields {
-                archive: self,
-                archive_read: self,
+                archive: me,
+                archive_read: self.read2(),
                 done: false,
                 offset: 0,
             },
@@ -213,10 +232,10 @@ impl<R: Seek + Read> Archive<R> {
 }
 
 trait ReadAndSeek: Read + Seek {}
-impl<R: ?Sized + Read + Seek> ReadAndSeek for R {}
+impl<R: Read + Seek> ReadAndSeek for R {}
 
-impl<'a> Archive<ReadAndSeek + 'a> {
-    fn _seek(&self, pos: u64) -> io::Result<()> {
+impl<'a> Archive2<'a, ReadAndSeek + 'a> {
+    fn seek(&self, pos: u64) -> io::Result<()> {
         if self.pos.get() == pos {
             return Ok(())
         }
@@ -238,8 +257,7 @@ impl<R: Read> Archive<R> {
     /// iterator returns), then the contents read for each entry may be
     /// corrupted.
     pub fn entries_mut(&mut self) -> io::Result<EntriesMut<R>> {
-        let me: &mut Archive<Read> = self;
-        me._entries_mut().map(|fields| {
+        self.read2().entries_mut().map(|fields| {
             EntriesMut { fields: fields, _ignored: marker::PhantomData }
         })
     }
@@ -270,26 +288,30 @@ impl<R: Read> Archive<R> {
     /// ar.unpack("foo").unwrap();
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        let me: &mut Archive<Read> = self;
-        me._unpack(dst.as_ref())
+        self.read2().unpack(dst.as_ref())
+    }
+
+    fn read2(&self) -> Archive2<Read> {
+        let obj: &RefCell<Read> = &*self.obj;
+        Archive2 { pos: &self.pos, obj: obj }
     }
 }
 
-impl<'a> Archive<Read + 'a> {
-    fn _entries_mut(&mut self) -> io::Result<EntriesMutFields> {
+impl<'a> Archive2<'a, Read + 'a> {
+    fn entries_mut(&mut self) -> io::Result<EntriesMutFields<'a>> {
         if self.pos.get() != 0 {
             return Err(other("cannot call entries_mut unless archive is at \
                               position 0"))
         }
         Ok(EntriesMutFields {
-            archive: self,
+            archive: *self,
             done: false,
             next: 0,
         })
     }
 
-    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
-        'outer: for entry in try!(self._entries_mut()) {
+    fn unpack(&mut self, dst: &Path) -> io::Result<()> {
+        'outer: for entry in try!(self.entries_mut()) {
             // TODO: although it may not be the case due to extended headers
             // and GNU extensions, assume each entry is a file for now.
             let mut file = try!(entry.map_err(|e| {
@@ -354,7 +376,7 @@ impl<'a> Archive<Read + 'a> {
         Ok(())
     }
 
-    fn _skip(&self, mut amt: u64) -> io::Result<()> {
+    fn skip(&self, mut amt: u64) -> io::Result<()> {
         let mut buf = [0u8; 4096 * 8];
         let mut me = self;
         while amt > 0 {
@@ -370,10 +392,10 @@ impl<'a> Archive<Read + 'a> {
 
     // Assumes that the underlying reader is positioned at the start of a valid
     // header to parse.
-    fn _next_entry(&self,
-                   offset: &mut u64,
-                   seek: Box<Fn(&EntryFields) -> io::Result<()> + 'a>)
-                   -> io::Result<Option<EntryFields>> {
+    fn next_entry(&self,
+                  offset: &mut u64,
+                  seek: Box<Fn(&EntryFields) -> io::Result<()> + 'a>)
+                  -> io::Result<Option<EntryFields<'a>>> {
         // If we have 2 or more sections of 0s, then we're done!
         let mut chunk = [0; 512];
         let mut me = self;
@@ -397,7 +419,7 @@ impl<'a> Archive<Read + 'a> {
 
         let header: Header = unsafe { mem::transmute(chunk) };
         let ret = EntryFields {
-            archive: self,
+            archive: *self,
             pos: 0,
             size: try!(header.size()),
             header: header,
@@ -455,8 +477,7 @@ impl<W: Write> Archive<W> {
     /// let archive = ar.into_inner();
     /// ```
     pub fn append(&self, header: &Header, data: &mut Read) -> io::Result<()> {
-        let me: &Archive<Write> = self;
-        me._append(header, data)
+        self.write2().append(header, data)
     }
 
     /// Adds a file on the local filesystem to this archive.
@@ -484,8 +505,7 @@ impl<W: Write> Archive<W> {
     /// ar.append_path("foo/bar.txt").unwrap();
     /// ```
     pub fn append_path<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        let me: &Archive<Write> = self;
-        me._append_path(path.as_ref())
+        self.write2().append_path(path.as_ref())
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -516,8 +536,7 @@ impl<W: Write> Archive<W> {
     /// ```
     pub fn append_file<P: AsRef<Path>>(&self, path: P, file: &mut fs::File)
                                        -> io::Result<()> {
-        let me: &Archive<Write> = self;
-        me._append_file(path.as_ref(), file)
+        self.write2().append_file(path.as_ref(), file)
     }
 
     /// Adds a directory to this archive with the given path as the name of the
@@ -548,8 +567,7 @@ impl<W: Write> Archive<W> {
     pub fn append_dir<P, Q>(&self, path: P, src_path: Q) -> io::Result<()>
         where P: AsRef<Path>, Q: AsRef<Path>
     {
-        let me: &Archive<Write> = self;
-        me._append_dir(path.as_ref(), src_path.as_ref())
+        self.write2().append_dir(path.as_ref(), src_path.as_ref())
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -557,13 +575,20 @@ impl<W: Write> Archive<W> {
     /// This function is required to be called to complete the archive, it will
     /// be invalid if this is not called.
     pub fn finish(&self) -> io::Result<()> {
-        let me: &Archive<Write> = self;
-        me._finish()
+        self.write2().finish()
+    }
+
+    fn write2(&self) -> Archive2<Write> {
+        let obj: &RefCell<Write> = &*self.obj;
+        Archive2 {
+            pos: &self.pos,
+            obj: obj,
+        }
     }
 }
 
-impl<'a> Archive<Write + 'a> {
-    fn _append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
+impl<'a> Archive2<'a, Write + 'a> {
+    fn append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
         let mut obj = self.obj.borrow_mut();
         try!(obj.write_all(header.as_bytes()));
         let len = try!(io::copy(&mut data, &mut &mut *obj));
@@ -578,38 +603,47 @@ impl<'a> Archive<Write + 'a> {
         Ok(())
     }
 
-    fn _append_path(&self, path: &Path) -> io::Result<()> {
+    fn append_path(&self, path: &Path) -> io::Result<()> {
         let stat = try!(fs::metadata(path));
         let header = try!(Header::from_path_and_metadata(path, &stat));
         if stat.is_file() {
             let mut file = try!(fs::File::open(path));
-            self._append(&header, &mut file)
+            self.append(&header, &mut file)
         } else if stat.is_dir() {
-            self._append(&header, &mut io::empty())
+            self.append(&header, &mut io::empty())
         } else {
             Err(other("path has unknown file type"))
         }
     }
 
-    fn _append_file(&self, path: &Path, file: &mut fs::File) -> io::Result<()> {
+    fn append_file(&self, path: &Path, file: &mut fs::File) -> io::Result<()> {
         let stat = try!(file.metadata());
         let header = try!(Header::from_path_and_metadata(path, &stat));
-        self._append(&header, file)
+        self.append(&header, file)
     }
 
-    fn _append_dir(&self, path: &Path, src_path: &Path) -> io::Result<()> {
+    fn append_dir(&self, path: &Path, src_path: &Path) -> io::Result<()> {
         let stat = try!(fs::metadata(src_path));
         let header = try!(Header::from_path_and_metadata(path, &stat));
-        self._append(&header, &mut io::empty())
+        self.append(&header, &mut io::empty())
     }
 
-    fn _finish(&self) -> io::Result<()> {
+    fn finish(&self) -> io::Result<()> {
         let b = [0; 1024];
         self.obj.borrow_mut().write_all(&b)
     }
 }
 
-impl<'a, R: Read + ?Sized> Read for &'a Archive<R> {
+// FIXME: remove this impl during the next major version bump, this shouldn't
+// exist
+#[doc(hidden)]
+impl<'a, R: Read> Read for &'a Archive<R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        (&self.read2()).read(into)
+    }
+}
+
+impl<'a, 'b, R: Read + ?Sized> Read for &'b Archive2<'a, R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         self.obj.borrow_mut().read(into).map(|i| {
             self.pos.set(self.pos.get() + i as u64);
@@ -638,23 +672,23 @@ impl<'a> Iterator for EntriesFields<'a> {
         if self.done { return None }
 
         // Seek to the start of the next header in the archive
-        try_iter!(self, self.archive._seek(self.offset));
+        try_iter!(self, self.archive.seek(self.offset));
 
         let archive = self.archive;
         let seek = Box::new(move |entry: &EntryFields| {
-            archive._seek(entry.tar_offset + entry.pos)
+            archive.seek(entry.tar_offset + entry.pos)
         });
 
         // Parse the next entry header
         let archive = self.archive_read;
-        match try_iter!(self, archive._next_entry(&mut self.offset, seek)) {
+        match try_iter!(self, archive.next_entry(&mut self.offset, seek)) {
             Some(f) => Some(Ok(f)),
             None => { self.done = true; None }
         }
     }
 }
 
-impl<'a, R: Read + ?Sized> Iterator for EntriesMut<'a, R> {
+impl<'a, R: Read> Iterator for EntriesMut<'a, R> {
     type Item = io::Result<Entry<'a, R>>;
 
     fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
@@ -675,13 +709,13 @@ impl<'a> Iterator for EntriesMutFields<'a> {
 
         // Seek to the start of the next header in the archive
         let delta = self.next - self.archive.pos.get();
-        try_iter!(self, self.archive._skip(delta));
+        try_iter!(self, self.archive.skip(delta));
 
         // no-op because this reader can't seek
         let seek = Box::new(|_: &EntryFields| Ok(()));
 
         // Parse the next entry header
-        match try_iter!(self, self.archive._next_entry(&mut self.next, seek)) {
+        match try_iter!(self, self.archive.next_entry(&mut self.next, seek)) {
             Some(f) => Some(Ok(f)),
             None => { self.done = true; None }
         }
@@ -1316,7 +1350,7 @@ impl<'a> Read for EntryFields<'a> {
 
         try!((self.seek)(self));
         let amt = cmp::min((self.size - self.pos) as usize, into.len());
-        let amt = try!(Read::read(&mut self.archive, &mut into[..amt]));
+        let amt = try!(Read::read(&mut &self.archive, &mut into[..amt]));
         self.pos += amt as u64;
         Ok(amt)
     }
