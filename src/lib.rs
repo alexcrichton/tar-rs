@@ -216,17 +216,26 @@ impl<R: Seek + Read> Archive<R> {
     /// to handle invalid tar archives as well as any intermittent I/O error
     /// that occurs.
     pub fn entries(&self) -> io::Result<Entries<R>> {
+        self.readandseek2().entries(self.read2()).map(|fields| {
+            Entries { fields: fields, _ignored: marker::PhantomData }
+        })
+    }
+
+    fn readandseek2(&self) -> Archive2<ReadAndSeek> {
         let obj: &RefCell<ReadAndSeek> = &*self.obj;
-        let me = Archive2 { pos: &self.pos, obj: obj };
-        try!(me.seek(0));
-        Ok(Entries {
-            fields: EntriesFields {
-                archive: me,
-                archive_read: self.read2(),
-                done: false,
-                offset: 0,
-            },
-            _ignored: marker::PhantomData,
+        Archive2 { pos: &self.pos, obj: obj }
+    }
+}
+
+impl<'a> Archive2<'a, ReadAndSeek> {
+    fn entries(&self, read: Archive2<'a, Read>)
+               -> io::Result<EntriesFields<'a>> {
+        try!(self.seek(0));
+        Ok(EntriesFields {
+            archive: *self,
+            archive_read: read,
+            done: false,
+            offset: 0,
         })
     }
 }
