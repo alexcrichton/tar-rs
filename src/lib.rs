@@ -67,7 +67,7 @@ pub type Files<'a, T> = Entries<'a, T>;
 /// An iterator over the entries of an archive.
 ///
 /// Requires that `R` implement `Seek`.
-pub struct Entries<'a, R: 'a + ?Sized> {
+pub struct Entries<'a, R: 'a> {
     fields: EntriesFields<'a>,
     _ignored: marker::PhantomData<&'a R>,
 }
@@ -89,7 +89,7 @@ pub type FilesMut<'a, T> = EntriesMut<'a, T>;
 ///
 /// Does not require that `R` implements `Seek`, but each entry must be
 /// processed before the next.
-pub struct EntriesMut<'a, R: 'a + ?Sized> {
+pub struct EntriesMut<'a, R: 'a> {
     fields: EntriesMutFields<'a>,
     _ignored: marker::PhantomData<&'a R>,
 }
@@ -109,7 +109,7 @@ pub type File<'a, T> = Entry<'a, T>;
 /// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader and Seek
 /// traits. An entry cannot be rewritten once inserted into an archive.
-pub struct Entry<'a, R: 'a + ?Sized> {
+pub struct Entry<'a, R: 'a> {
     fields: EntryFields<'a>,
     _ignored: marker::PhantomData<&'a R>,
 }
@@ -207,7 +207,7 @@ impl<R: Seek + Read> Archive<R> {
 }
 
 trait ReadAndSeek: Read + Seek {}
-impl<R: ?Sized + Read + Seek> ReadAndSeek for R {}
+impl<R: Read + Seek> ReadAndSeek for R {}
 
 impl<'a> Archive<ReadAndSeek + 'a> {
     fn _entries<'b>(&'b self, read: &'b Archive<Read + 'a>)
@@ -659,7 +659,7 @@ impl<'a> Iterator for EntriesFields<'a> {
     }
 }
 
-impl<'a, R: Read + ?Sized> Iterator for EntriesMut<'a, R> {
+impl<'a, R: Read> Iterator for EntriesMut<'a, R> {
     type Item = io::Result<Entry<'a, R>>;
 
     fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
