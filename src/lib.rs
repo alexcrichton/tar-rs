@@ -29,6 +29,7 @@ use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::iter::repeat;
 use std::marker;
 use std::mem;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf, Component};
 use std::str;
 
@@ -57,7 +58,25 @@ macro_rules! try_iter {
 /// This archive can have an entry added to it and it can be iterated over.
 pub struct Archive<R: ?Sized> {
     pos: Cell<u64>,
-    obj: RefCell<R>,
+    obj: RefCell<AlignHigher<R>>,
+}
+
+// FIXME(rust-lang/rust#26403):
+//      Right now there's a bug when a DST struct's last field has more
+//      alignment than the rest of a structure, causing invalid pointers to be
+//      created when it's casted around at runtime. To work around this we force
+//      our DST struct to instead have a forcibly higher alignment via a
+//      synthesized u64 (hopefully the largest alignment we'll run into in
+//      practice), and this should hopefully ensure that the pointers all work
+//      out.
+struct AlignHigher<R: ?Sized>(u64, R);
+
+impl<R: ?Sized> Deref for AlignHigher<R> {
+    type Target = R;
+    fn deref(&self) -> &R { &self.1 }
+}
+impl<R: ?Sized> DerefMut for AlignHigher<R> {
+    fn deref_mut(&mut self) -> &mut R { &mut self.1 }
 }
 
 /// Backwards compatible alias for `Entries`.
@@ -173,12 +192,12 @@ impl<O> Archive<O> {
     /// Different methods are available on an archive depending on the traits
     /// that the underlying object implements.
     pub fn new(obj: O) -> Archive<O> {
-        Archive { obj: RefCell::new(obj), pos: Cell::new(0) }
+        Archive { obj: RefCell::new(AlignHigher(0, obj)), pos: Cell::new(0) }
     }
 
     /// Unwrap this archive, returning the underlying object.
     pub fn into_inner(self) -> O {
-        self.obj.into_inner()
+        self.obj.into_inner().1
     }
 }
 
@@ -571,7 +590,7 @@ impl<'a> Archive<Write + 'a> {
     fn _append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
         let mut obj = self.obj.borrow_mut();
         try!(obj.write_all(header.as_bytes()));
-        let len = try!(io::copy(&mut data, &mut &mut *obj));
+        let len = try!(io::copy(&mut data, &mut &mut **obj));
 
         // Pad with zeros if necessary.
         let buf = [0; 512];
