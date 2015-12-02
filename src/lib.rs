@@ -69,7 +69,7 @@ pub type Files<'a, T> = Entries<'a, T>;
 /// Requires that `R` implement `Seek`.
 pub struct Entries<'a, R: 'a> {
     fields: EntriesFields<'a>,
-    _ignored: marker::PhantomData<&'a R>,
+    _ignored: marker::PhantomData<&'a Archive<R>>,
 }
 
 struct EntriesFields<'a> {
@@ -91,7 +91,7 @@ pub type FilesMut<'a, T> = EntriesMut<'a, T>;
 /// processed before the next.
 pub struct EntriesMut<'a, R: 'a> {
     fields: EntriesMutFields<'a>,
-    _ignored: marker::PhantomData<&'a R>,
+    _ignored: marker::PhantomData<&'a Archive<R>>,
 }
 
 struct EntriesMutFields<'a> {
@@ -111,7 +111,7 @@ pub type File<'a, T> = Entry<'a, T>;
 /// traits. An entry cannot be rewritten once inserted into an archive.
 pub struct Entry<'a, R: 'a> {
     fields: EntryFields<'a>,
-    _ignored: marker::PhantomData<&'a R>,
+    _ignored: marker::PhantomData<&'a Archive<R>>,
 }
 
 struct EntryFields<'a> {
