@@ -28,7 +28,7 @@ fn main() {
     let file = File::open("foo.tar").unwrap();
     let a = Archive::new(file);
 
-    for file in a.files().unwrap() {
+    for file in a.entries().unwrap() {
         // Make sure there wasn't an I/O error
         let mut file = file.unwrap();
 
