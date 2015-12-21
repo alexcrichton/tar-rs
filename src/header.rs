@@ -14,7 +14,7 @@ use std::str;
 use libc;
 
 use EntryType;
-use {bad_archive, truncate, other, path2bytes, bytes2path};
+use {bad_archive, other, path2bytes, bytes2path};
 
 /// Representation of the header of an entry in an archive
 #[repr(C)]
@@ -441,6 +441,13 @@ fn octal_into<T: fmt::Octal>(dst: &mut [u8], val: T) {
     let value = o.bytes().rev().chain(repeat(b'0'));
     for (slot, value) in dst.iter_mut().rev().skip(1).zip(value) {
         *slot = value;
+    }
+}
+
+fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
+    match slice.iter().position(|i| *i == 0) {
+        Some(i) => &slice[..i],
+        None => slice,
     }
 }
 

@@ -886,13 +886,6 @@ fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     })
 }
 
-fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
-    match slice.iter().position(|i| *i == 0) {
-        Some(i) => &slice[..i],
-        None => slice,
-    }
-}
-
 fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
     let mut read = 0;
     while read < buf.len() {
