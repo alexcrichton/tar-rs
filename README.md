@@ -51,7 +51,6 @@ fn main() {
 ## Writing an archive
 
 ```rust,no_run
-# #![allow(unused_must_use, unstable)]
 extern crate tar;
 
 use std::io::prelude::*;
