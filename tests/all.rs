@@ -19,13 +19,17 @@ macro_rules! t {
     })
 }
 
+macro_rules! tar {
+    ($e:expr) => (&include_bytes!(concat!("archives/", $e))[..])
+}
+
 #[test]
 fn simple() {
-    let ar = Archive::new(Cursor::new(&include_bytes!("archives/simple.tar")[..]));
+    let ar = Archive::new(Cursor::new(tar!("simple.tar")));
     for entry in t!(ar.entries()) {
         t!(entry);
     }
-    let mut ar = Archive::new(Cursor::new(&include_bytes!("archives/simple.tar")[..]));
+    let mut ar = Archive::new(Cursor::new(tar!("simple.tar")));
     for entry in t!(ar.entries_mut()) {
         t!(entry);
     }
@@ -33,7 +37,7 @@ fn simple() {
 
 #[test]
 fn header_impls() {
-    let ar = Archive::new(Cursor::new(&include_bytes!("archives/simple.tar")[..]));
+    let ar = Archive::new(Cursor::new(tar!("simple.tar")));
     let hn = Header::new();
     let hnb = hn.as_bytes();
     for file in t!(ar.files()) {
@@ -48,7 +52,7 @@ fn header_impls() {
 
 #[test]
 fn reading_files() {
-    let rdr = Cursor::new(&include_bytes!("archives/reading_files.tar")[..]);
+    let rdr = Cursor::new(tar!("reading_files.tar"));
     let ar = Archive::new(rdr);
     let mut entries = t!(ar.entries());
     let mut a = t!(entries.next().unwrap());
@@ -124,7 +128,7 @@ fn large_filename() {
 
 #[test]
 fn reading_entries_mut() {
-    let rdr = Cursor::new(&include_bytes!("archives/reading_files.tar")[..]);
+    let rdr = Cursor::new(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
     let mut entries = t!(ar.entries_mut());
     let mut a = t!(entries.next().unwrap());
@@ -156,7 +160,7 @@ fn check_dirtree(td: &TempDir) {
 #[test]
 fn extracting_directories() {
     let td = t!(TempDir::new("tar-rs"));
-    let rdr = Cursor::new(&include_bytes!("archives/directory.tar")[..]);
+    let rdr = Cursor::new(tar!("directory.tar"));
     let mut ar = Archive::new(rdr);
     t!(ar.unpack(td.path()));
     check_dirtree(&td);
@@ -184,7 +188,7 @@ fn writing_and_extracting_directories() {
 #[test]
 fn extracting_duplicate_dirs() {
     let td = t!(TempDir::new("tar-rs"));
-    let rdr = Cursor::new(&include_bytes!("archives/duplicate_dirs.tar")[..]);
+    let rdr = Cursor::new(tar!("duplicate_dirs.tar"));
     let mut ar = Archive::new(rdr);
     t!(ar.unpack(td.path()));
 
@@ -308,7 +312,7 @@ fn extracting_malicious_tarball() {
 
 #[test]
 fn octal_spaces() {
-    let rdr = Cursor::new(&include_bytes!("archives/spaces.tar")[..]);
+    let rdr = Cursor::new(tar!("spaces.tar"));
     let ar = Archive::new(rdr);
 
     let entry = ar.entries().unwrap().next().unwrap().unwrap();
@@ -347,7 +351,7 @@ fn extracting_malformed_tar_null_blocks() {
 fn empty_filename()
 {
     let td = t!(TempDir::new("tar-rs"));
-    let rdr = Cursor::new(&include_bytes!("archives/empty_filename.tar")[..]);
+    let rdr = Cursor::new(tar!("empty_filename.tar"));
     let mut ar = Archive::new(rdr);
     assert!(ar.unpack(td.path()).is_err());
 }
@@ -355,7 +359,7 @@ fn empty_filename()
 #[test]
 fn file_times() {
     let td = t!(TempDir::new("tar-rs"));
-    let rdr = Cursor::new(&include_bytes!("archives/file_times.tar")[..]);
+    let rdr = Cursor::new(tar!("file_times.tar"));
     let mut ar = Archive::new(rdr);
     t!(ar.unpack(td.path()));
 
@@ -415,7 +419,7 @@ fn nul_bytes_in_path() {
 
 #[test]
 fn links() {
-    let ar = Archive::new(Cursor::new(&include_bytes!("archives/link.tar")[..]));
+    let ar = Archive::new(Cursor::new(tar!("link.tar")));
     let mut entries = t!(ar.entries());
     let link = t!(entries.next().unwrap());
     assert_eq!(t!(link.header().link_name()).as_ref().map(|p| &**p),
@@ -428,7 +432,7 @@ fn links() {
 #[cfg(unix)] // making symlinks on windows is hard
 fn unpack_links() {
     let td = t!(TempDir::new("tar-rs"));
-    let mut ar = Archive::new(Cursor::new(&include_bytes!("archives/link.tar")[..]));
+    let mut ar = Archive::new(Cursor::new(tar!("link.tar")));
     t!(ar.unpack(td.path()));
 
     let md = t!(fs::symlink_metadata(td.path().join("lnk")));
