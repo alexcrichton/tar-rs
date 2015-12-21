@@ -9,7 +9,7 @@ use filetime::{self, FileTime};
 
 use error::TarError;
 use {Header, Archive};
-use {bad_archive, other};
+use other;
 
 /// Backwards compatible alias for `Entry`.
 #[doc(hidden)]
@@ -132,7 +132,7 @@ impl<'a> EntryFields<'a> {
 
         try!(fs::File::create(dst).and_then(|mut f| {
             if try!(io::copy(self, &mut f)) != self.size {
-                return Err(bad_archive());
+                return Err(other("failed to write entire file"));
             }
             Ok(())
         }).map_err(|e| {

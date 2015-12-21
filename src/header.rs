@@ -14,7 +14,7 @@ use std::str;
 use libc;
 
 use EntryType;
-use {bad_archive, other, path2bytes, bytes2path};
+use {other, path2bytes, bytes2path};
 
 /// Representation of the header of an entry in an archive
 #[repr(C)]
@@ -428,11 +428,11 @@ fn deslash(bytes: &[u8]) -> Cow<[u8]> {
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
     let num = match str::from_utf8(truncate(slice)) {
         Ok(n) => n,
-        Err(_) => return Err(bad_archive()),
+        Err(_) => return Err(other("numeric field did not have utf-8 text")),
     };
     match u64::from_str_radix(num.trim(), 8) {
         Ok(n) => Ok(n),
-        Err(_) => Err(bad_archive())
+        Err(_) => Err(other("numeric field was not a number"))
     }
 }
 
