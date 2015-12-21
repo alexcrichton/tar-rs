@@ -21,8 +21,6 @@ extern crate filetime;
 use std::borrow::Cow;
 use std::cell::{RefCell, Cell};
 use std::cmp;
-use std::error;
-use std::fmt;
 use std::fs;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
@@ -144,18 +142,13 @@ struct EntryFields<'a> {
     tar_offset: u64,
 }
 
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct TarError {
-    desc: String,
-    io: io::Error,
-}
-
 pub use header::Header;
 pub use entry_type::EntryType;
+use error::TarError;
 
-mod header;
 mod entry_type;
+mod error;
+mod header;
 
 impl<O> Archive<O> {
     /// Create a new archive with the underlying object as the reader/writer.
@@ -914,35 +907,4 @@ fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
 #[cfg(windows)]
 fn not_unicode() -> Error {
     other("only unicode paths are supported on windows")
-}
-
-impl TarError {
-    fn new(desc: &str, err: Error) -> TarError {
-        TarError {
-            desc: desc.to_string(),
-            io: err,
-        }
-    }
-}
-
-impl error::Error for TarError {
-    fn description(&self) -> &str {
-        &self.desc
-    }
-
-    fn cause(&self) -> Option<&error::Error> {
-        Some(&self.io)
-    }
-}
-
-impl fmt::Display for TarError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.desc.fmt(f)
-    }
-}
-
-impl From<TarError> for Error {
-    fn from(t: TarError) -> Error {
-        Error::new(t.io.kind(), t)
-    }
 }
