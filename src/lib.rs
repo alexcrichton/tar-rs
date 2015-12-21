@@ -27,13 +27,6 @@ extern crate filetime;
 
 use std::io::{Error, ErrorKind};
 
-macro_rules! try_iter {
-    ($me:expr, $e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => { $me.done = true; return Some(Err(e)) }
-    })
-}
-
 pub use header::Header;
 pub use entry_type::EntryType;
 pub use entry::{File, Entry};

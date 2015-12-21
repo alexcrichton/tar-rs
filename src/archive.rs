@@ -13,6 +13,13 @@ use error::TarError;
 use {Entry, Header};
 use other;
 
+macro_rules! try_iter {
+    ($me:expr, $e:expr) => (match $e {
+        Ok(e) => e,
+        Err(e) => { $me.done = true; return Some(Err(e)) }
+    })
+}
+
 /// A top-level representation of an archive file.
 ///
 /// This archive can have an entry added to it and it can be iterated over.
