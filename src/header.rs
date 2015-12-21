@@ -326,12 +326,12 @@ impl Header {
 
     /// Returns the type of file described by this header.
     pub fn entry_type(&self) -> EntryType {
-        EntryType { byte: self.link[0] }
+        EntryType::new(self.link[0])
     }
 
     /// Sets the type of file that will be described by this header.
     pub fn set_entry_type(&mut self, ty: EntryType) {
-        self.link[0] = ty.byte;
+        self.link = [ty.as_byte()];
     }
 
     /// Returns the checksum field of this header.
