@@ -11,7 +11,7 @@ use std::path::{Path, Component};
 use entry::EntryFields;
 use error::TarError;
 use {Entry, Header};
-use {bad_archive, other};
+use other;
 
 /// A top-level representation of an archive file.
 ///
@@ -304,7 +304,8 @@ impl<'a> Archive<Read + 'a> {
             return if chunk.iter().all(|i| *i == 0) {
                 Ok(None)
             } else {
-                Err(bad_archive())
+                Err(other("found block of 0s not followed by a second \
+                           block of 0s"))
             }
         }
 
@@ -324,7 +325,9 @@ impl<'a> Archive<Read + 'a> {
 
         // Make sure the checksum is ok
         let cksum = try!(ret.header.cksum());
-        if sum != cksum { return Err(bad_archive()) }
+        if sum != cksum {
+            return Err(other("archive header checksum mismatch"))
+        }
 
         // Figure out where the next entry is
         let size = (ret.size + 511) & !(512 - 1);
@@ -612,7 +615,7 @@ fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
     let mut read = 0;
     while read < buf.len() {
         match try!(r.read(&mut buf[read..])) {
-            0 => return Err(bad_archive()),
+            0 => return Err(other("failed to read entire block")),
             n => read += n,
         }
     }

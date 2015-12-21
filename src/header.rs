@@ -8,13 +8,11 @@ use std::fs;
 use std::io;
 use std::iter::repeat;
 use std::mem;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str;
 
-use libc;
-
 use EntryType;
-use {other, path2bytes, bytes2path};
+use other;
 
 /// Representation of the header of an entry in an archive
 #[repr(C)]
@@ -355,6 +353,8 @@ impl Header {
 
     #[cfg(unix)]
     fn fill_from(&mut self, meta: &fs::Metadata) {
+        use libc;
+
         self.set_mode((meta.mode() & 0o3777) as u32);
         self.set_mtime(meta.mtime() as u64);
         self.set_uid(meta.uid() as u32);
@@ -374,6 +374,8 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_from(&mut self, meta: &fs::Metadata) {
+        use winapi;
+
         let readonly = meta.file_attributes() & winapi::FILE_ATTRIBUTE_READONLY;
 
         // There's no concept of a mode on windows, so do a best approximation
@@ -472,4 +474,52 @@ fn copy_into(slot: &mut [u8], bytes: &[u8], map_slashes: bool) -> io::Result<()>
         }
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn path2bytes(p: &Path) -> io::Result<&[u8]> {
+    p.as_os_str().to_str().map(|s| s.as_bytes()).ok_or_else(|| {
+        other("path was not valid unicode")
+    })
+}
+
+#[cfg(unix)]
+fn path2bytes(p: &Path) -> io::Result<&[u8]> {
+    Ok(p.as_os_str().as_bytes())
+}
+
+#[cfg(windows)]
+fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+    return match bytes {
+        Cow::Borrowed(bytes) => {
+            let s = try!(str::from_utf8(bytes).map_err(|_| {
+                not_unicode()
+            }));
+            Ok(Cow::Borrowed(Path::new(s)))
+        }
+        Cow::Owned(bytes) => {
+            let s = try!(String::from_utf8(bytes).map_err(|_| {
+                not_unicode()
+            }));
+            Ok(Cow::Owned(PathBuf::from(s)))
+        }
+    };
+
+    fn not_unicode() -> io::Error {
+        other("only unicode paths are supported on windows")
+    }
+}
+
+#[cfg(unix)]
+fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+    use std::ffi::{OsStr, OsString};
+
+    Ok(match bytes {
+        Cow::Borrowed(bytes) => Cow::Borrowed({
+            Path::new(OsStr::from_bytes(bytes))
+        }),
+        Cow::Owned(bytes) => Cow::Owned({
+            PathBuf::from(OsString::from_vec(bytes))
+        })
+    })
 }
