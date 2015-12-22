@@ -31,12 +31,14 @@ pub use header::Header;
 pub use entry_type::EntryType;
 pub use entry::{File, Entry};
 pub use archive::{Archive, Files, Entries, FilesMut, EntriesMut};
+pub use gnu::{GnuEntries, GnuEntry};
 
 mod archive;
 mod entry;
 mod entry_type;
 mod error;
 mod header;
+mod gnu;
 
 fn other(msg: &str) -> Error {
     Error::new(ErrorKind::Other, msg)

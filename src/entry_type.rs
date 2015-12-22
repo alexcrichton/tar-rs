@@ -101,4 +101,9 @@ impl EntryType {
     pub fn as_byte(&self) -> u8 {
         self.byte
     }
+
+    /// Returns whether this type represents a GNU long name header.
+    pub fn is_gnu_longname(&self) -> bool {
+        self.byte == b'L'
+    }
 }
