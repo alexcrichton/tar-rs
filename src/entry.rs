@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp;
 use std::fs;
 use std::io::prelude::*;
@@ -14,6 +15,18 @@ use other;
 /// Backwards compatible alias for `Entry`.
 #[doc(hidden)]
 pub type File<'a, T> = Entry<'a, T>;
+
+/// x
+pub struct FileEntry<'a, R: 'a> {
+    fields: FileEntryFields<'a, R>,
+}
+
+pub struct FileEntryFields<'a, R: 'a> {
+    pub prefix_entries: Vec<(Entry<'a, R>, Vec<u8>)>,
+    pub file_entry: Entry<'a, R>,
+
+    pub path: Option<Vec<u8>>,
+}
 
 /// A read-only view into an entry of an archive.
 ///
@@ -38,6 +51,20 @@ pub struct EntryFields<'a> {
     // these are both unused/noops.
     pub seek: Box<Fn(&EntryFields) -> io::Result<()> + 'a>,
     pub tar_offset: u64,
+}
+
+impl<'a, R: Read> FileEntry<'a, R> {
+    /// x
+    pub fn path_bytes(&self) -> Cow<[u8]> {
+        match self.fields.path {
+            Some(ref path) => Cow::Borrowed(path),
+            None => self.fields.file_entry.header().path_bytes(),
+        }
+    }
+    /// x
+    pub fn entry_mut(&mut self) -> &mut Entry<'a, R> {
+        &mut self.fields.file_entry
+    }
 }
 
 impl<'a, R: Read> Entry<'a, R> {
@@ -83,6 +110,14 @@ impl<'a, R: Read> Read for Entry<'a, R> {
 impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
     fn seek(&mut self, how: SeekFrom) -> io::Result<u64> {
         self.fields._seek(how)
+    }
+}
+
+impl<'a, R> FileEntryFields<'a, R> {
+    pub fn into_entry(self) -> FileEntry<'a, R> {
+        FileEntry {
+            fields: self,
+        }
     }
 }
 
