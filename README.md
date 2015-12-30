@@ -14,6 +14,8 @@ A tar archive reading/writing library for Rust.
 tar = "0.3"
 ```
 
+Note that pax extended headers are not yet fully implemented.
+
 ## Reading an archive
 
 ```rust,no_run
