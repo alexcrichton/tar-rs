@@ -1,4 +1,8 @@
 // See https://en.wikipedia.org/wiki/Tar_%28computing%29#UStar_format
+// and
+// https://www-01.ibm.com/support/knowledgecenter/SSLTBW_1.13.0/
+// com.ibm.zos.r13.bpxa500/pxarchfm.htm
+
 /// Indicate for the type of file described by a header.
 ///
 /// Each `Header` has an `entry_type` method returning an instance of this type
@@ -57,6 +61,18 @@ impl EntryType {
         EntryType::new(b'7')
     }
 
+    /// Creates a new entry type representing an extended header
+    /// with meta data for the next file in the archive
+    pub fn extended_header() -> EntryType {
+        EntryType::new(b'x')
+    }
+
+    /// Creates a new entry type representing a global extended header
+    /// with meta data
+    pub fn global_extended_header() -> EntryType {
+        EntryType::new(b'g')
+    }
+
     /// Returns whether this type represents a regular file.
     pub fn is_file(&self) -> bool {
         self.byte == 0 || self.byte == b'0'
@@ -95,6 +111,16 @@ impl EntryType {
     /// Returns whether this type represents a contiguous file.
     pub fn is_contiguous(&self) -> bool {
         self.byte == b'7'
+    }
+
+    /// Returns whether this type represents an extended header.
+    pub fn is_extended_header(&self) -> bool {
+        self.byte == b'x'
+    }
+
+    /// Returns whether this type represents a global extended header.
+    pub fn is_global_extended_header(&self) -> bool {
+        self.byte == b'g'
     }
 
     /// Returns the raw underlying byte that this entry type represents.

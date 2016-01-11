@@ -124,6 +124,9 @@ impl<'a> EntryFields<'a> {
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::unix::fs::symlink(src, dst)
             }
+        } else if kind.is_extended_header() || kind.is_global_extended_header() {
+            // Not yet implemented
+            return Ok(())
         } else if !kind.is_file() {
             // Right now we can only otherwise handle regular files
             return Err(other(&format!("unknown file type 0x{:x}",
