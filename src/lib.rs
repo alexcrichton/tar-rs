@@ -29,8 +29,8 @@ use std::io::{Error, ErrorKind};
 
 pub use header::Header;
 pub use entry_type::EntryType;
-pub use entry::{File, Entry};
-pub use archive::{Archive, Files, Entries, FilesMut, EntriesMut};
+pub use entry::{File, Entry, FileEntry};
+pub use archive::{Archive, Files, Entries, FilesMut, EntriesMut, FileEntriesMut};
 
 mod archive;
 mod entry;

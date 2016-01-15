@@ -477,19 +477,19 @@ fn copy_into(slot: &mut [u8], bytes: &[u8], map_slashes: bool) -> io::Result<()>
 }
 
 #[cfg(windows)]
-fn path2bytes(p: &Path) -> io::Result<&[u8]> {
+pub fn path2bytes(p: &Path) -> io::Result<&[u8]> {
     p.as_os_str().to_str().map(|s| s.as_bytes()).ok_or_else(|| {
         other("path was not valid unicode")
     })
 }
 
 #[cfg(unix)]
-fn path2bytes(p: &Path) -> io::Result<&[u8]> {
+pub fn path2bytes(p: &Path) -> io::Result<&[u8]> {
     Ok(p.as_os_str().as_bytes())
 }
 
 #[cfg(windows)]
-fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     return match bytes {
         Cow::Borrowed(bytes) => {
             let s = try!(str::from_utf8(bytes).map_err(|_| {
@@ -511,7 +511,7 @@ fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
 }
 
 #[cfg(unix)]
-fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     use std::ffi::{OsStr, OsString};
 
     Ok(match bytes {

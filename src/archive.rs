@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::{RefCell, Cell};
 use std::cmp;
 use std::fs;
@@ -8,10 +9,11 @@ use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, Component};
 
-use entry::EntryFields;
+use entry::{EntryFields, FileEntryFields};
 use error::TarError;
-use {Entry, Header};
+use header::{bytes2path, path2bytes};
 use other;
+use {Entry, EntryType, FileEntry, Header};
 
 macro_rules! try_iter {
     ($me:expr, $e:expr) => (match $e {
@@ -84,6 +86,15 @@ struct EntriesMutFields<'a> {
     archive: &'a Archive<Read + 'a>,
     next: u64,
     done: bool,
+}
+
+/// x
+pub struct FileEntriesMut<'a, R: 'a> {
+    fields: FileEntriesMutFields<'a, R>,
+}
+
+struct FileEntriesMutFields<'a, R: 'a> {
+    it: EntriesMut<'a, R>,
 }
 
 impl<O> Archive<O> {
@@ -172,6 +183,17 @@ impl<R: Read> Archive<R> {
     #[doc(hidden)]
     pub fn files_mut(&mut self) -> io::Result<EntriesMut<R>> {
         self.entries_mut()
+    }
+
+    /// x
+    pub fn file_entries_mut(&mut self) -> io::Result<FileEntriesMut<R>> {
+        let it = match self.entries_mut() {
+            Ok(it) => it,
+            Err(e) => return Err(e),
+        };
+        Ok(FileEntriesMut {
+            fields: FileEntriesMutFields { it: it },
+        })
     }
 
     /// Unpacks the contents tarball into the specified `dst`.
@@ -531,7 +553,30 @@ impl<'a> Archive<Write + 'a> {
                  meta: &fs::Metadata,
                  read: &mut Read) -> io::Result<()> {
         let mut header = Header::new();
-        try!(header.set_path(path));
+
+        // Try to encode the path directly in the header, but if it ends up not
+        // working (e.g. it's too long) then use the GNU-specific long name
+        // extension by emitting an entry which indicates that it's the filename
+        // for the next entry.
+        if let Err(e) = header.set_path(path) {
+            let data = try!(path2bytes(&path));
+            let max = header.name.len();
+            if data.len() < max {
+                return Err(e)
+            }
+            let mut header2 = Header::new();
+            try!(header2.set_path("././@LongLink"));
+            header2.set_size(data.len() as u64);
+            header2.set_entry_type(EntryType::new(b'L'));
+            header2.set_cksum();
+            let mut data2 = data;
+            try!(self._append(&header2, &mut data2));
+            // Truncate the path to store in the header we're about to emit to
+            // ensure we've got something at least mentioned.
+            let path = try!(bytes2path(Cow::Borrowed(&data[..max])));
+            try!(header.set_path(&path));
+        }
+
         header.set_metadata(meta);
         header.set_cksum();
         self._append(&header, read)
@@ -556,6 +601,64 @@ impl<'a, R: Seek + Read> Iterator for Entries<'a, R> {
     type Item = io::Result<Entry<'a, R>>;
 
     fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
+        self.fields.next().map(|result| {
+            result.map(|fields| fields.into_entry())
+        })
+    }
+}
+
+impl<'a, R: Read> Iterator for FileEntriesMutFields<'a, R> {
+    type Item = io::Result<FileEntryFields<'a, R>>;
+
+    fn next(&mut self) -> Option<io::Result<FileEntryFields<'a, R>>> {
+        let it = &mut self.it;
+
+        let mut prefix_entries: Vec<(Entry<R>, Vec<u8>)> = vec![];
+        loop {
+            let (mut next_entry, is_prefix) = match it.next() {
+                Some(Ok(e)) => {
+                    let is_prefix = e.header().entry_type().is_gnu_longname();
+                    (e, is_prefix)
+                }
+                Some(Err(e)) => return Some(Err(e)),
+                None => {
+                    return if prefix_entries.len() == 0 {
+                        None
+                    } else {
+                        Some(Err(other("longname entry not followed by another")))
+                    }
+                },
+            };
+
+            if is_prefix {
+                let mut buf = vec![];
+                next_entry.read_to_end(&mut buf).unwrap();
+                prefix_entries.push((next_entry, buf));
+            } else {
+                prefix_entries.push((next_entry, vec![]));
+                break
+            }
+        };
+
+        let this_entry = prefix_entries.pop().unwrap().0;
+
+        let path: Option<Vec<u8>> = match prefix_entries.last() {
+            Some(&(_, ref longname)) => Some(longname.clone()),
+            None => None,
+        };
+
+        Some(Ok(FileEntryFields {
+            prefix_entries: prefix_entries,
+            file_entry: this_entry,
+            path: path,
+        }))
+    }
+}
+
+impl<'a, R: Read> Iterator for FileEntriesMut<'a, R> {
+    type Item = io::Result<FileEntry<'a, R>>;
+
+    fn next(&mut self) -> Option<io::Result<FileEntry<'a, R>>> {
         self.fields.next().map(|result| {
             result.map(|fields| fields.into_entry())
         })
