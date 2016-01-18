@@ -23,6 +23,8 @@ macro_rules! tar {
     ($e:expr) => (&include_bytes!(concat!("archives/", $e))[..])
 }
 
+mod header;
+
 #[test]
 fn simple() {
     let ar = Archive::new(Cursor::new(tar!("simple.tar")));

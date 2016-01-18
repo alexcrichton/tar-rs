@@ -214,14 +214,12 @@ impl Header {
 
     /// Returns a view into this header as a byte array.
     pub fn as_bytes(&self) -> &[u8; 512] {
-        debug_assert_eq!(512, mem::size_of_val(self));
-        unsafe { &*(self as *const _ as *const [u8; 512]) }
+        &self.bytes
     }
 
     /// Returns a view into this header as a byte array.
     pub fn as_bytes_mut(&mut self) -> &mut [u8; 512] {
-        debug_assert_eq!(512, mem::size_of_val(self));
-        unsafe { &mut *(self as *mut Header as *mut [u8; 512]) }
+        &mut self.bytes
     }
 
     /// Blanket sets the metadata in this header from the metadata argument
@@ -403,7 +401,7 @@ impl Header {
     /// not present in this archive format, and `Err` indicates that the user
     /// name was present but was not valid utf-8.
     pub fn username(&self) -> Result<Option<&str>, str::Utf8Error> {
-        match self.groupname_bytes() {
+        match self.username_bytes() {
             Some(bytes) => str::from_utf8(bytes).map(Some),
             None => Ok(None),
         }
@@ -415,9 +413,9 @@ impl Header {
     /// this header format.
     pub fn username_bytes(&self) -> Option<&[u8]> {
         if let Some(ustar) = self.as_ustar() {
-            Some(ustar.groupname_bytes())
+            Some(ustar.username_bytes())
         } else if let Some(gnu) = self.as_gnu() {
-            Some(gnu.groupname_bytes())
+            Some(gnu.username_bytes())
         } else {
             None
         }
@@ -564,12 +562,8 @@ impl Header {
     /// Sets the checksum field of this header based on the current fields in
     /// this header.
     pub fn set_cksum(&mut self) {
-        let cksum = {
-            let bytes = &self.bytes;
-            bytes[..148].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
-                bytes[156..].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
-                32 * (self.as_old().cksum.len() as u32)
-        };
+        self.as_old_mut().cksum = *b"        ";
+        let cksum = self.bytes.iter().fold(0, |a, b| a + (*b as u32));
         octal_into(&mut self.as_old_mut().cksum, cksum);
     }
 
@@ -792,10 +786,11 @@ impl GnuHeader {
 }
 
 fn deslash(bytes: &[u8]) -> Cow<[u8]> {
+    let bytes = truncate(bytes);
     if !bytes.contains(&b'\\') {
-        Cow::Borrowed(truncate(bytes))
+        Cow::Borrowed(bytes)
     } else {
-        Cow::Owned(truncate(bytes).iter().map(noslash).collect())
+        Cow::Owned(bytes.iter().map(noslash).collect())
     }
 }
 
@@ -841,7 +836,7 @@ fn copy_into(slot: &mut [u8], bytes: &[u8], map_slashes: bool) -> io::Result<()>
     } else if bytes.iter().any(|b| *b == 0) {
         Err(other("provided value contains a nul byte"))
     } else {
-        for (slot, val) in slot.iter_mut().zip(bytes) {
+        for (slot, val) in slot.iter_mut().zip(bytes.iter().chain(Some(&0))) {
             if map_slashes && *val == b'\\' {
                 *slot = b'/';
             } else {
