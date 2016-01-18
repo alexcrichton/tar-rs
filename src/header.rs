@@ -16,41 +16,200 @@ use other;
 
 /// Representation of the header of an entry in an archive
 #[repr(C)]
-#[allow(missing_docs)]
 pub struct Header {
+    bytes: [u8; 512],
+}
+
+/// Representation of the header of an entry in an archive
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct OldHeader {
     pub name: [u8; 100],
     pub mode: [u8; 8],
-    pub owner_id: [u8; 8],
-    pub group_id: [u8; 8],
+    pub uid: [u8; 8],
+    pub gid: [u8; 8],
     pub size: [u8; 12],
     pub mtime: [u8; 12],
     pub cksum: [u8; 8],
-    pub link: [u8; 1],
+    pub linkflag: [u8; 1],
+    pub linkname: [u8; 100],
+    pub pad: [u8; 255],
+}
+
+/// Representation of the header of an entry in an archive
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct UstarHeader {
+    pub name: [u8; 100],
+    pub mode: [u8; 8],
+    pub uid: [u8; 8],
+    pub gid: [u8; 8],
+    pub size: [u8; 12],
+    pub mtime: [u8; 12],
+    pub cksum: [u8; 8],
+    pub typeflag: [u8; 1],
     pub linkname: [u8; 100],
 
     // UStar format
-    pub ustar: [u8; 6],
-    pub ustar_version: [u8; 2],
-    pub owner_name: [u8; 32],
-    pub group_name: [u8; 32],
+    pub magic: [u8; 6],
+    pub version: [u8; 2],
+    pub uname: [u8; 32],
+    pub gname: [u8; 32],
     pub dev_major: [u8; 8],
     pub dev_minor: [u8; 8],
     pub prefix: [u8; 155],
-    _rest: [u8; 12],
+    pub pad: [u8; 12],
+}
+
+/// Representation of the header of an entry in an archive
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct GnuHeader {
+    pub name: [u8; 100],
+    pub mode: [u8; 8],
+    pub uid: [u8; 8],
+    pub gid: [u8; 8],
+    pub size: [u8; 12],
+    pub mtime: [u8; 12],
+    pub cksum: [u8; 8],
+    pub typeflag: [u8; 1],
+    pub linkname: [u8; 100],
+
+    // GNU format
+    pub magic: [u8; 6],
+    pub version: [u8; 2],
+    pub uname: [u8; 32],
+    pub gname: [u8; 32],
+    pub dev_major: [u8; 8],
+    pub dev_minor: [u8; 8],
+    pub atime: [u8; 12],
+    pub ctime: [u8; 12],
+    pub offset: [u8; 12],
+    pub longnames: [u8; 4],
+    pub unused: [u8; 1],
+    pub sparse: [GnuSparseHeader; 4],
+    pub isextended: [u8; 1],
+    pub realsize: [u8; 12],
+    pub pad: [u8; 17],
+}
+
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct GnuSparseHeader {
+    pub offset: [u8; 12],
+    pub numbytes: [u8; 12],
 }
 
 impl Header {
-    /// Creates a new blank ustar header ready to be filled in
+    /// Creates a new blank ustar header ready to be filled in.
+    ///
+    /// Note that the returned header is by default in the GNU format.
     pub fn new() -> Header {
-        let mut header: Header = unsafe { mem::zeroed() };
-        // Flag this header as a UStar archive
-        header.ustar = *b"ustar\0";
-        header.ustar_version = *b"00";
+        let mut header = Header { bytes: [0; 512] };
+        header.set_gnu();
         return header
     }
 
+    fn cast<T>(&self) -> &T {
+        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
+        unsafe { &*(self as *const Header as *const T) }
+    }
+
+    fn cast_mut<T>(&mut self) -> &mut T {
+        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
+        unsafe { &mut *(self as *mut Header as *mut T) }
+    }
+
     fn is_ustar(&self) -> bool {
-        &self.ustar[..5] == b"ustar"
+        let ustar = self.cast::<UstarHeader>();
+        ustar.magic[..] == b"ustar\0"[..] && ustar.version[..] == b"00"[..]
+    }
+
+    fn is_gnu(&self) -> bool {
+        let ustar = self.cast::<UstarHeader>();
+        ustar.magic[..] == b"ustar "[..] && ustar.version[..] == b" \0"[..]
+    }
+
+    /// View this archive header as a raw "old" archive header.
+    ///
+    /// This view will always succeed as all archive header formats will fill
+    /// out at least the fields specified in the old header format.
+    pub fn as_old(&self) -> &OldHeader {
+        self.cast()
+    }
+
+    /// Same as `as_old`, but the mutable version.
+    pub fn as_old_mut(&mut self) -> &mut OldHeader {
+        self.cast_mut()
+    }
+
+    /// Flags this header as an "old header"
+    ///
+    /// Note that this is a destructive operation and may corrupt fields that
+    /// have been previously set. It is recommended to call this operation
+    /// **first** when creating new headers.
+    pub fn set_old(&mut self) {
+        for slot in self.as_old_mut().pad.iter_mut() {
+            *slot = 0;
+        }
+    }
+
+    /// View this archive header as a raw UStar archive header.
+    ///
+    /// The UStar format is an extension to the tar archive format which enables
+    /// longer pathnames and a few extra attributes such as the group and user
+    /// name.
+    ///
+    /// This cast may not succeed as this function will test whether the
+    /// magic/version fields of the UStar format have the appropriate values,
+    /// returning `None` if they aren't correct.
+    pub fn as_ustar(&self) -> Option<&UstarHeader> {
+        if self.is_ustar() {Some(self.cast())} else {None}
+    }
+
+    /// Same as `as_ustar_mut`, but the mutable version.
+    pub fn as_ustar_mut(&mut self) -> Option<&mut UstarHeader> {
+        if self.is_ustar() {Some(self.cast_mut())} else {None}
+    }
+
+    /// Flags this header as a UStar archive header.
+    ///
+    /// Note that this is a destructive operation and may corrupt fields that
+    /// have been previously set. It is recommended to call this operation
+    /// **first** when creating new headers.
+    pub fn set_ustar(&mut self) {
+        let ustar = self.cast_mut::<UstarHeader>();
+        ustar.magic = *b"ustar\0";
+        ustar.version = *b"00";
+    }
+
+    /// View this archive header as a raw GNU archive header.
+    ///
+    /// The GNU format is an extension to the tar archive format which enables
+    /// longer pathnames and a few extra attributes such as the group and user
+    /// name.
+    ///
+    /// This cast may not succeed as this function will test whether the
+    /// magic/version fields of the GNU format have the appropriate values,
+    /// returning `None` if they aren't correct.
+    pub fn as_gnu(&self) -> Option<&GnuHeader> {
+        if self.is_gnu() {Some(self.cast())} else {None}
+    }
+
+    /// Same as `as_gnu`, but the mutable version.
+    pub fn as_gnu_mut(&mut self) -> Option<&mut GnuHeader> {
+        if self.is_gnu() {Some(self.cast_mut())} else {None}
+    }
+
+    /// Flags this header as a GNU archive header.
+    ///
+    /// Note that this is a destructive operation and may corrupt fields that
+    /// have been previously set. It is recommended to call this operation
+    /// **first** when creating new headers.
+    pub fn set_gnu(&mut self) {
+        let ustar = self.cast_mut::<GnuHeader>();
+        ustar.magic = *b"ustar ";
+        ustar.version = *b" \0";
     }
 
     /// Returns a view into this header as a byte array.
@@ -59,31 +218,41 @@ impl Header {
         unsafe { &*(self as *const _ as *const [u8; 512]) }
     }
 
+    /// Returns a view into this header as a byte array.
+    pub fn as_bytes_mut(&mut self) -> &mut [u8; 512] {
+        debug_assert_eq!(512, mem::size_of_val(self));
+        unsafe { &mut *(self as *mut Header as *mut [u8; 512]) }
+    }
+
     /// Blanket sets the metadata in this header from the metadata argument
     /// provided.
     ///
     /// This is useful for initializing a `Header` from the OS's metadata from a
     /// file.
     pub fn set_metadata(&mut self, meta: &fs::Metadata) {
-        // Platform-specific fill
         self.fill_from(meta);
-        // Platform-agnostic fill
         // Set size of directories to zero
         self.set_size(if meta.is_dir() { 0 } else { meta.len() });
-        self.set_device_major(0);
-        self.set_device_minor(0);
+        if let Some(ustar) = self.as_ustar_mut() {
+            ustar.set_device_major(0);
+            ustar.set_device_minor(0);
+        }
+        if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_device_major(0);
+            gnu.set_device_minor(0);
+        }
     }
 
     /// Returns the file size this header represents.
     ///
     /// May return an error if the field is corrupted.
     pub fn size(&self) -> io::Result<u64> {
-        octal_from(&self.size)
+        octal_from(&self.as_old().size)
     }
 
     /// Encodes the `size` argument into the size field of this header.
     pub fn set_size(&mut self, size: u64) {
-        octal_into(&mut self.size, size)
+        octal_into(&mut self.as_old_mut().size, size)
     }
 
     /// Returns the raw path name stored in this header.
@@ -105,21 +274,15 @@ impl Header {
     /// Note that this function will convert any `\` characters to directory
     /// separators.
     pub fn path_bytes(&self) -> Cow<[u8]> {
-        if (!self.is_ustar() || self.prefix[0] == 0) &&
-           !self.name.contains(&b'\\') {
-            Cow::Borrowed(truncate(&self.name))
+        if let Some(ustar) = self.as_ustar() {
+            ustar.path_bytes()
         } else {
-            fn noslash(b: &u8) -> u8 {
-                if *b == b'\\' {b'/'} else {*b}
+            let name = truncate(&self.as_old().name);
+            if !name.contains(&b'\\') {
+                Cow::Borrowed(truncate(name))
+            } else {
+                Cow::Owned(truncate(name).iter().map(noslash).collect())
             }
-            let mut bytes = Vec::new();
-            let prefix = truncate(&self.prefix);
-            if prefix.len() > 0 {
-                bytes.extend(prefix.iter().map(noslash));
-                bytes.push(b'/');
-            }
-            bytes.extend(truncate(&self.name).iter().map(noslash));
-            Cow::Owned(bytes)
         }
     }
 
@@ -133,21 +296,11 @@ impl Header {
     }
 
     fn _set_path(&mut self, path: &Path) -> io::Result<()> {
-        let bytes = try!(path2bytes(path));
-        let (namelen, prefixlen) = (self.name.len(), self.prefix.len());
-        if bytes.len() <= namelen {
-            try!(copy_into(&mut self.name, bytes, true));
-        } else {
-            let prefix = &bytes[..cmp::min(bytes.len(), prefixlen)];
-            let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
-                Some(i) => i,
-                None => return Err(other("path cannot be split to be inserted \
-                                          into archive")),
-            };
-            try!(copy_into(&mut self.name, &bytes[pos + 1..], true));
-            try!(copy_into(&mut self.prefix, &bytes[..pos], true));
+        if let Some(ustar) = self.as_ustar_mut() {
+            return ustar.set_path(path)
         }
-        Ok(())
+        let bytes = try!(path2bytes(path));
+        copy_into(&mut self.as_old_mut().name, bytes, true)
     }
 
     /// Returns the link name stored in this header, if any is found.
@@ -173,10 +326,11 @@ impl Header {
     /// Note that this function will convert any `\` characters to directory
     /// separators.
     pub fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
-        if self.linkname[0] == 0 {
-            None
+        let old = self.as_old();
+        if old.linkname[0] != 0 {
+            Some(deslash(&old.linkname))
         } else {
-            Some(deslash(&self.linkname))
+            None
         }
     }
 
@@ -191,7 +345,7 @@ impl Header {
 
     fn _set_link_name(&mut self, path: &Path) -> io::Result<()> {
         let bytes = try!(path2bytes(path));
-        try!(copy_into(&mut self.linkname, bytes, true));
+        try!(copy_into(&mut self.as_old_mut().linkname, bytes, true));
         Ok(())
     }
 
@@ -199,39 +353,39 @@ impl Header {
     ///
     /// May return an error if the field is corrupted.
     pub fn mode(&self) -> io::Result<u32> {
-        octal_from(&self.mode).map(|u| u as u32)
+        octal_from(&self.as_old().mode).map(|u| u as u32)
     }
 
     /// Encodes the `mode` provided into this header.
     pub fn set_mode(&mut self, mode: u32) {
-        octal_into(&mut self.mode, mode & 0o3777);
+        octal_into(&mut self.as_old_mut().mode, mode & 0o3777);
     }
 
     /// Returns the value of the owner's user ID field
     ///
     /// May return an error if the field is corrupted.
     pub fn uid(&self) -> io::Result<u32> {
-        octal_from(&self.owner_id).map(|u| u as u32)
+        octal_from(&self.as_old().uid).map(|u| u as u32)
     }
 
     /// Encodes the `uid` provided into this header.
     pub fn set_uid(&mut self, uid: u32) {
-        octal_into(&mut self.owner_id, uid);
+        octal_into(&mut self.as_old_mut().uid, uid);
     }
 
     /// Returns the value of the group's user ID field
     pub fn gid(&self) -> io::Result<u32> {
-        octal_from(&self.group_id).map(|u| u as u32)
+        octal_from(&self.as_old().gid).map(|u| u as u32)
     }
 
     /// Encodes the `gid` provided into this header.
     pub fn set_gid(&mut self, gid: u32) {
-        octal_into(&mut self.group_id, gid);
+        octal_into(&mut self.as_old_mut().gid, gid);
     }
 
     /// Returns the last modification time in Unix time format
     pub fn mtime(&self) -> io::Result<u64> {
-        octal_from(&self.mtime)
+        octal_from(&self.as_old().mtime)
     }
 
     /// Encodes the `mtime` provided into this header.
@@ -239,19 +393,31 @@ impl Header {
     /// Note that this time is typically a number of seconds passed since
     /// January 1, 1970.
     pub fn set_mtime(&mut self, mtime: u64) {
-        octal_into(&mut self.mtime, mtime);
+        octal_into(&mut self.as_old_mut().mtime, mtime);
     }
 
-    /// Return the username of the owner of this file, if present and if valid
-    /// utf8
-    pub fn username(&self) -> Option<&str> {
-        self.username_bytes().and_then(|s| str::from_utf8(s).ok())
+    /// Return the user name of the owner of this file.
+    ///
+    /// A return value of `Ok(Some(..))` indicates that the user name was
+    /// present and was valid utf-8, `Ok(None)` indicates that the user name is
+    /// not present in this archive format, and `Err` indicates that the user
+    /// name was present but was not valid utf-8.
+    pub fn username(&self) -> Result<Option<&str>, str::Utf8Error> {
+        match self.groupname_bytes() {
+            Some(bytes) => str::from_utf8(bytes).map(Some),
+            None => Ok(None),
+        }
     }
 
-    /// Returns the username of the owner of this file, if present
+    /// Returns the user name of the owner of this file, if present.
+    ///
+    /// A return value of `None` indicates that the user name is not present in
+    /// this header format.
     pub fn username_bytes(&self) -> Option<&[u8]> {
-        if self.is_ustar() {
-            Some(truncate(&self.owner_name))
+        if let Some(ustar) = self.as_ustar() {
+            Some(ustar.groupname_bytes())
+        } else if let Some(gnu) = self.as_gnu() {
+            Some(gnu.groupname_bytes())
         } else {
             None
         }
@@ -259,21 +425,41 @@ impl Header {
 
     /// Sets the username inside this header.
     ///
-    /// May return an error if the name provided is too long.
+    /// This function will return an error if this header format cannot encode a
+    /// user name or the name is too long.
     pub fn set_username(&mut self, name: &str) -> io::Result<()> {
-        copy_into(&mut self.owner_name, name.as_bytes(), false)
+        if let Some(ustar) = self.as_ustar_mut() {
+            return ustar.set_username(name)
+        }
+        if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_username(name)
+        } else {
+            Err(other("not a ustar or gnu archive, cannot set username"))
+        }
     }
 
-    /// Return the group name of the owner of this file, if present and if valid
-    /// utf8
-    pub fn groupname(&self) -> Option<&str> {
-        self.groupname_bytes().and_then(|s| str::from_utf8(s).ok())
+    /// Return the group name of the owner of this file.
+    ///
+    /// A return value of `Ok(Some(..))` indicates that the group name was
+    /// present and was valid utf-8, `Ok(None)` indicates that the group name is
+    /// not present in this archive format, and `Err` indicates that the group
+    /// name was present but was not valid utf-8.
+    pub fn groupname(&self) -> Result<Option<&str>, str::Utf8Error> {
+        match self.groupname_bytes() {
+            Some(bytes) => str::from_utf8(bytes).map(Some),
+            None => Ok(None),
+        }
     }
 
-    /// Returns the group name of the owner of this file, if present
+    /// Returns the group name of the owner of this file, if present.
+    ///
+    /// A return value of `None` indicates that the group name is not present in
+    /// this header format.
     pub fn groupname_bytes(&self) -> Option<&[u8]> {
-        if self.is_ustar() {
-            Some(truncate(&self.group_name))
+        if let Some(ustar) = self.as_ustar() {
+            Some(ustar.groupname_bytes())
+        } else if let Some(gnu) = self.as_gnu() {
+            Some(gnu.groupname_bytes())
         } else {
             None
         }
@@ -281,74 +467,110 @@ impl Header {
 
     /// Sets the group name inside this header.
     ///
-    /// May return an error if the name provided is too long.
+    /// This function will return an error if this header format cannot encode a
+    /// group name or the name is too long.
     pub fn set_groupname(&mut self, name: &str) -> io::Result<()> {
-        copy_into(&mut self.group_name, name.as_bytes(), false)
+        if let Some(ustar) = self.as_ustar_mut() {
+            return ustar.set_groupname(name)
+        }
+        if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_groupname(name)
+        } else {
+            Err(other("not a ustar or gnu archive, cannot set groupname"))
+        }
     }
 
     /// Returns the device major number, if present.
     ///
-    /// This field is only present in UStar archives. A value of `None` means
-    /// that this archive is not a UStar archive, while a value of `Some`
-    /// represents the attempt to decode the field in the header.
-    pub fn device_major(&self) -> Option<io::Result<u32>> {
-        if self.is_ustar() {
-            Some(octal_from(&self.dev_major).map(|u| u as u32))
+    /// This field may not be present in all archives, and it may not be
+    /// correctly formed in all archives. `Ok(Some(..))` means it was present
+    /// and correctly decoded, `Ok(None)` indicates that this header format does
+    /// not include the device major number, and `Err` indicates that it was
+    /// present and failed to decode.
+    pub fn device_major(&self) -> io::Result<Option<u32>> {
+        if let Some(ustar) = self.as_ustar() {
+            ustar.device_major().map(Some)
+        } else if let Some(gnu) = self.as_gnu() {
+            gnu.device_major().map(Some)
         } else {
-            None
+            Ok(None)
         }
     }
 
     /// Encodes the value `major` into the dev_major field of this header.
-    pub fn set_device_major(&mut self, major: u32) {
-        octal_into(&mut self.dev_major, major);
+    ///
+    /// This function will return an error if this header format cannot encode a
+    /// major device number.
+    pub fn set_device_major(&mut self, major: u32) -> io::Result<()> {
+        if let Some(ustar) = self.as_ustar_mut() {
+            return Ok(ustar.set_device_major(major))
+        }
+        if let Some(gnu) = self.as_gnu_mut() {
+            Ok(gnu.set_device_major(major))
+        } else {
+            Err(other("not a ustar or gnu archive, cannot set dev_major"))
+        }
     }
 
     /// Returns the device minor number, if present.
     ///
-    /// This field is only present in UStar archives. A value of `None` means
-    /// that this archive is not a UStar archive, while a value of `Some`
-    /// represents the attempt to decode the field in the header.
-    pub fn device_minor(&self) -> Option<io::Result<u32>> {
-        if self.is_ustar() {
-            Some(octal_from(&self.dev_minor).map(|u| u as u32))
+    /// This field may not be present in all archives, and it may not be
+    /// correctly formed in all archives. `Ok(Some(..))` means it was present
+    /// and correctly decoded, `Ok(None)` indicates that this header format does
+    /// not include the device minor number, and `Err` indicates that it was
+    /// present and failed to decode.
+    pub fn device_minor(&self) -> io::Result<Option<u32>> {
+        if let Some(ustar) = self.as_ustar() {
+            ustar.device_minor().map(Some)
+        } else if let Some(gnu) = self.as_gnu() {
+            gnu.device_minor().map(Some)
         } else {
-            None
+            Ok(None)
         }
     }
 
-    /// Encodes the value `minor` into the dev_major field of this header.
-    pub fn set_device_minor(&mut self, minor: u32) {
-        octal_into(&mut self.dev_minor, minor);
+    /// Encodes the value `minor` into the dev_minor field of this header.
+    ///
+    /// This function will return an error if this header format cannot encode a
+    /// minor device number.
+    pub fn set_device_minor(&mut self, minor: u32) -> io::Result<()> {
+        if let Some(ustar) = self.as_ustar_mut() {
+            return Ok(ustar.set_device_minor(minor))
+        }
+        if let Some(gnu) = self.as_gnu_mut() {
+            Ok(gnu.set_device_minor(minor))
+        } else {
+            Err(other("not a ustar or gnu archive, cannot set dev_minor"))
+        }
     }
 
     /// Returns the type of file described by this header.
     pub fn entry_type(&self) -> EntryType {
-        EntryType::new(self.link[0])
+        EntryType::new(self.as_old().linkflag[0])
     }
 
     /// Sets the type of file that will be described by this header.
     pub fn set_entry_type(&mut self, ty: EntryType) {
-        self.link = [ty.as_byte()];
+        self.as_old_mut().linkflag = [ty.as_byte()];
     }
 
     /// Returns the checksum field of this header.
     ///
     /// May return an error if the field is corrupted.
     pub fn cksum(&self) -> io::Result<u32> {
-        octal_from(&self.cksum).map(|u| u as u32)
+        octal_from(&self.as_old().cksum).map(|u| u as u32)
     }
 
     /// Sets the checksum field of this header based on the current fields in
     /// this header.
     pub fn set_cksum(&mut self) {
         let cksum = {
-            let bytes = self.as_bytes();
+            let bytes = &self.bytes;
             bytes[..148].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
                 bytes[156..].iter().map(|i| *i as u32).fold(0, |a, b| a + b) +
-                32 * (self.cksum.len() as u32)
+                32 * (self.as_old().cksum.len() as u32)
         };
-        octal_into(&mut self.cksum, cksum);
+        octal_into(&mut self.as_old_mut().cksum, cksum);
     }
 
     #[cfg(unix)]
@@ -357,6 +579,10 @@ impl Header {
 
         self.set_mode((meta.mode() & 0o3777) as u32);
         self.set_mtime(meta.mtime() as u64);
+        if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_atime(meta.atime() as u64);
+            gnu.set_ctime(meta.ctime() as u64);
+        }
         self.set_uid(meta.uid() as u32);
         self.set_gid(meta.gid() as u32);
 
@@ -412,7 +638,156 @@ impl Header {
 
 impl Clone for Header {
     fn clone(&self) -> Header {
-        Header { ..*self }
+        Header { bytes: self.bytes }
+    }
+}
+
+impl UstarHeader {
+    /// See `Header::path_bytes`
+    pub fn path_bytes(&self) -> Cow<[u8]> {
+        if self.prefix[0] == 0 && !self.name.contains(&b'\\') {
+            Cow::Borrowed(truncate(&self.name))
+        } else {
+            let mut bytes = Vec::new();
+            let prefix = truncate(&self.prefix);
+            if prefix.len() > 0 {
+                bytes.extend(prefix.iter().map(noslash));
+                bytes.push(b'/');
+            }
+            bytes.extend(truncate(&self.name).iter().map(noslash));
+            Cow::Owned(bytes)
+        }
+    }
+
+    /// See `Header::set_path`
+    pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        self._set_path(p.as_ref())
+    }
+
+    fn _set_path(&mut self, path: &Path) -> io::Result<()> {
+        let bytes = try!(path2bytes(path));
+        let (namelen, prefixlen) = (self.name.len(), self.prefix.len());
+        if bytes.len() <= namelen {
+            try!(copy_into(&mut self.name, bytes, true));
+        } else {
+            let prefix = &bytes[..cmp::min(bytes.len(), prefixlen)];
+            let pos = match prefix.iter().rposition(|&b| b == b'/' || b == b'\\') {
+                Some(i) => i,
+                None => return Err(other("path cannot be split to be inserted \
+                                          into archive")),
+            };
+            try!(copy_into(&mut self.name, &bytes[pos + 1..], true));
+            try!(copy_into(&mut self.prefix, &bytes[..pos], true));
+        }
+        Ok(())
+    }
+
+    /// See `Header::username_bytes`
+    pub fn username_bytes(&self) -> &[u8] {
+        truncate(&self.uname)
+    }
+
+    /// See `Header::set_username`
+    pub fn set_username(&mut self, name: &str) -> io::Result<()> {
+        copy_into(&mut self.uname, name.as_bytes(), false)
+    }
+
+    /// See `Header::groupname_bytes`
+    pub fn groupname_bytes(&self) -> &[u8] {
+        truncate(&self.gname)
+    }
+
+    /// See `Header::set_groupname`
+    pub fn set_groupname(&mut self, name: &str) -> io::Result<()> {
+        copy_into(&mut self.gname, name.as_bytes(), false)
+    }
+
+    /// See `Header::device_major`
+    pub fn device_major(&self) -> io::Result<u32> {
+        octal_from(&self.dev_major).map(|u| u as u32)
+    }
+
+    /// See `Header::set_device_major`
+    pub fn set_device_major(&mut self, major: u32) {
+        octal_into(&mut self.dev_major, major);
+    }
+
+    /// See `Header::device_minor`
+    pub fn device_minor(&self) -> io::Result<u32> {
+        octal_from(&self.dev_minor).map(|u| u as u32)
+    }
+
+    /// See `Header::set_device_minor`
+    pub fn set_device_minor(&mut self, minor: u32) {
+        octal_into(&mut self.dev_minor, minor);
+    }
+}
+
+impl GnuHeader {
+    /// See `Header::username_bytes`
+    pub fn username_bytes(&self) -> &[u8] {
+        truncate(&self.uname)
+    }
+
+    /// See `Header::set_username`
+    pub fn set_username(&mut self, name: &str) -> io::Result<()> {
+        copy_into(&mut self.uname, name.as_bytes(), false)
+    }
+
+    /// See `Header::groupname_bytes`
+    pub fn groupname_bytes(&self) -> &[u8] {
+        truncate(&self.gname)
+    }
+
+    /// See `Header::set_groupname`
+    pub fn set_groupname(&mut self, name: &str) -> io::Result<()> {
+        copy_into(&mut self.gname, name.as_bytes(), false)
+    }
+
+    /// See `Header::device_major`
+    pub fn device_major(&self) -> io::Result<u32> {
+        octal_from(&self.dev_major).map(|u| u as u32)
+    }
+
+    /// See `Header::set_device_major`
+    pub fn set_device_major(&mut self, major: u32) {
+        octal_into(&mut self.dev_major, major);
+    }
+
+    /// See `Header::device_minor`
+    pub fn device_minor(&self) -> io::Result<u32> {
+        octal_from(&self.dev_minor).map(|u| u as u32)
+    }
+
+    /// See `Header::set_device_minor`
+    pub fn set_device_minor(&mut self, minor: u32) {
+        octal_into(&mut self.dev_minor, minor);
+    }
+
+    /// Returns the last modification time in Unix time format
+    pub fn atime(&self) -> io::Result<u64> {
+        octal_from(&self.atime)
+    }
+
+    /// Encodes the `atime` provided into this header.
+    ///
+    /// Note that this time is typically a number of seconds passed since
+    /// January 1, 1970.
+    pub fn set_atime(&mut self, atime: u64) {
+        octal_into(&mut self.atime, atime);
+    }
+
+    /// Returns the last modification time in Unix time format
+    pub fn ctime(&self) -> io::Result<u64> {
+        octal_from(&self.ctime)
+    }
+
+    /// Encodes the `ctime` provided into this header.
+    ///
+    /// Note that this time is typically a number of seconds passed since
+    /// January 1, 1970.
+    pub fn set_ctime(&mut self, ctime: u64) {
+        octal_into(&mut self.ctime, ctime);
     }
 }
 
@@ -420,9 +795,6 @@ fn deslash(bytes: &[u8]) -> Cow<[u8]> {
     if !bytes.contains(&b'\\') {
         Cow::Borrowed(truncate(bytes))
     } else {
-        fn noslash(b: &u8) -> u8 {
-            if *b == b'\\' {b'/'} else {*b}
-        }
         Cow::Owned(truncate(bytes).iter().map(noslash).collect())
     }
 }
@@ -451,6 +823,10 @@ fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
         Some(i) => &slice[..i],
         None => slice,
     }
+}
+
+fn noslash(b: &u8) -> u8 {
+    if *b == b'\\' {b'/'} else {*b}
 }
 
 /// Copies `bytes` into the `slot` provided, returning an error if the `bytes`

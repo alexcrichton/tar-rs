@@ -380,12 +380,12 @@ impl<W: Write> Archive<W> {
     /// let mut data: &[u8] = &[1, 2, 3, 4];
     ///
     /// let mut ar = Archive::new(Vec::new());
-    /// ar.append(&header, &mut data).unwrap();
+    /// ar.append(&header, data).unwrap();
     /// let archive = ar.into_inner();
     /// ```
-    pub fn append(&self, header: &Header, data: &mut Read) -> io::Result<()> {
+    pub fn append<R: Read>(&self, header: &Header, mut data: R) -> io::Result<()> {
         let me: &Archive<Write> = self;
-        me._append(header, data)
+        me._append(header, &mut data)
     }
 
     /// Adds a file on the local filesystem to this archive.
@@ -537,10 +537,9 @@ impl<'a> Archive<Write + 'a> {
         // Try to encode the path directly in the header, but if it ends up not
         // working (e.g. it's too long) then use the GNU-specific long name
         // extension by emitting an entry which indicates that it's the filename
-        // for the next entry.
         if let Err(e) = header.set_path(path) {
             let data = try!(path2bytes(&path));
-            let max = header.name.len();
+            let max = header.as_old().name.len();
             if data.len() < max {
                 return Err(e)
             }

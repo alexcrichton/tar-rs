@@ -109,7 +109,12 @@ fn large_filename() {
     t!(t!(File::create(&path)).write_all(b"test"));
 
     let filename = repeat("abcd/").take(50).collect::<String>();
-    t!(ar.append_file(&filename, &mut t!(File::open(&path))));
+    let mut header = Header::new();
+    header.set_ustar();
+    header.set_path(&filename).unwrap();
+    header.set_metadata(&t!(fs::metadata(&path)));
+    header.set_cksum();
+    t!(ar.append(&header, &b"test"[..]));
     let too_long = repeat("abcd").take(200).collect::<String>();
     t!(ar.append_file(&too_long, &mut t!(File::open(&path))));
     t!(ar.finish());
@@ -397,7 +402,7 @@ fn backslash_same_as_slash() {
     let mut header = Header::new();
     header.set_metadata(&t!(fs::metadata(td.path())));
     header.set_size(0);
-    for (a, b) in header.name.iter_mut().zip(b"foo\\bar\x00") {
+    for (a, b) in header.as_old_mut().name.iter_mut().zip(b"foo\\bar\x00") {
         *a = *b;
     }
     header.set_cksum();
