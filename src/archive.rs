@@ -26,6 +26,10 @@ macro_rules! try_iter {
 ///
 /// This archive can have an entry added to it and it can be iterated over.
 pub struct Archive<R: ?Sized> {
+    inner: ArchiveInner<R>,
+}
+
+struct ArchiveInner<R: ?Sized> {
     pos: Cell<u64>,
     obj: RefCell<AlignHigher<R>>,
 }
@@ -94,12 +98,17 @@ impl<O> Archive<O> {
     /// Different methods are available on an archive depending on the traits
     /// that the underlying object implements.
     pub fn new(obj: O) -> Archive<O> {
-        Archive { obj: RefCell::new(AlignHigher(0, obj)), pos: Cell::new(0) }
+        Archive {
+            inner: ArchiveInner {
+                obj: RefCell::new(AlignHigher(0, obj)),
+                pos: Cell::new(0),
+            },
+        }
     }
 
     /// Unwrap this archive, returning the underlying object.
     pub fn into_inner(self) -> O {
-        self.obj.into_inner().1
+        self.inner.obj.into_inner().1
     }
 }
 
@@ -143,11 +152,11 @@ impl<'a> Archive<ReadAndSeek + 'a> {
     }
 
     fn _seek(&self, pos: u64) -> io::Result<()> {
-        if self.pos.get() == pos {
+        if self.inner.pos.get() == pos {
             return Ok(())
         }
-        try!(self.obj.borrow_mut().seek(SeekFrom::Start(pos)));
-        self.pos.set(pos);
+        try!(self.inner.obj.borrow_mut().seek(SeekFrom::Start(pos)));
+        self.inner.pos.set(pos);
         Ok(())
     }
 }
@@ -203,7 +212,7 @@ impl<R: Read> Archive<R> {
 
 impl<'a> Archive<Read + 'a> {
     fn _entries_mut(&mut self) -> io::Result<EntriesMutFields> {
-        if self.pos.get() != 0 {
+        if self.inner.pos.get() != 0 {
             return Err(other("cannot call entries_mut unless archive is at \
                               position 0"))
         }
@@ -282,10 +291,9 @@ impl<'a> Archive<Read + 'a> {
 
     fn _skip(&self, mut amt: u64) -> io::Result<()> {
         let mut buf = [0u8; 4096 * 8];
-        let mut me = self;
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
-            let n = try!(Read::read(&mut me, &mut buf[..n as usize]));
+            let n = try!((&self.inner).read(&mut buf[..n as usize]));
             if n == 0 {
                 return Err(other("unexpected EOF during skip"))
             }
@@ -298,17 +306,16 @@ impl<'a> Archive<Read + 'a> {
     // header to parse.
     fn _next_entry(&self,
                    offset: &mut u64,
-                   seek: Box<Fn(&EntryFields) -> io::Result<()> + 'a>)
+                   read_at: Box<Fn(u64, &mut [u8]) -> io::Result<usize> + 'a>)
                    -> io::Result<Option<EntryFields>> {
         // If we have 2 or more sections of 0s, then we're done!
         let mut chunk = [0; 512];
-        let mut me = self;
-        try!(read_all(&mut me, &mut chunk));
+        try!(read_all(&mut &self.inner, &mut chunk));
         *offset += 512;
         // A block of 0s is never valid as a header (because of the checksum),
         // so if it's all zero it must be the first of the two end blocks
         if chunk.iter().all(|i| *i == 0) {
-            try!(read_all(&mut me, &mut chunk));
+            try!(read_all(&mut &self.inner, &mut chunk));
             *offset += 512;
             return if chunk.iter().all(|i| *i == 0) {
                 Ok(None)
@@ -324,12 +331,10 @@ impl<'a> Archive<Read + 'a> {
 
         let header: Header = unsafe { mem::transmute(chunk) };
         let ret = EntryFields {
-            archive: self,
             pos: 0,
             size: try!(header.size()),
             header: header,
-            tar_offset: *offset,
-            seek: seek,
+            read_at: read_at,
         };
 
         // Make sure the checksum is ok
@@ -343,6 +348,15 @@ impl<'a> Archive<Read + 'a> {
         *offset += size;
 
         return Ok(Some(ret));
+    }
+}
+
+impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        self.obj.borrow_mut().read(into).map(|i| {
+            self.pos.set(self.pos.get() + i as u64);
+            i
+        })
     }
 }
 
@@ -493,7 +507,7 @@ impl<W: Write> Archive<W> {
 
 impl<'a> Archive<Write + 'a> {
     fn _append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
-        let mut obj = self.obj.borrow_mut();
+        let mut obj = self.inner.obj.borrow_mut();
         try!(obj.write_all(header.as_bytes()));
         let len = try!(io::copy(&mut data, &mut &mut **obj));
 
@@ -563,16 +577,7 @@ impl<'a> Archive<Write + 'a> {
 
     fn _finish(&self) -> io::Result<()> {
         let b = [0; 1024];
-        self.obj.borrow_mut().write_all(&b)
-    }
-}
-
-impl<'a, R: Read + ?Sized> Read for &'a Archive<R> {
-    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        self.obj.borrow_mut().read(into).map(|i| {
-            self.pos.set(self.pos.get() + i as u64);
-            i
-        })
+        self.inner.obj.borrow_mut().write_all(&b)
     }
 }
 
@@ -591,19 +596,23 @@ impl<'a> Iterator for EntriesFields<'a> {
 
     fn next(&mut self) -> Option<io::Result<EntryFields<'a>>> {
         // If we hit a previous error, or we reached the end, we're done here
-        if self.done { return None }
+        if self.done {
+            return None
+        }
 
         // Seek to the start of the next header in the archive
         try_iter!(self, self.archive._seek(self.offset));
 
+        let offset = self.offset;
         let archive = self.archive;
-        let seek = Box::new(move |entry: &EntryFields| {
-            archive._seek(entry.tar_offset + entry.pos)
+        let read_at = Box::new(move |at, buf: &mut [u8]| {
+            try!(archive._seek(offset + 512 + at));
+            (&archive.inner).read(buf)
         });
 
         // Parse the next entry header
         let archive = self.archive_read;
-        match try_iter!(self, archive._next_entry(&mut self.offset, seek)) {
+        match try_iter!(self, archive._next_entry(&mut self.offset, read_at)) {
             Some(f) => Some(Ok(f)),
             None => { self.done = true; None }
         }
@@ -625,17 +634,22 @@ impl<'a> Iterator for EntriesMutFields<'a> {
 
     fn next(&mut self) -> Option<io::Result<EntryFields<'a>>> {
         // If we hit a previous error, or we reached the end, we're done here
-        if self.done { return None }
+        if self.done {
+            return None
+        }
 
         // Seek to the start of the next header in the archive
-        let delta = self.next - self.archive.pos.get();
+        let delta = self.next - self.archive.inner.pos.get();
         try_iter!(self, self.archive._skip(delta));
 
-        // no-op because this reader can't seek
-        let seek = Box::new(|_: &EntryFields| Ok(()));
+        // no need to worry about the position because this reader can't seek
+        let archive = self.archive;
+        let read_at = Box::new(move |_pos, buf: &mut [u8]| {
+            (&archive.inner).read(buf)
+        });
 
         // Parse the next entry header
-        match try_iter!(self, self.archive._next_entry(&mut self.next, seek)) {
+        match try_iter!(self, self.archive._next_entry(&mut self.next, read_at)) {
             Some(f) => Some(Ok(f)),
             None => { self.done = true; None }
         }

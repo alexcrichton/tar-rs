@@ -29,15 +29,9 @@ pub struct Entry<'a, R: 'a> {
 // and also all-public to be constructed from other modules.
 pub struct EntryFields<'a> {
     pub header: Header,
-    pub archive: &'a Archive<Read + 'a>,
     pub pos: u64,
     pub size: u64,
-
-    // Used in read() to make sure we're positioned at the next byte. For a
-    // `Entries` iterator these are meaningful while for a `EntriesMut` iterator
-    // these are both unused/noops.
-    pub seek: Box<Fn(&EntryFields) -> io::Result<()> + 'a>,
-    pub tar_offset: u64,
+    pub read_at: Box<Fn(u64, &mut [u8]) -> io::Result<usize> + 'a>,
 }
 
 impl<'a, R: Read> Entry<'a, R> {
@@ -192,11 +186,11 @@ impl<'a> EntryFields<'a> {
 
 impl<'a> Read for EntryFields<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        if self.size == self.pos { return Ok(0) }
-
-        try!((self.seek)(self));
+        if self.size == self.pos {
+            return Ok(0)
+        }
         let amt = cmp::min((self.size - self.pos) as usize, into.len());
-        let amt = try!(Read::read(&mut self.archive, &mut into[..amt]));
+        let amt = try!((self.read_at)(self.pos, &mut into[..amt]));
         self.pos += amt as u64;
         Ok(amt)
     }
