@@ -11,10 +11,6 @@ use error::TarError;
 use {Header, Archive};
 use other;
 
-/// Backwards compatible alias for `Entry`.
-#[doc(hidden)]
-pub type File<'a, T> = Entry<'a, T>;
-
 /// A read-only view into an entry of an archive.
 ///
 /// This structure is a window into a portion of a borrowed archive which can

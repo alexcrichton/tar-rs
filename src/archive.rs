@@ -52,10 +52,6 @@ impl<R: ?Sized> DerefMut for AlignHigher<R> {
     fn deref_mut(&mut self) -> &mut R { &mut self.1 }
 }
 
-/// Backwards compatible alias for `Entries`.
-#[doc(hidden)]
-pub type Files<'a, T> = Entries<'a, T>;
-
 /// An iterator over the entries of an archive.
 ///
 /// Requires that `R` implement `Seek`.
@@ -72,10 +68,6 @@ struct EntriesFields<'a> {
     done: bool,
     offset: u64,
 }
-
-/// Backwards compatible alias for `EntriesMut`.
-#[doc(hidden)]
-pub type FilesMut<'a, T> = EntriesMut<'a, T>;
 
 /// An iterator over the entries of an archive.
 ///
@@ -113,12 +105,6 @@ impl<O> Archive<O> {
 }
 
 impl<R: Seek + Read> Archive<R> {
-    /// Backwards compatible alias for `entries`.
-    #[doc(hidden)]
-    pub fn files(&self) -> io::Result<Entries<R>> {
-        self.entries()
-    }
-
     /// Construct an iterator over the entries of this archive.
     ///
     /// This function can return an error if any underlying I/O operation fails
@@ -177,12 +163,6 @@ impl<R: Read> Archive<R> {
         me._entries_mut().map(|fields| {
             EntriesMut { fields: fields, _ignored: marker::PhantomData }
         })
-    }
-
-    /// Backwards compatible alias for `entries_mut`.
-    #[doc(hidden)]
-    pub fn files_mut(&mut self) -> io::Result<EntriesMut<R>> {
-        self.entries_mut()
     }
 
     /// Unpacks the contents tarball into the specified `dst`.
