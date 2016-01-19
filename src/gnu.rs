@@ -16,12 +16,12 @@ macro_rules! try_iter {
 }
 
 /// dox
-pub struct GnuEntries<'a, R: 'a> {
+pub struct GnuEntries<'a, R: 'a + Read> {
     inner: Box<Iterator<Item=io::Result<Entry<'a, R>>> + 'a>,
 }
 
 /// dox
-pub struct GnuEntry<'a, R: 'a> {
+pub struct GnuEntry<'a, R: 'a + Read> {
     inner: Entry<'a, R>,
     name: Option<Vec<u8>>,
 }

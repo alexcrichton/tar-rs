@@ -10,7 +10,7 @@ use std::path::Path;
 
 use filetime::FileTime;
 use self::tempdir::TempDir;
-use tar::{Archive, Header};
+use tar::{Archive, Builder, Header};
 
 macro_rules! t {
     ($e:expr) => (match $e {
@@ -42,7 +42,7 @@ fn header_impls() {
     let ar = Archive::new(Cursor::new(tar!("simple.tar")));
     let hn = Header::new();
     let hnb = hn.as_bytes();
-    for file in t!(ar.files()) {
+    for file in t!(ar.entries()) {
         let file = t!(file);
         let h1 = file.header();
         let h1b = h1.as_bytes();
@@ -77,18 +77,16 @@ fn reading_files() {
 
 #[test]
 fn writing_files() {
-    let wr = Cursor::new(Vec::new());
-    let ar = Archive::new(wr);
+    let mut ar = Builder::new(Vec::new());
     let td = t!(TempDir::new("tar-rs"));
 
     let path = td.path().join("test");
     t!(t!(File::create(&path)).write_all(b"test"));
 
     t!(ar.append_file("test2", &mut t!(File::open(&path))));
-    t!(ar.finish());
 
-    let rd = Cursor::new(ar.into_inner().into_inner());
-    let ar = Archive::new(rd);
+    let data = t!(ar.into_inner());
+    let ar = Archive::new(Cursor::new(data));
     let mut entries = t!(ar.entries());
     let mut f = t!(entries.next().unwrap());
     assert!(entries.next().is_none());
@@ -104,7 +102,7 @@ fn writing_files() {
 fn large_filename() {
     use tar::GnuEntries;
 
-    let ar = Archive::new(Cursor::new(Vec::new()));
+    let mut ar = Builder::new(Vec::new());
     let td = t!(TempDir::new("tar-rs"));
 
     let path = td.path().join("test");
@@ -119,9 +117,8 @@ fn large_filename() {
     t!(ar.append(&header, &b"test"[..]));
     let too_long = repeat("abcd").take(200).collect::<String>();
     t!(ar.append_file(&too_long, &mut t!(File::open(&path))));
-    t!(ar.finish());
 
-    let rd = Cursor::new(ar.into_inner().into_inner());
+    let rd = Cursor::new(t!(ar.into_inner()));
     let ar = Archive::new(rd);
     let mut entries = GnuEntries::new(t!(ar.entries()));
 
@@ -186,8 +183,7 @@ fn extracting_directories() {
 fn writing_and_extracting_directories() {
     let td = t!(TempDir::new("tar-rs"));
 
-    let cur = Cursor::new(Vec::new());
-    let ar = Archive::new(cur);
+    let mut ar = Builder::new(Vec::new());
     let tmppath = td.path().join("tmpfile");
     t!(t!(File::create(&tmppath)).write_all(b"c"));
     t!(ar.append_dir("a", "."));
@@ -195,7 +191,7 @@ fn writing_and_extracting_directories() {
     t!(ar.append_file("a/c", &mut t!(File::open(&tmppath))));
     t!(ar.finish());
 
-    let rdr = Cursor::new(ar.into_inner().into_inner());
+    let rdr = Cursor::new(t!(ar.into_inner()));
     let mut ar = Archive::new(rdr);
     t!(ar.unpack(td.path()));
     check_dirtree(&td);
@@ -216,8 +212,7 @@ fn extracting_duplicate_dirs() {
 fn handling_incorrect_file_size() {
     let td = t!(TempDir::new("tar-rs"));
 
-    let cur = Cursor::new(Vec::new());
-    let ar = Archive::new(cur);
+    let mut ar = Builder::new(Vec::new());
 
     let path = td.path().join("tmpfile");
     t!(File::create(&path));
@@ -228,10 +223,9 @@ fn handling_incorrect_file_size() {
     header.set_size(2048); // past the end of file null blocks
     header.set_cksum();
     t!(ar.append(&header, &mut file));
-    t!(ar.finish());
 
     // Extracting
-    let rdr = Cursor::new(ar.into_inner().into_inner());
+    let rdr = Cursor::new(t!(ar.into_inner()));
     let mut ar = Archive::new(rdr);
     assert!(ar.unpack(td.path()).is_err());
 
@@ -252,7 +246,7 @@ fn extracting_malicious_tarball() {
     let mut evil_tar = Cursor::new(Vec::new());
 
     {
-        let a = Archive::new(&mut evil_tar);
+        let mut a = Builder::new(&mut evil_tar);
         let mut evil_txt_f = t!(OpenOptions::new().read(true).write(true)
                                             .create(true)
                                             .open(td.path().join("evil.txt")));
@@ -344,22 +338,22 @@ fn octal_spaces() {
 fn extracting_malformed_tar_null_blocks() {
     let td = t!(TempDir::new("tar-rs"));
 
-    let cur = Cursor::new(Vec::new());
-    let ar = Archive::new(cur);
+    let mut ar = Builder::new(Vec::new());
 
     let path1 = td.path().join("tmpfile1");
     let path2 = td.path().join("tmpfile2");
     t!(File::create(&path1));
     t!(File::create(&path2));
     t!(ar.append_path(&path1));
-    let mut wrtr = ar.into_inner();
-    t!(wrtr.write_all(&[0; 512]));
-    let ar = Archive::new(wrtr);
+    let mut data = t!(ar.into_inner());
+    let amt = data.len();
+    data.truncate(amt - 512);
+    let mut ar = Builder::new(data);
     t!(ar.append_path(&path2));
     t!(ar.finish());
 
-    let rdr = Cursor::new(ar.into_inner().into_inner());
-    let mut ar = Archive::new(rdr);
+    let data = t!(ar.into_inner());
+    let mut ar = Archive::new(&data[..]);
     assert!(ar.unpack(td.path()).is_err());
 }
 
@@ -392,15 +386,14 @@ fn file_times() {
 fn backslash_same_as_slash() {
     // Insert a file into an archive with a backslash
     let td = t!(TempDir::new("tar-rs"));
-    let ar = Archive::new(Vec::<u8>::new());
+    let mut ar = Builder::new(Vec::<u8>::new());
     t!(ar.append_dir("foo\\bar", td.path()));
-    ar.finish().unwrap();
-    let ar = Archive::new(Cursor::new(ar.into_inner()));
+    let ar = Archive::new(Cursor::new(t!(ar.into_inner())));
     let f = t!(t!(ar.entries()).next().unwrap());
     assert_eq!(&*f.header().path().unwrap(), Path::new("foo/bar"));
 
     // Unpack an archive with a backslash in the name
-    let ar = Archive::new(Vec::<u8>::new());
+    let mut ar = Builder::new(Vec::<u8>::new());
     let mut header = Header::new();
     header.set_metadata(&t!(fs::metadata(td.path())));
     header.set_size(0);
@@ -409,8 +402,8 @@ fn backslash_same_as_slash() {
     }
     header.set_cksum();
     t!(ar.append(&header, &mut io::empty()));
-    ar.finish().unwrap();
-    let mut ar = Archive::new(Cursor::new(ar.into_inner()));
+    let data = t!(ar.into_inner());
+    let mut ar = Archive::new(Cursor::new(data));
     {
         let f = t!(t!(ar.entries()).next().unwrap());
         assert_eq!(&*f.header().path().unwrap(), Path::new("foo/bar"));
@@ -428,7 +421,7 @@ fn nul_bytes_in_path() {
 
     let nul_path = OsStr::from_bytes(b"foo\0");
     let td = t!(TempDir::new("tar-rs"));
-    let ar = Archive::new(Vec::<u8>::new());
+    let mut ar = Builder::new(Vec::<u8>::new());
     let err = ar.append_dir(nul_path, td.path()).unwrap_err();
     assert!(err.to_string().contains("contains a nul byte"));
 }

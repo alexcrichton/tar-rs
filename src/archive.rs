@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::cell::{RefCell, Cell};
 use std::cmp;
 use std::fs;
@@ -6,14 +5,12 @@ use std::io::prelude::*;
 use std::io::{self, SeekFrom};
 use std::marker;
 use std::mem;
-use std::ops::{Deref, DerefMut};
 use std::path::{Path, Component};
 
 use entry::EntryFields;
 use error::TarError;
-use header::{bytes2path, path2bytes};
 use other;
-use {Entry, Header, EntryType};
+use {Entry, Header};
 
 macro_rules! try_iter {
     ($me:expr, $e:expr) => (match $e {
@@ -25,37 +22,19 @@ macro_rules! try_iter {
 /// A top-level representation of an archive file.
 ///
 /// This archive can have an entry added to it and it can be iterated over.
-pub struct Archive<R: ?Sized> {
+pub struct Archive<R: ?Sized + Read> {
     inner: ArchiveInner<R>,
 }
 
 struct ArchiveInner<R: ?Sized> {
     pos: Cell<u64>,
-    obj: RefCell<AlignHigher<R>>,
-}
-
-// FIXME(rust-lang/rust#26403):
-//      Right now there's a bug when a DST struct's last field has more
-//      alignment than the rest of a structure, causing invalid pointers to be
-//      created when it's casted around at runtime. To work around this we force
-//      our DST struct to instead have a forcibly higher alignment via a
-//      synthesized u64 (hopefully the largest alignment we'll run into in
-//      practice), and this should hopefully ensure that the pointers all work
-//      out.
-struct AlignHigher<R: ?Sized>(u64, R);
-
-impl<R: ?Sized> Deref for AlignHigher<R> {
-    type Target = R;
-    fn deref(&self) -> &R { &self.1 }
-}
-impl<R: ?Sized> DerefMut for AlignHigher<R> {
-    fn deref_mut(&mut self) -> &mut R { &mut self.1 }
+    obj: RefCell<::AlignHigher<R>>,
 }
 
 /// An iterator over the entries of an archive.
 ///
 /// Requires that `R` implement `Seek`.
-pub struct Entries<'a, R: 'a> {
+pub struct Entries<'a, R: 'a + Read> {
     fields: EntriesFields<'a>,
     _ignored: marker::PhantomData<&'a Archive<R>>,
 }
@@ -73,7 +52,7 @@ struct EntriesFields<'a> {
 ///
 /// Does not require that `R` implements `Seek`, but each entry must be
 /// processed before the next.
-pub struct EntriesMut<'a, R: 'a> {
+pub struct EntriesMut<'a, R: 'a + Read> {
     fields: EntriesMutFields<'a>,
     _ignored: marker::PhantomData<&'a Archive<R>>,
 }
@@ -84,22 +63,19 @@ struct EntriesMutFields<'a> {
     done: bool,
 }
 
-impl<O> Archive<O> {
-    /// Create a new archive with the underlying object as the reader/writer.
-    ///
-    /// Different methods are available on an archive depending on the traits
-    /// that the underlying object implements.
-    pub fn new(obj: O) -> Archive<O> {
+impl<R: Read> Archive<R> {
+    /// Create a new archive with the underlying object as the reader.
+    pub fn new(obj: R) -> Archive<R> {
         Archive {
             inner: ArchiveInner {
-                obj: RefCell::new(AlignHigher(0, obj)),
+                obj: RefCell::new(::AlignHigher(0, obj)),
                 pos: Cell::new(0),
             },
         }
     }
 
     /// Unwrap this archive, returning the underlying object.
-    pub fn into_inner(self) -> O {
+    pub fn into_inner(self) -> R {
         self.inner.obj.into_inner().1
     }
 }
@@ -337,227 +313,6 @@ impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
             self.pos.set(self.pos.get() + i as u64);
             i
         })
-    }
-}
-
-impl<W: Write> Archive<W> {
-    /// Adds a new entry to this archive.
-    ///
-    /// This function will append the header specified, followed by contents of
-    /// the stream specified by `data`. To produce a valid archive the `size`
-    /// field of `header` must be the same as the length of the stream that's
-    /// being written. Additionally the checksum for the header should have been
-    /// set via the `set_cksum` method.
-    ///
-    /// Note that this will not attempt to seek the archive to a valid position,
-    /// so if the archive is in the middle of a read or some other similar
-    /// operation then this may corrupt the archive.
-    ///
-    /// Also note that after all entries have been written to an archive the
-    /// `finish` function needs to be called to finish writing the archive.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error for any intermittent I/O error which
-    /// occurs when either reading or writing.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use tar::{Archive, Header};
-    ///
-    /// let mut header = Header::new();
-    /// header.set_path("foo");
-    /// header.set_size(4);
-    /// header.set_cksum();
-    ///
-    /// let mut data: &[u8] = &[1, 2, 3, 4];
-    ///
-    /// let mut ar = Archive::new(Vec::new());
-    /// ar.append(&header, data).unwrap();
-    /// let archive = ar.into_inner();
-    /// ```
-    pub fn append<R: Read>(&self, header: &Header, mut data: R) -> io::Result<()> {
-        let me: &Archive<Write> = self;
-        me._append(header, &mut data)
-    }
-
-    /// Adds a file on the local filesystem to this archive.
-    ///
-    /// This function will open the file specified by `path` and insert the file
-    /// into the archive with the appropriate metadata set, returning any I/O
-    /// error which occurs while writing. The path name for the file inside of
-    /// this archive will be the same as `path`, and it is recommended that the
-    /// path is a relative path.
-    ///
-    /// Note that this will not attempt to seek the archive to a valid position,
-    /// so if the archive is in the middle of a read or some other similar
-    /// operation then this may corrupt the archive.
-    ///
-    /// Also note that after all files have been written to an archive the
-    /// `finish` function needs to be called to finish writing the archive.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use tar::Archive;
-    ///
-    /// let mut ar = Archive::new(Vec::new());
-    ///
-    /// ar.append_path("foo/bar.txt").unwrap();
-    /// ```
-    pub fn append_path<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        let me: &Archive<Write> = self;
-        me._append_path(path.as_ref())
-    }
-
-    /// Adds a file to this archive with the given path as the name of the file
-    /// in the archive.
-    ///
-    /// This will use the metadata of `file` to populate a `Header`, and it will
-    /// then append the file to the archive with the name `path`.
-    ///
-    /// Note that this will not attempt to seek the archive to a valid position,
-    /// so if the archive is in the middle of a read or some other similar
-    /// operation then this may corrupt the archive.
-    ///
-    /// Also note that after all files have been written to an archive the
-    /// `finish` function needs to be called to finish writing the archive.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use std::fs::File;
-    /// use tar::Archive;
-    ///
-    /// let mut ar = Archive::new(Vec::new());
-    ///
-    /// // Open the file at one location, but insert it into the archive with a
-    /// // different name.
-    /// let mut f = File::open("foo/bar/baz.txt").unwrap();
-    /// ar.append_file("bar/baz.txt", &mut f).unwrap();
-    /// ```
-    pub fn append_file<P: AsRef<Path>>(&self, path: P, file: &mut fs::File)
-                                       -> io::Result<()> {
-        let me: &Archive<Write> = self;
-        me._append_file(path.as_ref(), file)
-    }
-
-    /// Adds a directory to this archive with the given path as the name of the
-    /// directory in the archive.
-    ///
-    /// This will use `stat` to populate a `Header`, and it will then append the
-    /// directory to the archive with the name `path`.
-    ///
-    /// Note that this will not attempt to seek the archive to a valid position,
-    /// so if the archive is in the middle of a read or some other similar
-    /// operation then this may corrupt the archive.
-    ///
-    /// Also note that after all files have been written to an archive the
-    /// `finish` function needs to be called to finish writing the archive.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::fs;
-    /// use tar::Archive;
-    ///
-    /// let mut ar = Archive::new(Vec::new());
-    ///
-    /// // Use the directory at one location, but insert it into the archive
-    /// // with a different name.
-    /// ar.append_dir("bardir", ".").unwrap();
-    /// ```
-    pub fn append_dir<P, Q>(&self, path: P, src_path: Q) -> io::Result<()>
-        where P: AsRef<Path>, Q: AsRef<Path>
-    {
-        let me: &Archive<Write> = self;
-        me._append_dir(path.as_ref(), src_path.as_ref())
-    }
-
-    /// Finish writing this archive, emitting the termination sections.
-    ///
-    /// This function is required to be called to complete the archive, it will
-    /// be invalid if this is not called.
-    pub fn finish(&self) -> io::Result<()> {
-        let me: &Archive<Write> = self;
-        me._finish()
-    }
-}
-
-impl<'a> Archive<Write + 'a> {
-    fn _append(&self, header: &Header, mut data: &mut Read) -> io::Result<()> {
-        let mut obj = self.inner.obj.borrow_mut();
-        try!(obj.write_all(header.as_bytes()));
-        let len = try!(io::copy(&mut data, &mut &mut **obj));
-
-        // Pad with zeros if necessary.
-        let buf = [0; 512];
-        let remaining = 512 - (len % 512);
-        if remaining < 512 {
-            try!(obj.write_all(&buf[..remaining as usize]));
-        }
-
-        Ok(())
-    }
-
-    fn _append_path(&self, path: &Path) -> io::Result<()> {
-        let stat = try!(fs::metadata(path));
-        if stat.is_file() {
-            self.append_fs(path, &stat, &mut try!(fs::File::open(path)))
-        } else if stat.is_dir() {
-            self.append_fs(path, &stat, &mut io::empty())
-        } else {
-            Err(other("path has unknown file type"))
-        }
-    }
-
-    fn _append_file(&self, path: &Path, file: &mut fs::File) -> io::Result<()> {
-        let stat = try!(file.metadata());
-        self.append_fs(path, &stat, file)
-    }
-
-    fn _append_dir(&self, path: &Path, src_path: &Path) -> io::Result<()> {
-        let stat = try!(fs::metadata(src_path));
-        self.append_fs(path, &stat, &mut io::empty())
-    }
-
-    fn append_fs(&self,
-                 path: &Path,
-                 meta: &fs::Metadata,
-                 read: &mut Read) -> io::Result<()> {
-        let mut header = Header::new();
-
-        // Try to encode the path directly in the header, but if it ends up not
-        // working (e.g. it's too long) then use the GNU-specific long name
-        // extension by emitting an entry which indicates that it's the filename
-        if let Err(e) = header.set_path(path) {
-            let data = try!(path2bytes(&path));
-            let max = header.as_old().name.len();
-            if data.len() < max {
-                return Err(e)
-            }
-            let mut header2 = Header::new();
-            try!(header2.set_path("././@LongLink"));
-            header2.set_size(data.len() as u64);
-            header2.set_entry_type(EntryType::new(b'L'));
-            header2.set_cksum();
-            let mut data2 = data;
-            try!(self._append(&header2, &mut data2));
-            // Truncate the path to store in the header we're about to emit to
-            // ensure we've got something at least mentioned.
-            let path = try!(bytes2path(Cow::Borrowed(&data[..max])));
-            try!(header.set_path(&path));
-        }
-
-        header.set_metadata(meta);
-        header.set_cksum();
-        self._append(&header, read)
-    }
-
-    fn _finish(&self) -> io::Result<()> {
-        let b = [0; 1024];
-        self.inner.obj.borrow_mut().write_all(&b)
     }
 }
 

@@ -16,7 +16,7 @@ use other;
 /// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader and Seek
 /// traits. An entry cannot be rewritten once inserted into an archive.
-pub struct Entry<'a, R: 'a> {
+pub struct Entry<'a, R: 'a + Read> {
     fields: EntryFields<'a>,
     _ignored: marker::PhantomData<&'a Archive<R>>,
 }
@@ -34,7 +34,9 @@ impl<'a, R: Read> Entry<'a, R> {
     /// Returns access to the header of this entry in the archive.
     ///
     /// This provides access to the the metadata for this entry in the archive.
-    pub fn header(&self) -> &Header { &self.fields.header }
+    pub fn header(&self) -> &Header {
+        &self.fields.header
+    }
 
     /// Writes this file to the specified location.
     ///
@@ -77,7 +79,7 @@ impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
 }
 
 impl<'a> EntryFields<'a> {
-    pub fn into_entry<R>(self) -> Entry<'a, R> {
+    pub fn into_entry<R: Read>(self) -> Entry<'a, R> {
         Entry {
             fields: self,
             _ignored: marker::PhantomData,
