@@ -216,7 +216,7 @@ impl<'a> EntriesFields<'a> {
         let delta = self.next - self.archive.inner.pos.get();
         try!(self.archive.skip(delta));
 
-        let mut header = Header::new();
+        let mut header = Header::new_old();
         try!(read_all(&mut &self.archive.inner, header.as_mut_bytes()));
         self.next += 512;
 

@@ -40,7 +40,7 @@ fn simple() {
 #[test]
 fn header_impls() {
     let mut ar = Archive::new(Cursor::new(tar!("simple.tar")));
-    let hn = Header::new();
+    let hn = Header::new_old();
     let hnb = hn.as_bytes();
     for file in t!(ar.entries()) {
         let file = t!(file);
@@ -106,8 +106,7 @@ fn large_filename() {
     t!(t!(File::create(&path)).write_all(b"test"));
 
     let filename = repeat("abcd/").take(50).collect::<String>();
-    let mut header = Header::new();
-    header.set_ustar();
+    let mut header = Header::new_ustar();
     header.set_path(&filename).unwrap();
     header.set_metadata(&t!(fs::metadata(&path)));
     header.set_cksum();
@@ -214,7 +213,7 @@ fn handling_incorrect_file_size() {
     let path = td.path().join("tmpfile");
     t!(File::create(&path));
     let mut file = t!(File::open(&path));
-    let mut header = Header::new();
+    let mut header = Header::new_old();
     t!(header.set_path("somepath"));
     header.set_metadata(&t!(file.metadata()));
     header.set_size(2048); // past the end of file null blocks
@@ -391,7 +390,7 @@ fn backslash_same_as_slash() {
 
     // Unpack an archive with a backslash in the name
     let mut ar = Builder::new(Vec::<u8>::new());
-    let mut header = Header::new();
+    let mut header = Header::new_gnu();
     header.set_metadata(&t!(fs::metadata(td.path())));
     header.set_size(0);
     for (a, b) in header.as_old_mut().name.iter_mut().zip(b"foo\\bar\x00") {

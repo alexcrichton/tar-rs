@@ -101,13 +101,46 @@ pub struct GnuSparseHeader {
 }
 
 impl Header {
-    /// Creates a new blank ustar header ready to be filled in.
+    /// Creates a new blank GNU header.
     ///
-    /// Note that the returned header is by default in the GNU format.
-    pub fn new() -> Header {
+    /// The GNU style header is the default for this library and allows various
+    /// extensions such as long path names, long link names, and setting the
+    /// atime/ctime metadata attributes of files.
+    pub fn new_gnu() -> Header {
         let mut header = Header { bytes: [0; 512] };
-        header.set_gnu();
+        {
+            let gnu = header.cast_mut::<GnuHeader>();
+            gnu.magic = *b"ustar ";
+            gnu.version = *b" \0";
+        }
         return header
+    }
+
+    /// Creates a new blank UStar header.
+    ///
+    /// The UStar style header is an extension of the original archive header
+    /// which enables some extra metadata along with storing a longer (but not
+    /// too long) path name.
+    ///
+    /// UStar is also the basis used for pax archives.
+    pub fn new_ustar() -> Header {
+        let mut header = Header { bytes: [0; 512] };
+        {
+            let gnu = header.cast_mut::<UstarHeader>();
+            gnu.magic = *b"ustar\0";
+            gnu.version = *b"00";
+        }
+        return header
+    }
+
+    /// Creates a new blank old header.
+    ///
+    /// This header format is the original archive header format which all other
+    /// versions are compatible with (e.g. they are a superset). This header
+    /// format limits the path name limit and isn't able to contain extra
+    /// metadata like atime/ctime.
+    pub fn new_old() -> Header {
+        Header { bytes: [0; 512] }
     }
 
     fn cast<T>(&self) -> &T {
@@ -143,17 +176,6 @@ impl Header {
         self.cast_mut()
     }
 
-    /// Flags this header as an "old header"
-    ///
-    /// Note that this is a destructive operation and may corrupt fields that
-    /// have been previously set. It is recommended to call this operation
-    /// **first** when creating new headers.
-    pub fn set_old(&mut self) {
-        for slot in self.as_old_mut().pad.iter_mut() {
-            *slot = 0;
-        }
-    }
-
     /// View this archive header as a raw UStar archive header.
     ///
     /// The UStar format is an extension to the tar archive format which enables
@@ -172,17 +194,6 @@ impl Header {
         if self.is_ustar() {Some(self.cast_mut())} else {None}
     }
 
-    /// Flags this header as a UStar archive header.
-    ///
-    /// Note that this is a destructive operation and may corrupt fields that
-    /// have been previously set. It is recommended to call this operation
-    /// **first** when creating new headers.
-    pub fn set_ustar(&mut self) {
-        let ustar = self.cast_mut::<UstarHeader>();
-        ustar.magic = *b"ustar\0";
-        ustar.version = *b"00";
-    }
-
     /// View this archive header as a raw GNU archive header.
     ///
     /// The GNU format is an extension to the tar archive format which enables
@@ -199,17 +210,6 @@ impl Header {
     /// Same as `as_gnu`, but the mutable version.
     pub fn as_gnu_mut(&mut self) -> Option<&mut GnuHeader> {
         if self.is_gnu() {Some(self.cast_mut())} else {None}
-    }
-
-    /// Flags this header as a GNU archive header.
-    ///
-    /// Note that this is a destructive operation and may corrupt fields that
-    /// have been previously set. It is recommended to call this operation
-    /// **first** when creating new headers.
-    pub fn set_gnu(&mut self) {
-        let ustar = self.cast_mut::<GnuHeader>();
-        ustar.magic = *b"ustar ";
-        ustar.version = *b" \0";
     }
 
     /// Returns a view into this header as a byte array.

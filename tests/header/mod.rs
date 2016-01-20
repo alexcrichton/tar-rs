@@ -4,7 +4,7 @@ use tar::Header;
 
 #[test]
 fn default_gnu() {
-    let mut h = Header::new();
+    let mut h = Header::new_gnu();
     assert!(h.as_gnu().is_some());
     assert!(h.as_gnu_mut().is_some());
     assert!(h.as_ustar().is_none());
@@ -13,8 +13,7 @@ fn default_gnu() {
 
 #[test]
 fn goto_old() {
-    let mut h = Header::new();
-    h.set_old();
+    let mut h = Header::new_old();
     assert!(h.as_gnu().is_none());
     assert!(h.as_gnu_mut().is_none());
     assert!(h.as_ustar().is_none());
@@ -23,8 +22,7 @@ fn goto_old() {
 
 #[test]
 fn goto_ustar() {
-    let mut h = Header::new();
-    h.set_ustar();
+    let mut h = Header::new_ustar();
     assert!(h.as_gnu().is_none());
     assert!(h.as_gnu_mut().is_none());
     assert!(h.as_ustar().is_some());
@@ -33,7 +31,7 @@ fn goto_ustar() {
 
 #[test]
 fn link_name() {
-    let mut h = Header::new();
+    let mut h = Header::new_gnu();
     t!(h.set_link_name("foo"));
     assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo"));
     t!(h.set_link_name("foo/bar"));
@@ -52,19 +50,19 @@ fn link_name() {
 
 #[test]
 fn user_and_group_name() {
-    let mut h = Header::new();
+    let mut h = Header::new_gnu();
     t!(h.set_username("foo"));
     t!(h.set_groupname("bar"));
     assert_eq!(t!(h.username()), Some("foo"));
     assert_eq!(t!(h.groupname()), Some("bar"));
 
-    h.set_ustar();
+    h = Header::new_ustar();
     t!(h.set_username("foo"));
     t!(h.set_groupname("bar"));
     assert_eq!(t!(h.username()), Some("foo"));
     assert_eq!(t!(h.groupname()), Some("bar"));
 
-    h.set_old();
+    h = Header::new_old();
     assert_eq!(t!(h.username()), None);
     assert_eq!(t!(h.groupname()), None);
     assert!(h.set_username("foo").is_err());
@@ -73,13 +71,13 @@ fn user_and_group_name() {
 
 #[test]
 fn dev_major_minor() {
-    let mut h = Header::new();
+    let mut h = Header::new_gnu();
     t!(h.set_device_major(1));
     t!(h.set_device_minor(2));
     assert_eq!(t!(h.device_major()), Some(1));
     assert_eq!(t!(h.device_minor()), Some(2));
 
-    h.set_ustar();
+    h = Header::new_ustar();
     t!(h.set_device_major(1));
     t!(h.set_device_minor(2));
     assert_eq!(t!(h.device_major()), Some(1));
@@ -95,7 +93,7 @@ fn dev_major_minor() {
     assert!(h.device_major().is_err());
     assert!(h.device_minor().is_err());
 
-    h.set_old();
+    h = Header::new_old();
     assert_eq!(t!(h.device_major()), None);
     assert_eq!(t!(h.device_minor()), None);
     assert!(h.set_device_major(1).is_err());
@@ -104,7 +102,7 @@ fn dev_major_minor() {
 
 #[test]
 fn set_path() {
-    let mut h = Header::new();
+    let mut h = Header::new_gnu();
     t!(h.set_path("foo"));
     assert_eq!(t!(h.path()).to_str(), Some("foo"));
     t!(h.set_path("foo/bar"));
@@ -126,7 +124,7 @@ fn set_path() {
     assert!(h.set_path(&medium2).is_err());
     assert!(h.set_path("\0").is_err());
 
-    h.set_ustar();
+    h = Header::new_ustar();
     t!(h.set_path("foo"));
     assert_eq!(t!(h.path()).to_str(), Some("foo"));
 

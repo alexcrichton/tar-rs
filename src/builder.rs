@@ -67,7 +67,7 @@ impl<W: Write> Builder<W> {
     /// ```
     /// use tar::{Builder, Header};
     ///
-    /// let mut header = Header::new();
+    /// let mut header = Header::new_gnu();
     /// header.set_path("foo");
     /// header.set_size(4);
     /// header.set_cksum();
@@ -231,7 +231,7 @@ fn append_fs(dst: &mut Write,
              path: &Path,
              meta: &fs::Metadata,
              read: &mut Read) -> io::Result<()> {
-    let mut header = Header::new();
+    let mut header = Header::new_gnu();
 
     // Try to encode the path directly in the header, but if it ends up not
     // working (e.g. it's too long) then use the GNU-specific long name
@@ -242,7 +242,7 @@ fn append_fs(dst: &mut Write,
         if data.len() < max {
             return Err(e)
         }
-        let mut header2 = Header::new();
+        let mut header2 = Header::new_gnu();
         try!(header2.set_path("././@LongLink"));
         header2.set_size(data.len() as u64);
         header2.set_entry_type(EntryType::new(b'L'));
