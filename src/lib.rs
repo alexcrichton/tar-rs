@@ -31,7 +31,7 @@ use std::ops::{Deref, DerefMut};
 pub use header::{Header, UstarHeader, GnuHeader, GnuSparseHeader};
 pub use entry_type::EntryType;
 pub use entry::Entry;
-pub use archive::{Archive, Entries, EntriesMut};
+pub use archive::{Archive, Entries};
 pub use builder::Builder;
 
 mod archive;

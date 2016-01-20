@@ -26,7 +26,7 @@ use tar::Archive;
 
 fn main() {
     let file = File::open("foo.tar").unwrap();
-    let a = Archive::new(file);
+    let mut a = Archive::new(file);
 
     for file in a.entries().unwrap() {
         // Make sure there wasn't an I/O error
@@ -55,15 +55,14 @@ extern crate tar;
 
 use std::io::prelude::*;
 use std::fs::File;
-use tar::Archive;
+use tar::Builder;
 
 fn main() {
     let file = File::create("foo.tar").unwrap();
-    let a = Archive::new(file);
+    let a = Builder::new(file);
 
     a.append_path("file1.txt");
     a.append_file("file2.txt", &mut File::open("file3.txt").unwrap());
-    a.finish();
 }
 ```
 

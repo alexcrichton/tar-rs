@@ -218,7 +218,7 @@ impl Header {
     }
 
     /// Returns a view into this header as a byte array.
-    pub fn as_bytes_mut(&mut self) -> &mut [u8; 512] {
+    pub fn as_mut_bytes(&mut self) -> &mut [u8; 512] {
         &mut self.bytes
     }
 

@@ -1,21 +1,21 @@
-use std::cmp;
 use std::fs;
 use std::io::prelude::*;
-use std::io::{self, SeekFrom};
+use std::io;
 use std::marker;
 use std::path::Path;
 
 use filetime::{self, FileTime};
 
-use error::TarError;
 use {Header, Archive};
+use archive::ArchiveInner;
+use error::TarError;
 use other;
 
 /// A read-only view into an entry of an archive.
 ///
 /// This structure is a window into a portion of a borrowed archive which can
-/// be inspected. It acts as a file handle by implementing the Reader and Seek
-/// traits. An entry cannot be rewritten once inserted into an archive.
+/// be inspected. It acts as a file handle by implementing the Reader trait. An
+/// entry cannot be rewritten once inserted into an archive.
 pub struct Entry<'a, R: 'a + Read> {
     fields: EntryFields<'a>,
     _ignored: marker::PhantomData<&'a Archive<R>>,
@@ -25,9 +25,8 @@ pub struct Entry<'a, R: 'a + Read> {
 // and also all-public to be constructed from other modules.
 pub struct EntryFields<'a> {
     pub header: Header,
-    pub pos: u64,
     pub size: u64,
-    pub read_at: Box<Fn(u64, &mut [u8]) -> io::Result<usize> + 'a>,
+    pub data: io::Take<&'a ArchiveInner<Read + 'a>>,
 }
 
 impl<'a, R: Read> Entry<'a, R> {
@@ -54,9 +53,9 @@ impl<'a, R: Read> Entry<'a, R> {
     /// use std::fs::File;
     /// use tar::Archive;
     ///
-    /// let ar = Archive::new(File::open("foo.tar").unwrap());
+    /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
     ///
-    /// for (i, file) in ar.files().unwrap().enumerate() {
+    /// for (i, file) in ar.entries().unwrap().enumerate() {
     ///     let mut file = file.unwrap();
     ///     file.unpack(format!("file-{}", i)).unwrap();
     /// }
@@ -69,12 +68,6 @@ impl<'a, R: Read> Entry<'a, R> {
 impl<'a, R: Read> Read for Entry<'a, R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         self.fields.read(into)
-    }
-}
-
-impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
-    fn seek(&mut self, how: SeekFrom) -> io::Result<u64> {
-        self.fields._seek(how)
     }
 }
 
@@ -164,32 +157,10 @@ impl<'a> EntryFields<'a> {
             fs::set_permissions(dst, perm)
         }
     }
-
-    fn _seek(&mut self, how: SeekFrom) -> io::Result<u64> {
-        let next = match how {
-            SeekFrom::Start(pos) => pos as i64,
-            SeekFrom::Current(pos) => self.pos as i64 + pos,
-            SeekFrom::End(pos) => self.size as i64 + pos,
-        };
-        if next < 0 {
-            Err(other("cannot seek before position 0"))
-        } else if next as u64 > self.size {
-            Err(other("cannot seek past end of file"))
-        } else {
-            self.pos = next as u64;
-            Ok(self.pos)
-        }
-    }
 }
 
 impl<'a> Read for EntryFields<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        if self.size == self.pos {
-            return Ok(0)
-        }
-        let amt = cmp::min((self.size - self.pos) as usize, into.len());
-        let amt = try!((self.read_at)(self.pos, &mut into[..amt]));
-        self.pos += amt as u64;
-        Ok(amt)
+        self.data.read(into)
     }
 }
