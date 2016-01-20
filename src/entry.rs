@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp;
 use std::fs;
 use std::io::prelude::*;
 use std::io;
@@ -7,11 +8,12 @@ use std::path::Path;
 
 use filetime::{self, FileTime};
 
-use {Header, Archive};
+use {Header, Archive, PaxExtensions};
 use archive::ArchiveInner;
 use error::TarError;
 use header::{deslash, bytes2path};
 use other;
+use pax::pax_extensions;
 
 /// A read-only view into an entry of an archive.
 ///
@@ -28,6 +30,7 @@ pub struct Entry<'a, R: 'a + Read> {
 pub struct EntryFields<'a> {
     pub long_pathname: Option<Vec<u8>>,
     pub long_linkname: Option<Vec<u8>>,
+    pub pax_extensions: Option<Vec<u8>>,
     pub header: Header,
     pub size: u64,
     pub data: io::Take<&'a ArchiveInner<Read + 'a>>,
@@ -86,6 +89,28 @@ impl<'a, R: Read> Entry<'a, R> {
         self.fields.link_name_bytes()
     }
 
+    /// Returns an iterator over the pax extensions contained in this entry.
+    ///
+    /// Pax extensions are a form of archive where extra metadata is stored in
+    /// key/value pairs in entries before the entry they're intended to
+    /// describe. For example this can be used to describe long file name or
+    /// other metadata like atime/ctime/mtime in more precision.
+    ///
+    /// The returned iterator will yield key/value pairs for each extension.
+    ///
+    /// `None` will be returned if this entry does not indicate that it itself
+    /// contains extensions, or if there were no previous extensions describing
+    /// it.
+    ///
+    /// Note that global pax extensions are intended to be applied to all
+    /// archive entries.
+    ///
+    /// Also note that this function will read the entire entry if the entry
+    /// itself is a list of extensions.
+    pub fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions>> {
+        self.fields.pax_extensions()
+    }
+
     /// Returns access to the header of this entry in the archive.
     ///
     /// This provides access to the the metadata for this entry in the archive.
@@ -117,7 +142,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.fields._unpack(dst.as_ref())
+        self.fields.unpack(dst.as_ref())
     }
 }
 
@@ -137,6 +162,13 @@ impl<'a> EntryFields<'a> {
             fields: self,
             _ignored: marker::PhantomData,
         }
+    }
+
+    pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
+        // Preallocate some data but don't let ourselves get too crazy now.
+        let cap = cmp::min(self.size, 128 * 1024);
+        let mut v = Vec::with_capacity(cap as usize);
+        self.read_to_end(&mut v).map(|_| v)
     }
 
     fn path(&self) -> io::Result<Cow<Path>> {
@@ -164,7 +196,19 @@ impl<'a> EntryFields<'a> {
         }
     }
 
-    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+    fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions>> {
+        if self.pax_extensions.is_none() {
+            if !self.header.entry_type().is_pax_global_extensions() &&
+               !self.header.entry_type().is_pax_local_extensions() {
+                return Ok(None)
+            }
+            self.pax_extensions = Some(try!(self.read_all()));
+        }
+        Ok(Some(pax_extensions(self.pax_extensions.as_ref().unwrap())))
+    }
+
+    /// Returns access to the header of this entry in the archive.
+    fn unpack(&mut self, dst: &Path) -> io::Result<()> {
         let kind = self.header.entry_type();
         if kind.is_dir() {
             // If the directory already exists just let it slide

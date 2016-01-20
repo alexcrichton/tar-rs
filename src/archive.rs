@@ -252,6 +252,7 @@ impl<'a> EntriesFields<'a> {
             data: (&self.archive.inner).take(size),
             long_pathname: None,
             long_linkname: None,
+            pax_extensions: None,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
@@ -269,11 +270,12 @@ impl<'a> EntriesFields<'a> {
 
         let mut gnu_longname = None;
         let mut gnu_longlink = None;
+        let mut pax_extensions = None;
         let mut processed = 0;
 
         loop {
             processed += 1;
-            let mut entry = match try!(self.next_entry_raw()) {
+            let entry = match try!(self.next_entry_raw()) {
                 Some(entry) => entry,
                 None if processed > 1 => {
                     return Err(other("members found describing a future member \
@@ -288,9 +290,7 @@ impl<'a> EntriesFields<'a> {
                     return Err(other("two long name entries describing \
                                       the same member"))
                 }
-                let mut name = Vec::new();
-                try!(entry.read_to_end(&mut name));
-                gnu_longname = Some(name);
+                gnu_longname = Some(try!(EntryFields::from(entry).read_all()));
                 continue
             }
 
@@ -300,15 +300,24 @@ impl<'a> EntriesFields<'a> {
                     return Err(other("two long name entries describing \
                                       the same member"))
                 }
-                let mut name = Vec::new();
-                try!(entry.read_to_end(&mut name));
-                gnu_longlink = Some(name);
+                gnu_longlink = Some(try!(EntryFields::from(entry).read_all()));
+                continue
+            }
+
+            if entry.header().as_ustar().is_some() &&
+               entry.header().entry_type().is_pax_local_extensions() {
+                if pax_extensions.is_some() {
+                    return Err(other("two pax extensions entries describing \
+                                      the same member"))
+                }
+                pax_extensions = Some(try!(EntryFields::from(entry).read_all()));
                 continue
             }
 
             let mut fields = EntryFields::from(entry);
             fields.long_pathname = gnu_longname;
             fields.long_linkname = gnu_longlink;
+            fields.pax_extensions = pax_extensions;
             return Ok(Some(fields.into_entry()))
         }
     }

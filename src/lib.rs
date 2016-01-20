@@ -33,6 +33,7 @@ pub use entry_type::EntryType;
 pub use entry::Entry;
 pub use archive::{Archive, Entries};
 pub use builder::Builder;
+pub use pax::{PaxExtensions, PaxExtension};
 
 mod archive;
 mod builder;
@@ -40,6 +41,7 @@ mod entry;
 mod entry_type;
 mod error;
 mod header;
+mod pax;
 
 // FIXME(rust-lang/rust#26403):
 //      Right now there's a bug when a DST struct's last field has more

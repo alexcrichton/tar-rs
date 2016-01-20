@@ -446,3 +446,23 @@ fn unpack_links() {
                Path::new("file"));
     t!(File::open(td.path().join("lnk")));
 }
+
+#[test]
+fn pax_simple() {
+    let mut ar = Archive::new(tar!("pax.tar"));
+    let mut entries = t!(ar.entries());
+
+    let mut first = t!(entries.next().unwrap());
+    let mut attributes = t!(first.pax_extensions()).unwrap();
+    let first = t!(attributes.next().unwrap());
+    let second = t!(attributes.next().unwrap());
+    let third = t!(attributes.next().unwrap());
+    assert!(attributes.next().is_none());
+
+    assert_eq!(first.key(), Ok("mtime"));
+    assert_eq!(first.value(), Ok("1453146164.953123768"));
+    assert_eq!(second.key(), Ok("atime"));
+    assert_eq!(second.value(), Ok("1453251915.24892486"));
+    assert_eq!(third.key(), Ok("ctime"));
+    assert_eq!(third.value(), Ok("1453146164.953123768"));
+}
