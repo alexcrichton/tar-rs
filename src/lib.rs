@@ -33,14 +33,12 @@ pub use entry_type::EntryType;
 pub use entry::Entry;
 pub use archive::{Archive, Entries, EntriesMut};
 pub use builder::Builder;
-pub use gnu::{GnuEntries, GnuEntry};
 
 mod archive;
 mod builder;
 mod entry;
 mod entry_type;
 mod error;
-mod gnu;
 mod header;
 
 // FIXME(rust-lang/rust#26403):
