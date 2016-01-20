@@ -20,7 +20,6 @@ tar = "0.3"
 extern crate tar;
 
 use std::io::prelude::*;
-use std::io::SeekFrom;
 use std::fs::File;
 use tar::Archive;
 
@@ -40,9 +39,6 @@ fn main() {
         let mut s = String::new();
         file.read_to_string(&mut s).unwrap();
         println!("{}", s);
-
-        // files also implement the Seek trait
-        file.seek(SeekFrom::Current(0)).unwrap();
     }
 }
 
@@ -59,7 +55,7 @@ use tar::Builder;
 
 fn main() {
     let file = File::create("foo.tar").unwrap();
-    let a = Builder::new(file);
+    let mut a = Builder::new(file);
 
     a.append_path("file1.txt");
     a.append_file("file2.txt", &mut File::open("file3.txt").unwrap());
