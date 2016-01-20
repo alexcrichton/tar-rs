@@ -194,11 +194,21 @@ impl<'a> EntryFields<'a> {
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::unix::fs::symlink(src, dst)
             }
-        } else if !kind.is_file() {
-            // Right now we can only otherwise handle regular files
-            return Err(other(&format!("unknown file type 0x{:x}",
-                                      kind.as_byte())))
+        } else if kind.is_pax_global_extensions() ||
+                  kind.is_pax_local_extensions() ||
+                  kind.is_gnu_longname() ||
+                  kind.is_gnu_longlink() {
+            return Ok(())
         };
+
+        // Note the lack of `else` clause above. According to the FreeBSD
+        // documentation:
+        //
+        // > A POSIX-compliant implementation must treat any unrecognized
+        // > typeflag value as a regular file.
+        //
+        // As a result if we don't recognize the kind we just write out the file
+        // as we would normally.
 
         try!(fs::File::create(dst).and_then(|mut f| {
             if try!(io::copy(self, &mut f)) != self.size {
