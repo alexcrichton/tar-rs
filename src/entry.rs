@@ -174,7 +174,7 @@ impl<'a> EntryFields<'a> {
             }
             return fs::create_dir(&dst)
         } else if kind.is_hard_link() || kind.is_symlink() {
-            let src = match try!(self.header.link_name()) {
+            let src = match try!(self.link_name()) {
                 Some(name) => name,
                 None => return Err(other("hard link listed but no link \
                                           name found"))

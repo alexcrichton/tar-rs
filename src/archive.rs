@@ -127,7 +127,7 @@ impl<'a> Archive<Read + 'a> {
 
             let mut file_dst = dst.to_path_buf();
             {
-                let path = try!(file.header().path().map_err(|e| {
+                let path = try!(file.path().map_err(|e| {
                     TarError::new("invalid path in entry header", e)
                 }));
                 for part in path.components() {
