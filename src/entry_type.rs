@@ -106,4 +106,9 @@ impl EntryType {
     pub fn is_gnu_longname(&self) -> bool {
         self.byte == b'L'
     }
+
+    /// Returns whether this type represents a GNU long link header.
+    pub fn is_gnu_longlink(&self) -> bool {
+        self.byte == b'K'
+    }
 }

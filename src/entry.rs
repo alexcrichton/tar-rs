@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fs;
 use std::io::prelude::*;
 use std::io;
@@ -9,6 +10,7 @@ use filetime::{self, FileTime};
 use {Header, Archive};
 use archive::ArchiveInner;
 use error::TarError;
+use header::{deslash, bytes2path};
 use other;
 
 /// A read-only view into an entry of an archive.
@@ -24,12 +26,66 @@ pub struct Entry<'a, R: 'a + Read> {
 // private implementation detail of `Entry`, but concrete (no type parameters)
 // and also all-public to be constructed from other modules.
 pub struct EntryFields<'a> {
+    pub long_pathname: Option<Vec<u8>>,
+    pub long_linkname: Option<Vec<u8>>,
     pub header: Header,
     pub size: u64,
     pub data: io::Take<&'a ArchiveInner<Read + 'a>>,
 }
 
 impl<'a, R: Read> Entry<'a, R> {
+    /// Returns the path name for this entry.
+    ///
+    /// This method may fail if the pathname is not valid unicode and this is
+    /// called on a Windows platform.
+    ///
+    /// Note that this function will convert any `\` characters to directory
+    /// separators, and it will not always return the same value as
+    /// `self.header().path()` as some archive formats have support for longer
+    /// path names described in separate entries.
+    ///
+    /// It is recommended to use this method instead of inspecting the `header`
+    /// directly to ensure that various archive formats are handled correctly.
+    pub fn path(&self) -> io::Result<Cow<Path>> {
+        self.fields.path()
+    }
+
+    /// Returns the raw bytes listed for this entry.
+    ///
+    /// Note that this function will convert any `\` characters to directory
+    /// separators, and it will not always return the same value as
+    /// `self.header().path_bytes()` as some archive formats have support for
+    /// longer path names described in separate entries.
+    pub fn path_bytes(&self) -> Cow<[u8]> {
+        self.fields.path_bytes()
+    }
+
+    /// Returns the link name for this entry, if any is found.
+    ///
+    /// This method may fail if the pathname is not valid unicode and this is
+    /// called on a Windows platform. `Ok(None)` being returned, however,
+    /// indicates that the link name was not present.
+    ///
+    /// Note that this function will convert any `\` characters to directory
+    /// separators, and it will not always return the same value as
+    /// `self.header().link_name()` as some archive formats have support for
+    /// longer path names described in separate entries.
+    ///
+    /// It is recommended to use this method instead of inspecting the `header`
+    /// directly to ensure that various archive formats are handled correctly.
+    pub fn link_name(&self) -> io::Result<Option<Cow<Path>>> {
+        self.fields.link_name()
+    }
+
+    /// Returns the link name for this entry, in bytes, if listed.
+    ///
+    /// Note that this will not always return the same value as
+    /// `self.header().link_name_bytes()` as some archive formats have support for
+    /// longer path names described in separate entries.
+    pub fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
+        self.fields.link_name_bytes()
+    }
+
     /// Returns access to the header of this entry in the archive.
     ///
     /// This provides access to the the metadata for this entry in the archive.
@@ -72,10 +128,39 @@ impl<'a, R: Read> Read for Entry<'a, R> {
 }
 
 impl<'a> EntryFields<'a> {
+    pub fn from<R: Read>(entry: Entry<R>) -> EntryFields {
+        entry.fields
+    }
+
     pub fn into_entry<R: Read>(self) -> Entry<'a, R> {
         Entry {
             fields: self,
             _ignored: marker::PhantomData,
+        }
+    }
+
+    fn path(&self) -> io::Result<Cow<Path>> {
+        bytes2path(self.path_bytes())
+    }
+
+    fn path_bytes(&self) -> Cow<[u8]> {
+        match self.long_pathname {
+            Some(ref bytes) => deslash(bytes),
+            None => self.header.path_bytes(),
+        }
+    }
+
+    fn link_name(&self) -> io::Result<Option<Cow<Path>>> {
+        match self.link_name_bytes() {
+            Some(bytes) => bytes2path(bytes).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
+        match self.long_linkname {
+            Some(ref bytes) => Some(deslash(bytes)),
+            None => self.header.link_name_bytes(),
         }
     }
 

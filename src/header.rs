@@ -785,7 +785,7 @@ impl GnuHeader {
     }
 }
 
-fn deslash(bytes: &[u8]) -> Cow<[u8]> {
+pub fn deslash(bytes: &[u8]) -> Cow<[u8]> {
     let bytes = truncate(bytes);
     if !bytes.contains(&b'\\') {
         Cow::Borrowed(bytes)

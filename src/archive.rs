@@ -11,13 +11,6 @@ use error::TarError;
 use other;
 use {Entry, Header};
 
-macro_rules! try_iter {
-    ($me:expr, $e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => { $me.done = true; return Some(Err(e)) }
-    })
-}
-
 /// A top-level representation of an archive file.
 ///
 /// This archive can have an entry added to it and it can be iterated over.
@@ -40,6 +33,7 @@ struct EntriesFields<'a> {
     archive: &'a Archive<Read + 'a>,
     next: u64,
     done: bool,
+    raw: bool,
 }
 
 impl<R: Read> Archive<R> {
@@ -106,6 +100,7 @@ impl<'a> Archive<Read + 'a> {
             archive: self,
             done: false,
             next: 0,
+            raw: false,
         })
     }
 
@@ -113,7 +108,7 @@ impl<'a> Archive<Read + 'a> {
         'outer: for entry in try!(self._entries()) {
             // TODO: although it may not be the case due to extended headers
             // and GNU extensions, assume each entry is a file for now.
-            let file = try!(entry.map_err(|e| {
+            let mut file = try!(entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
             }));
 
@@ -132,7 +127,7 @@ impl<'a> Archive<Read + 'a> {
 
             let mut file_dst = dst.to_path_buf();
             {
-                let path = try!(file.header.path().map_err(|e| {
+                let path = try!(file.header().path().map_err(|e| {
                     TarError::new("invalid path in entry header", e)
                 }));
                 for part in path.components() {
@@ -167,7 +162,7 @@ impl<'a> Archive<Read + 'a> {
                                            parent.display()), e)
                 }));
             }
-            try!(file.into_entry::<fs::File>().unpack(&file_dst).map_err(|e| {
+            try!(file.unpack(&file_dst).map_err(|e| {
                 TarError::new(&format!("failed to unpacked `{}`",
                                        file_dst.display()), e)
             }));
@@ -189,32 +184,40 @@ impl<'a> Archive<Read + 'a> {
     }
 }
 
+impl<'a, R: Read> Entries<'a, R> {
+    /// Indicates whether this iterator will return raw entries or not.
+    ///
+    /// If the raw list of entries are returned, then no preprocessing happens
+    /// on account of this library, for example taking into accout GNU long name
+    /// or long link archive members. Raw iteration is disabled by default.
+    pub fn raw(self, raw: bool) -> Entries<'a, R> {
+        Entries {
+            fields: EntriesFields {
+                raw: raw,
+                ..self.fields
+            },
+            _ignored: marker::PhantomData,
+        }
+    }
+}
 impl<'a, R: Read> Iterator for Entries<'a, R> {
     type Item = io::Result<Entry<'a, R>>;
 
     fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
         self.fields.next().map(|result| {
-            result.map(|fields| fields.into_entry())
+            result.map(|e| EntryFields::from(e).into_entry())
         })
     }
 }
 
-impl<'a> Iterator for EntriesFields<'a> {
-    type Item = io::Result<EntryFields<'a>>;
-
-    fn next(&mut self) -> Option<io::Result<EntryFields<'a>>> {
-        // If we hit a previous error, or we reached the end, we're done here
-        if self.done {
-            return None
-        }
-
+impl<'a> EntriesFields<'a> {
+    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
         // Seek to the start of the next header in the archive
         let delta = self.next - self.archive.inner.pos.get();
-        try_iter!(self, self.archive.skip(delta));
+        try!(self.archive.skip(delta));
 
         let mut header = Header::new();
-        try_iter!(self, read_all(&mut &self.archive.inner,
-                                 header.as_mut_bytes()));
+        try!(read_all(&mut &self.archive.inner, header.as_mut_bytes()));
         self.next += 512;
 
         // If we have an all 0 block, then this should be the start of the end
@@ -222,14 +225,14 @@ impl<'a> Iterator for EntriesFields<'a> {
         // the checksum), so if it's all zero it must be the first of the two
         // end blocks
         if header.as_bytes().iter().all(|i| *i == 0) {
-            try_iter!(self, read_all(&mut &self.archive.inner,
+            try!(read_all(&mut &self.archive.inner,
                                      header.as_mut_bytes()));
             self.next += 512;
             return if header.as_bytes().iter().all(|i| *i == 0) {
-                None
+                Ok(None)
             } else {
-                Some(Err(other("found block of 0s not followed by a second \
-                                block of 0s")))
+                Err(other("found block of 0s not followed by a second \
+                           block of 0s"))
             }
         }
 
@@ -237,16 +240,18 @@ impl<'a> Iterator for EntriesFields<'a> {
         let sum = header.as_bytes()[..148].iter()
                         .chain(&header.as_bytes()[156..])
                         .fold(0, |a, b| a + (*b as u32)) + 8 * 32;
-        let cksum = try_iter!(self, header.cksum());
+        let cksum = try!(header.cksum());
         if sum != cksum {
-            return Some(Err(other("archive header checksum mismatch")))
+            return Err(other("archive header checksum mismatch"))
         }
 
-        let size = try_iter!(self, header.size());
+        let size = try!(header.size());
         let ret = EntryFields {
             size: size,
             header: header,
             data: (&self.archive.inner).take(size),
+            long_pathname: None,
+            long_linkname: None,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
@@ -254,7 +259,77 @@ impl<'a> Iterator for EntriesFields<'a> {
         let size = (ret.size + 511) & !(512 - 1);
         self.next += size;
 
-        return Some(Ok(ret));
+        Ok(Some(ret.into_entry()))
+    }
+
+    fn next_entry(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
+        if self.raw {
+            return self.next_entry_raw()
+        }
+
+        let mut gnu_longname = None;
+        let mut gnu_longlink = None;
+        let mut processed = 0;
+
+        loop {
+            processed += 1;
+            let mut entry = match try!(self.next_entry_raw()) {
+                Some(entry) => entry,
+                None if processed > 1 => {
+                    return Err(other("members found describing a future member \
+                                      but no future member found"))
+                }
+                None => return Ok(None),
+            };
+
+            if entry.header().as_gnu().is_some() &&
+               entry.header().entry_type().is_gnu_longname() {
+                if gnu_longname.is_some() {
+                    return Err(other("two long name entries describing \
+                                      the same member"))
+                }
+                let mut name = Vec::new();
+                try!(entry.read_to_end(&mut name));
+                gnu_longname = Some(name);
+                continue
+            }
+
+            if entry.header().as_gnu().is_some() &&
+               entry.header().entry_type().is_gnu_longlink() {
+                if gnu_longlink.is_some() {
+                    return Err(other("two long name entries describing \
+                                      the same member"))
+                }
+                let mut name = Vec::new();
+                try!(entry.read_to_end(&mut name));
+                gnu_longlink = Some(name);
+                continue
+            }
+
+            let mut fields = EntryFields::from(entry);
+            fields.long_pathname = gnu_longname;
+            fields.long_linkname = gnu_longlink;
+            return Ok(Some(fields.into_entry()))
+        }
+    }
+}
+
+impl<'a> Iterator for EntriesFields<'a> {
+    type Item = io::Result<Entry<'a, io::Empty>>;
+
+    fn next(&mut self) -> Option<io::Result<Entry<'a, io::Empty>>> {
+        if self.done {
+            None
+        } else {
+            match self.next_entry() {
+                Ok(Some(e)) => Some(Ok(e)),
+                Ok(None) => {
+                    self.done = true;
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            }
+        }
     }
 }
 

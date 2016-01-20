@@ -115,25 +115,25 @@ fn large_filename() {
     let too_long = repeat("abcd").take(200).collect::<String>();
     t!(ar.append_file(&too_long, &mut t!(File::open(&path))));
 
-    // let rd = Cursor::new(t!(ar.into_inner()));
-    // let ar = Archive::new(rd);
-    // let mut entries = GnuEntries::new(t!(ar.entries()));
-    //
-    // let mut f = entries.next().unwrap().unwrap();
-    // assert_eq!(&*f.header().path_bytes(), filename.as_bytes());
-    // assert_eq!(f.header().size().unwrap(), 4);
-    // let mut s = String::new();
-    // t!(f.read_to_string(&mut s));
-    // assert_eq!(s, "test");
-    //
-    // let mut f = entries.next().unwrap().unwrap();
-    // assert_eq!(&*f.path_bytes(), too_long.as_bytes());
-    // assert_eq!(f.header().size().unwrap(), 4);
-    // let mut s = String::new();
-    // t!(f.read_to_string(&mut s));
-    // assert_eq!(s, "test");
-    //
-    // assert!(entries.next().is_none());
+    let rd = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rd);
+    let mut entries = t!(ar.entries());
+
+    let mut f = entries.next().unwrap().unwrap();
+    assert_eq!(&*f.header().path_bytes(), filename.as_bytes());
+    assert_eq!(f.header().size().unwrap(), 4);
+    let mut s = String::new();
+    t!(f.read_to_string(&mut s));
+    assert_eq!(s, "test");
+
+    let mut f = entries.next().unwrap().unwrap();
+    assert_eq!(&*f.path_bytes(), too_long.as_bytes());
+    assert_eq!(f.header().size().unwrap(), 4);
+    let mut s = String::new();
+    t!(f.read_to_string(&mut s));
+    assert_eq!(s, "test");
+
+    assert!(entries.next().is_none());
 }
 
 #[test]
