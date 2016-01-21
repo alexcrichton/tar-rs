@@ -101,4 +101,24 @@ impl EntryType {
     pub fn as_byte(&self) -> u8 {
         self.byte
     }
+
+    /// Returns whether this type represents a GNU long name header.
+    pub fn is_gnu_longname(&self) -> bool {
+        self.byte == b'L'
+    }
+
+    /// Returns whether this type represents a GNU long link header.
+    pub fn is_gnu_longlink(&self) -> bool {
+        self.byte == b'K'
+    }
+
+    /// Returns whether this type represents a GNU long name header.
+    pub fn is_pax_global_extensions(&self) -> bool {
+        self.byte == b'g'
+    }
+
+    /// Returns whether this type represents a GNU long link header.
+    pub fn is_pax_local_extensions(&self) -> bool {
+        self.byte == b'x'
+    }
 }
