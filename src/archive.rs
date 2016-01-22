@@ -336,7 +336,10 @@ impl<'a> Iterator for EntriesFields<'a> {
                     self.done = true;
                     None
                 }
-                Err(e) => Some(Err(e)),
+                Err(e) => {
+                    self.done = true;
+                    Some(Err(e))
+                }
             }
         }
     }
