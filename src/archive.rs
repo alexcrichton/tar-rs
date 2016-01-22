@@ -290,7 +290,8 @@ impl<'a> EntriesFields<'a> {
                     return Err(other("two long name entries describing \
                                       the same member"))
                 }
-                gnu_longname = Some(try!(EntryFields::from(entry).read_all()));
+                gnu_longname =
+                    Some(try!(EntryFields::from(entry).read_all_limited()));
                 continue
             }
 
@@ -300,7 +301,8 @@ impl<'a> EntriesFields<'a> {
                     return Err(other("two long name entries describing \
                                       the same member"))
                 }
-                gnu_longlink = Some(try!(EntryFields::from(entry).read_all()));
+                gnu_longlink =
+                    Some(try!(EntryFields::from(entry).read_all_limited()));
                 continue
             }
 
@@ -310,7 +312,8 @@ impl<'a> EntriesFields<'a> {
                     return Err(other("two pax extensions entries describing \
                                       the same member"))
                 }
-                pax_extensions = Some(try!(EntryFields::from(entry).read_all()));
+                pax_extensions =
+                    Some(try!(EntryFields::from(entry).read_all_limited()));
                 continue
             }
 
