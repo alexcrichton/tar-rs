@@ -72,7 +72,7 @@ impl<R: Read> Archive<R> {
     /// path name.
     ///
     /// This operation is relatively sensitive in that it will not write files
-    /// outside of the path specified by `into`. Files in the archive which have
+    /// outside of the path specified by `dst`. Files in the archive which have
     /// a '..' in their path are skipped during the unpacking process.
     ///
     /// # Examples
