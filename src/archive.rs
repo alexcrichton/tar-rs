@@ -106,8 +106,6 @@ impl<'a> Archive<Read + 'a> {
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
         'outer: for entry in try!(self._entries()) {
-            // TODO: although it may not be the case due to extended headers
-            // and GNU extensions, assume each entry is a file for now.
             let mut file = try!(entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
             }));
