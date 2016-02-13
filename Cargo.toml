@@ -20,7 +20,6 @@ contents are never required to be entirely resident in memory all at once.
 [dependencies]
 libc = "0.2"
 filetime = "0.1.5"
-winapi = "0.2"
 
 [dev-dependencies]
 tempdir = "0.3"

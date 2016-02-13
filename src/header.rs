@@ -594,9 +594,8 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_from(&mut self, meta: &fs::Metadata) {
-        use winapi;
-
-        let readonly = meta.file_attributes() & winapi::FILE_ATTRIBUTE_READONLY;
+        const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001
+        let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
 
         // There's no concept of a mode on windows, so do a best approximation
         // here.

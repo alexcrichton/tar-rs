@@ -22,7 +22,6 @@
 #![cfg_attr(test, deny(warnings))]
 
 extern crate libc;
-extern crate winapi;
 extern crate filetime;
 
 use std::io::{Error, ErrorKind};
