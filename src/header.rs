@@ -361,7 +361,7 @@ impl Header {
         self.set_gid(meta.gid() as u32);
 
         // TODO: need to bind more file types
-        self.set_entry_type(match meta.mode() & libc::S_IFMT {
+        self.set_entry_type(match (meta.mode() as libc::mode_t) & libc::S_IFMT {
             libc::S_IFREG => EntryType::file(),
             libc::S_IFLNK => EntryType::symlink(),
             libc::S_IFCHR => EntryType::character_special(),
