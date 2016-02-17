@@ -282,6 +282,7 @@ impl<'a> EntryFields<'a> {
         return Ok(());
 
         #[cfg(unix)]
+        #[allow(deprecated)] // raw deprecated in 1.8
         fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
             use std::os::unix::raw;
             use std::os::unix::prelude::*;
