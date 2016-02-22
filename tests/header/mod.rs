@@ -37,13 +37,17 @@ fn link_name() {
     t!(h.set_link_name("foo/bar"));
     assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/bar"));
     t!(h.set_link_name("foo\\ba"));
-    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/ba"));
+    if cfg!(windows) {
+        assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/ba"));
+    } else {
+        assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo\\ba"));
+    }
 
     let name = "foo\\bar\0";
     for (slot, val) in h.as_old_mut().linkname.iter_mut().zip(name.as_bytes()) {
         *slot = *val;
     }
-    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/bar"));
+    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo\\bar"));
 
     assert!(h.set_link_name("\0").is_err());
 }
@@ -105,15 +109,16 @@ fn set_path() {
     let mut h = Header::new_gnu();
     t!(h.set_path("foo"));
     assert_eq!(t!(h.path()).to_str(), Some("foo"));
+    t!(h.set_path("foo/"));
+    assert_eq!(t!(h.path()).to_str(), Some("foo/"));
     t!(h.set_path("foo/bar"));
     assert_eq!(t!(h.path()).to_str(), Some("foo/bar"));
     t!(h.set_path("foo\\bar"));
-    assert_eq!(t!(h.path()).to_str(), Some("foo/bar"));
-    let name = "foo\\bar\0";
-    for (slot, val) in h.as_old_mut().name.iter_mut().zip(name.as_bytes()) {
-        *slot = *val;
+    if cfg!(windows) {
+        assert_eq!(t!(h.path()).to_str(), Some("foo/bar"));
+    } else {
+        assert_eq!(t!(h.path()).to_str(), Some("foo\\bar"));
     }
-    assert_eq!(t!(h.path()).to_str(), Some("foo/bar"));
 
     let long_name = iter::repeat("foo").take(100).collect::<String>();
     let medium1 = iter::repeat("foo").take(52).collect::<String>();

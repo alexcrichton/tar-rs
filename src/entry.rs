@@ -11,7 +11,7 @@ use filetime::{self, FileTime};
 use {Header, Archive, PaxExtensions};
 use archive::ArchiveInner;
 use error::TarError;
-use header::{deslash, bytes2path};
+use header::bytes2path;
 use other;
 use pax::pax_extensions;
 
@@ -177,7 +177,7 @@ impl<'a> EntryFields<'a> {
 
     fn path_bytes(&self) -> Cow<[u8]> {
         match self.long_pathname {
-            Some(ref bytes) => deslash(bytes),
+            Some(ref bytes) => Cow::Borrowed(bytes),
             None => self.header.path_bytes(),
         }
     }
@@ -191,7 +191,7 @@ impl<'a> EntryFields<'a> {
 
     fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
         match self.long_linkname {
-            Some(ref bytes) => Some(deslash(bytes)),
+            Some(ref bytes) => Some(Cow::Borrowed(bytes)),
             None => self.header.link_name_bytes(),
         }
     }
