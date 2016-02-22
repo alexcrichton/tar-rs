@@ -2,10 +2,10 @@ extern crate filetime;
 extern crate tar;
 extern crate tempdir;
 
-use std::io::prelude::*;
-use std::io::{self, Cursor, SeekFrom};
-use std::iter::repeat;
 use std::fs::{self, File};
+use std::io::prelude::*;
+use std::io::{self, Cursor};
+use std::iter::repeat;
 use std::path::Path;
 
 use filetime::FileTime;
@@ -233,51 +233,42 @@ fn handling_incorrect_file_size() {
 
 #[test]
 fn extracting_malicious_tarball() {
-    use std::fs;
-    use std::fs::OpenOptions;
-    use std::io::{Seek, Write};
-
     let td = t!(TempDir::new("tar-rs"));
 
-    let mut evil_tar = Cursor::new(Vec::new());
+    let mut evil_tar = Vec::new();
 
     {
         let mut a = Builder::new(&mut evil_tar);
-        let mut evil_txt_f = t!(OpenOptions::new().read(true).write(true)
-                                            .create(true)
-                                            .open(td.path().join("evil.txt")));
-        t!(writeln!(evil_txt_f, "This is an evil file."));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("/tmp/abs_evil.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("//tmp/abs_evil2.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("///tmp/abs_evil3.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("/./tmp/abs_evil4.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("//./tmp/abs_evil5.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("///./tmp/abs_evil6.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("/../tmp/rel_evil.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("../rel_evil2.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("./../rel_evil3.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("some/../../rel_evil4.txt", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file("././//./", &mut evil_txt_f));
-        t!(evil_txt_f.seek(SeekFrom::Start(0)));
-        t!(a.append_file(".", &mut evil_txt_f));
-        t!(a.finish());
+        let mut append = |path: &str| {
+            let mut header = Header::new_gnu();
+            assert!(header.set_path(path).is_err(),
+                    "was ok: {:?}", path);
+            {
+                let mut h = header.as_gnu_mut().unwrap();
+                for (a, b) in h.name.iter_mut().zip(path.as_bytes()) {
+                    *a = *b;
+                }
+            }
+            header.set_size(1);
+            header.set_cksum();
+            t!(a.append(&header, io::repeat(1).take(1)));
+        };
+        append("/tmp/abs_evil.txt");
+        append("//tmp/abs_evil2.txt");
+        append("///tmp/abs_evil3.txt");
+        append("/./tmp/abs_evil4.txt");
+        append("//./tmp/abs_evil5.txt");
+        append("///./tmp/abs_evil6.txt");
+        append("/../tmp/rel_evil.txt");
+        append("../rel_evil2.txt");
+        append("./../rel_evil3.txt");
+        append("some/../../rel_evil4.txt");
+        append("");
+        append("././//./");
+        append(".");
     }
 
-    t!(evil_tar.seek(SeekFrom::Start(0)));
-    let mut ar = Archive::new(&mut evil_tar);
+    let mut ar = Archive::new(&evil_tar[..]);
     t!(ar.unpack(td.path()));
 
     assert!(fs::metadata("/tmp/abs_evil.txt").is_err());
@@ -340,12 +331,12 @@ fn extracting_malformed_tar_null_blocks() {
     let path2 = td.path().join("tmpfile2");
     t!(File::create(&path1));
     t!(File::create(&path2));
-    t!(ar.append_path(&path1));
+    t!(ar.append_file("tmpfile1", &mut t!(File::open(&path1))));
     let mut data = t!(ar.into_inner());
     let amt = data.len();
     data.truncate(amt - 512);
     let mut ar = Builder::new(data);
-    t!(ar.append_path(&path2));
+    t!(ar.append_file("tmpfile2", &mut t!(File::open(&path2))));
     t!(ar.finish());
 
     let data = t!(ar.into_inner());
@@ -379,14 +370,18 @@ fn file_times() {
 }
 
 #[test]
-fn backslash_same_as_slash() {
+fn backslash_treated_well() {
     // Insert a file into an archive with a backslash
     let td = t!(TempDir::new("tar-rs"));
     let mut ar = Builder::new(Vec::<u8>::new());
     t!(ar.append_dir("foo\\bar", td.path()));
     let mut ar = Archive::new(Cursor::new(t!(ar.into_inner())));
     let f = t!(t!(ar.entries()).next().unwrap());
-    assert_eq!(&*f.header().path().unwrap(), Path::new("foo/bar"));
+    if cfg!(unix) {
+        assert_eq!(t!(f.header().path()).to_str(), Some("foo\\bar"));
+    } else {
+        assert_eq!(t!(f.header().path()).to_str(), Some("foo/bar"));
+    }
 
     // Unpack an archive with a backslash in the name
     let mut ar = Builder::new(Vec::<u8>::new());
@@ -401,11 +396,11 @@ fn backslash_same_as_slash() {
     let data = t!(ar.into_inner());
     let mut ar = Archive::new(&data[..]);
     let f = t!(t!(ar.entries()).next().unwrap());
-    assert_eq!(&*f.header().path().unwrap(), Path::new("foo/bar"));
+    assert_eq!(t!(f.header().path()).to_str(), Some("foo\\bar"));
 
     let mut ar = Archive::new(&data[..]);
     t!(ar.unpack(td.path()));
-    assert!(fs::metadata(td.path().join("foo/bar")).is_ok());
+    assert!(fs::metadata(td.path().join("foo\\bar")).is_ok());
 }
 
 #[cfg(unix)]
