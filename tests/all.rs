@@ -10,7 +10,7 @@ use std::path::Path;
 
 use filetime::FileTime;
 use self::tempdir::TempDir;
-use tar::{Archive, Builder, Header};
+use tar::{Archive, Builder, Header, EntryType};
 
 macro_rules! t {
     ($e:expr) => (match $e {
@@ -459,4 +459,54 @@ fn pax_simple() {
     assert_eq!(second.value(), Ok("1453251915.24892486"));
     assert_eq!(third.key(), Ok("ctime"));
     assert_eq!(third.value(), Ok("1453146164.953123768"));
+}
+
+#[test]
+fn long_name_trailing_nul() {
+    let mut b = Builder::new(Vec::<u8>::new());
+
+    let mut h = Header::new_gnu();
+    t!(h.set_path("././@LongLink"));
+    h.set_size(4);
+    h.set_entry_type(EntryType::new(b'L'));
+    h.set_cksum();
+    t!(b.append(&h, "foo\0".as_bytes()));
+    let mut h = Header::new_gnu();
+
+    t!(h.set_path("bar"));
+    h.set_size(6);
+    h.set_entry_type(EntryType::file());
+    h.set_cksum();
+    t!(b.append(&h, "foobar".as_bytes()));
+
+    let contents = t!(b.into_inner());
+    let mut a = Archive::new(&contents[..]);
+
+    let e = t!(t!(a.entries()).next().unwrap());
+    assert_eq!(&*e.path_bytes(), b"foo");
+}
+
+#[test]
+fn long_linkname_trailing_nul() {
+    let mut b = Builder::new(Vec::<u8>::new());
+
+    let mut h = Header::new_gnu();
+    t!(h.set_path("././@LongLink"));
+    h.set_size(4);
+    h.set_entry_type(EntryType::new(b'K'));
+    h.set_cksum();
+    t!(b.append(&h, "foo\0".as_bytes()));
+    let mut h = Header::new_gnu();
+
+    t!(h.set_path("bar"));
+    h.set_size(6);
+    h.set_entry_type(EntryType::file());
+    h.set_cksum();
+    t!(b.append(&h, "foobar".as_bytes()));
+
+    let contents = t!(b.into_inner());
+    let mut a = Archive::new(&contents[..]);
+
+    let e = t!(t!(a.entries()).next().unwrap());
+    assert_eq!(&*e.link_name_bytes().unwrap(), b"foo");
 }

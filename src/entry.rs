@@ -177,7 +177,13 @@ impl<'a> EntryFields<'a> {
 
     fn path_bytes(&self) -> Cow<[u8]> {
         match self.long_pathname {
-            Some(ref bytes) => Cow::Borrowed(bytes),
+            Some(ref bytes) => {
+                if let Some(&0) = bytes.last() {
+                    Cow::Borrowed(&bytes[..bytes.len() - 1])
+                } else {
+                    Cow::Borrowed(bytes)
+                }
+            }
             None => self.header.path_bytes(),
         }
     }
@@ -191,7 +197,13 @@ impl<'a> EntryFields<'a> {
 
     fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
         match self.long_linkname {
-            Some(ref bytes) => Some(Cow::Borrowed(bytes)),
+            Some(ref bytes) => {
+                if let Some(&0) = bytes.last() {
+                    Some(Cow::Borrowed(&bytes[..bytes.len() - 1]))
+                } else {
+                    Some(Cow::Borrowed(bytes))
+                }
+            }
             None => self.header.link_name_bytes(),
         }
     }
