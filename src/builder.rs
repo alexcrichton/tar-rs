@@ -244,10 +244,10 @@ fn append_fs(dst: &mut Write,
         }
         let mut header2 = Header::new_gnu();
         try!(header2.set_path("././@LongLink"));
-        header2.set_size(data.len() as u64);
+        header2.set_size((data.len() + 1) as u64);
         header2.set_entry_type(EntryType::new(b'L'));
         header2.set_cksum();
-        let mut data2 = data;
+        let mut data2 = data.chain(io::repeat(0).take(0));
         try!(append(dst, &header2, &mut data2));
         // Truncate the path to store in the header we're about to emit to
         // ensure we've got something at least mentioned.

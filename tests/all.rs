@@ -510,3 +510,23 @@ fn long_linkname_trailing_nul() {
     let e = t!(t!(a.entries()).next().unwrap());
     assert_eq!(&*e.link_name_bytes().unwrap(), b"foo");
 }
+
+#[test]
+fn encoded_long_name_has_trailing_nul() {
+    let td = t!(TempDir::new("tar-rs"));
+    let path = td.path().join("foo");
+    t!(t!(File::create(&path)).write_all(b"test"));
+
+    let mut b = Builder::new(Vec::<u8>::new());
+    let long = repeat("abcd").take(200).collect::<String>();
+
+    t!(b.append_file(&long, &mut t!(File::open(&path))));
+
+    let contents = t!(b.into_inner());
+    let mut a = Archive::new(&contents[..]);
+
+    let mut e = t!(t!(a.entries()).raw(true).next().unwrap());
+    let mut name = Vec::new();
+    t!(e.read_to_end(&mut name));
+    assert_eq!(name[name.len() - 1], 0);
+}
