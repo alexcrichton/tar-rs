@@ -161,7 +161,7 @@ impl<'a> Archive<Read + 'a> {
                 }));
             }
             try!(file.unpack(&file_dst).map_err(|e| {
-                TarError::new(&format!("failed to unpacked `{}`",
+                TarError::new(&format!("failed to unpack `{}`",
                                        file_dst.display()), e)
             }));
         }
