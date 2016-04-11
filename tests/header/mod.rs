@@ -1,4 +1,5 @@
 use std::iter;
+use std::path::Path;
 
 use tar::Header;
 
@@ -137,4 +138,12 @@ fn set_path() {
     assert!(h.set_path(&medium1).is_err());
     t!(h.set_path(&medium2));
     assert_eq!(t!(h.path()).to_str(), Some(&medium2[..]));
+}
+
+#[test]
+fn set_ustar_path_hard() {
+    let mut h = Header::new_ustar();
+    let p = Path::new("a").join(&vec!["a"; 100].join(""));
+    t!(h.set_path(&p));
+    assert_eq!(t!(h.path()), p);
 }

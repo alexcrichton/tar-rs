@@ -658,7 +658,7 @@ impl UstarHeader {
         // components where it can fit in name/prefix. To do that we peel off
         // enough until the path fits in `prefix`, then we try to put both
         // halves into their destination.
-        let bytes = try!(path2bytes(path.as_ref()));
+        let bytes = try!(path2bytes(path));
         let (maxnamelen, maxprefixlen) = (self.name.len(), self.prefix.len());
         if bytes.len() <= maxnamelen {
             try!(copy_path_into(&mut self.name, path));
@@ -666,14 +666,14 @@ impl UstarHeader {
             let mut prefix = path;
             let mut prefixlen;
             loop {
-                prefixlen = try!(path2bytes(prefix)).len();
-                if prefixlen <= maxprefixlen {
-                    break
-                }
                 match prefix.parent() {
                     Some(parent) => prefix = parent,
                     None => return Err(other("path cannot be split to be \
                                               inserted into archive")),
+                }
+                prefixlen = try!(path2bytes(prefix)).len();
+                if prefixlen <= maxprefixlen {
+                    break
                 }
             }
             try!(copy_path_into(&mut self.prefix, prefix));
