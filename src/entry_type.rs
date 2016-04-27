@@ -27,6 +27,8 @@ pub enum EntryType {
     GNULongName,
     /// GNU extension - long link name (link target)
     GNULongLink,
+    /// GNU extension - sparse file
+    GNUSparse,
     /// Global extended header
     XGlobalHeader,
     /// Extended Header
@@ -60,6 +62,7 @@ impl EntryType {
             b'g' => EntryType::XGlobalHeader,
             b'L' => EntryType::GNULongName,
             b'K' => EntryType::GNULongLink,
+            b'S' => EntryType::GNUSparse,
             b    => EntryType::__Nonexhaustive(b),
         }
     }
@@ -79,6 +82,7 @@ impl EntryType {
             &EntryType::XGlobalHeader => b'g',
             &EntryType::GNULongName   => b'L',
             &EntryType::GNULongLink   => b'K',
+            &EntryType::GNUSparse     => b'S',
             &EntryType::__Nonexhaustive(b) => b,
         }
     }
