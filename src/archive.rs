@@ -10,6 +10,7 @@ use std::path::{Path, Component};
 use entry::EntryFields;
 use error::TarError;
 use header::{GnuExtSparseHeader, octal_from};
+use reader::Reader;
 use other;
 use {Entry, Header};
 
@@ -245,7 +246,9 @@ impl<'a> EntriesFields<'a> {
             return Err(other("archive header checksum mismatch"))
         }
 
-        header.sparse_chunks = if let Some(gnu) = header.as_gnu_mut() {
+        let data_size = try!(header.data_size());
+        let size = try!(header.size());
+        let sparse_chunks = if let Some(gnu) = header.as_gnu_mut() {
             let mut chunks = Vec::new();
             for item in &gnu.sparse[..] {
                 if item.offset[0] != 0 && item.numbytes[0] != 0 {
@@ -277,17 +280,35 @@ impl<'a> EntriesFields<'a> {
                     }
                 }
             }
+            if chunks.len() > 0 {
+                // Ensure chunks are in order and sized properly
+                let mut offset = 0;
+                let mut bytes = 0;
+                for chunk in &chunks {
+                    if chunk.0 < offset {
+                        return Err(other(
+                            "out of order or overlapping sparse chunks"))
+                    }
+                    bytes += chunk.1;
+                    offset = chunk.0 + chunk.1;
+                }
+                if bytes != data_size {
+                    return Err(other("wrong total length of data for sparse file"))
+                }
+                if offset > size {
+                    return Err(other("sparse chunk end exceeds file size"))
+                }
+            }
             chunks
         } else {
             Vec::new()
         };
 
-        let data_size = try!(header.data_size());
-        let size = try!(header.size());
         let ret = EntryFields {
             size: size,
+            data: Reader::new(header.entry_type(),
+                              &self.archive.inner, sparse_chunks, size),
             header: header,
-            data: (&self.archive.inner).take(data_size),
             long_pathname: None,
             long_linkname: None,
             pax_extensions: None,

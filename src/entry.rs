@@ -9,10 +9,10 @@ use std::path::Path;
 use filetime::{self, FileTime};
 
 use {Header, Archive, PaxExtensions};
-use archive::ArchiveInner;
 use error::TarError;
 use header::bytes2path;
 use other;
+use reader::Reader;
 use pax::pax_extensions;
 
 /// A read-only view into an entry of an archive.
@@ -33,7 +33,7 @@ pub struct EntryFields<'a> {
     pub pax_extensions: Option<Vec<u8>>,
     pub header: Header,
     pub size: u64,
-    pub data: io::Take<&'a ArchiveInner<Read + 'a>>,
+    pub data: Reader<'a>,
 }
 
 impl<'a, R: Read> Entry<'a, R> {

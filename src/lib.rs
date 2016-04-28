@@ -41,6 +41,7 @@ mod entry_type;
 mod error;
 mod header;
 mod pax;
+mod reader;
 
 // FIXME(rust-lang/rust#26403):
 //      Right now there's a bug when a DST struct's last field has more

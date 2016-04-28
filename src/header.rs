@@ -18,7 +18,6 @@ use other;
 #[allow(missing_docs)]
 pub struct Header {
     bytes: [u8; 512],
-    pub sparse_chunks: Vec<(u64, u64)>,
 }
 
 /// Representation of the header of an entry in an archive
@@ -117,7 +116,7 @@ impl Header {
     /// extensions such as long path names, long link names, and setting the
     /// atime/ctime metadata attributes of files.
     pub fn new_gnu() -> Header {
-        let mut header = Header { bytes: [0; 512], sparse_chunks: Vec::new() };
+        let mut header = Header { bytes: [0; 512] };
         {
             let gnu = header.cast_mut::<GnuHeader>();
             gnu.magic = *b"ustar ";
@@ -134,7 +133,7 @@ impl Header {
     ///
     /// UStar is also the basis used for pax archives.
     pub fn new_ustar() -> Header {
-        let mut header = Header { bytes: [0; 512], sparse_chunks: Vec::new() };
+        let mut header = Header { bytes: [0; 512] };
         {
             let gnu = header.cast_mut::<UstarHeader>();
             gnu.magic = *b"ustar\0";
@@ -150,17 +149,17 @@ impl Header {
     /// format limits the path name limit and isn't able to contain extra
     /// metadata like atime/ctime.
     pub fn new_old() -> Header {
-        Header { bytes: [0; 512], sparse_chunks: Vec::new() }
+        Header { bytes: [0; 512] }
     }
 
     fn cast<T>(&self) -> &T {
-        assert_eq!(mem::size_of_val(&self.bytes), mem::size_of::<T>());
-        unsafe { &*(&self.bytes as *const [u8; 512] as *const T) }
+        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
+        unsafe { &*(self as *const Header as *const T) }
     }
 
     fn cast_mut<T>(&mut self) -> &mut T {
-        assert_eq!(mem::size_of_val(&self.bytes), mem::size_of::<T>());
-        unsafe { &mut *(&mut self.bytes as *mut [u8; 512] as *mut T) }
+        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
+        unsafe { &mut *(self as *mut Header as *mut T) }
     }
 
     fn is_ustar(&self) -> bool {
@@ -651,7 +650,7 @@ impl Header {
 
 impl Clone for Header {
     fn clone(&self) -> Header {
-        Header { bytes: self.bytes, sparse_chunks: self.sparse_chunks.clone() }
+        Header { bytes: self.bytes }
     }
 }
 
