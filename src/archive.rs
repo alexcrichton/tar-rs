@@ -3,11 +3,13 @@ use std::cmp;
 use std::fs;
 use std::io::prelude::*;
 use std::io;
+use std::mem::transmute;
 use std::marker;
 use std::path::{Path, Component};
 
 use entry::EntryFields;
 use error::TarError;
+use header::{GnuExtSparseHeader, octal_from};
 use other;
 use {Entry, Header};
 
@@ -243,11 +245,49 @@ impl<'a> EntriesFields<'a> {
             return Err(other("archive header checksum mismatch"))
         }
 
+        header.sparse_chunks = if let Some(gnu) = header.as_gnu_mut() {
+            let mut chunks = Vec::new();
+            for item in &gnu.sparse[..] {
+                if item.offset[0] != 0 && item.numbytes[0] != 0 {
+                    let off = try!(octal_from(&item.offset[..]));
+                    let nbytes = try!(octal_from(&item.numbytes[..]));
+                    if nbytes > 0 {
+                        chunks.push((off, nbytes));
+                    }
+                }
+            }
+            if gnu.isextended[0] == 1 {
+                loop {
+                    let mut ext_header = [0u8; 512];
+                    try!(read_all(&mut &self.archive.inner, &mut ext_header));
+                    self.next += 512;
+                    let sparse_header: &GnuExtSparseHeader;
+                    sparse_header = unsafe { transmute(&ext_header) };
+                    for item in &sparse_header.sparse {
+                        if item.offset[0] != 0 && item.numbytes[0] != 0 {
+                            let off = try!(octal_from(&item.offset[..]));
+                            let nbytes = try!(octal_from(&item.numbytes[..]));
+                            if nbytes > 0 {
+                                chunks.push((off, nbytes));
+                            }
+                        }
+                    }
+                    if sparse_header.isextended[0] == 0 {
+                        break;
+                    }
+                }
+            }
+            chunks
+        } else {
+            Vec::new()
+        };
+
+        let data_size = try!(header.data_size());
         let size = try!(header.size());
         let ret = EntryFields {
             size: size,
             header: header,
-            data: (&self.archive.inner).take(size),
+            data: (&self.archive.inner).take(data_size),
             long_pathname: None,
             long_linkname: None,
             pax_extensions: None,
@@ -255,7 +295,7 @@ impl<'a> EntriesFields<'a> {
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
         // a header);
-        let size = (ret.size + 511) & !(512 - 1);
+        let size = (data_size + 511) & !(512 - 1);
         self.next += size;
 
         Ok(Some(ret.into_entry()))

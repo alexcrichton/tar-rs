@@ -15,8 +15,10 @@ use other;
 
 /// Representation of the header of an entry in an archive
 #[repr(C)]
+#[allow(missing_docs)]
 pub struct Header {
     bytes: [u8; 512],
+    pub sparse_chunks: Vec<(u64, u64)>,
 }
 
 /// Representation of the header of an entry in an archive
@@ -99,6 +101,15 @@ pub struct GnuSparseHeader {
     pub numbytes: [u8; 12],
 }
 
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct GnuExtSparseHeader {
+    pub sparse: [GnuSparseHeader; 21],
+    pub isextended: [u8; 1],
+}
+
+
+
 impl Header {
     /// Creates a new blank GNU header.
     ///
@@ -106,7 +117,7 @@ impl Header {
     /// extensions such as long path names, long link names, and setting the
     /// atime/ctime metadata attributes of files.
     pub fn new_gnu() -> Header {
-        let mut header = Header { bytes: [0; 512] };
+        let mut header = Header { bytes: [0; 512], sparse_chunks: Vec::new() };
         {
             let gnu = header.cast_mut::<GnuHeader>();
             gnu.magic = *b"ustar ";
@@ -123,7 +134,7 @@ impl Header {
     ///
     /// UStar is also the basis used for pax archives.
     pub fn new_ustar() -> Header {
-        let mut header = Header { bytes: [0; 512] };
+        let mut header = Header { bytes: [0; 512], sparse_chunks: Vec::new() };
         {
             let gnu = header.cast_mut::<UstarHeader>();
             gnu.magic = *b"ustar\0";
@@ -139,17 +150,17 @@ impl Header {
     /// format limits the path name limit and isn't able to contain extra
     /// metadata like atime/ctime.
     pub fn new_old() -> Header {
-        Header { bytes: [0; 512] }
+        Header { bytes: [0; 512], sparse_chunks: Vec::new() }
     }
 
     fn cast<T>(&self) -> &T {
-        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
-        unsafe { &*(self as *const Header as *const T) }
+        assert_eq!(mem::size_of_val(&self.bytes), mem::size_of::<T>());
+        unsafe { &*(&self.bytes as *const [u8; 512] as *const T) }
     }
 
     fn cast_mut<T>(&mut self) -> &mut T {
-        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
-        unsafe { &mut *(self as *mut Header as *mut T) }
+        assert_eq!(mem::size_of_val(&self.bytes), mem::size_of::<T>());
+        unsafe { &mut *(&mut self.bytes as *mut [u8; 512] as *mut T) }
     }
 
     fn is_ustar(&self) -> bool {
@@ -240,11 +251,28 @@ impl Header {
         }
     }
 
+    /// Returns the size of file's data this header represents.
+    ///
+    /// This is different from `Header::size` for sparse files, which have
+    /// some longer `size()` but shorter `data_size()`.
+    ///
+    /// May return an error if the field is corrupted.
+    pub fn data_size(&self) -> io::Result<u64> {
+        octal_from(&self.as_old().size)
+    }
+
     /// Returns the file size this header represents.
     ///
     /// May return an error if the field is corrupted.
     pub fn size(&self) -> io::Result<u64> {
-        octal_from(&self.as_old().size)
+        match (self.entry_type(), self.as_gnu()) {
+            (EntryType::GNUSparse, Some(gnu)) => {
+                octal_from(&gnu.realsize)
+            }
+            _ => {
+                octal_from(&self.as_old().size)
+            }
+        }
     }
 
     /// Encodes the `size` argument into the size field of this header.
@@ -623,7 +651,7 @@ impl Header {
 
 impl Clone for Header {
     fn clone(&self) -> Header {
-        Header { bytes: self.bytes }
+        Header { bytes: self.bytes, sparse_chunks: self.sparse_chunks.clone() }
     }
 }
 
@@ -792,7 +820,7 @@ impl GnuHeader {
     }
 }
 
-fn octal_from(slice: &[u8]) -> io::Result<u64> {
+pub fn octal_from(slice: &[u8]) -> io::Result<u64> {
     let num = match str::from_utf8(truncate(slice)) {
         Ok(n) => n,
         Err(_) => return Err(other("numeric field did not have utf-8 text")),
