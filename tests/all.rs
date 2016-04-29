@@ -553,6 +553,23 @@ fn reading_sparse() {
 
     let mut a = t!(entries.next().unwrap());
     let mut s = String::new();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_ext.txt");
+    t!(a.read_to_string(&mut s));
+    assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x1000..0x1000+5], "text\n");
+    assert!(s[0x1000+5..0x3000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x3000..0x3000+5], "text\n");
+    assert!(s[0x3000+5..0x5000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x5000..0x5000+5], "text\n");
+    assert!(s[0x5000+5..0x7000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x7000..0x7000+5], "text\n");
+    assert!(s[0x7000+5..0x9000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x9000..0x9000+5], "text\n");
+    assert!(s[0x9000+5..0xb000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0xb000..0xb000+5], "text\n");
+
+    let mut a = t!(entries.next().unwrap());
+    let mut s = String::new();
     assert_eq!(&*a.header().path_bytes(), b"sparse.txt");
     t!(a.read_to_string(&mut s));
     assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
