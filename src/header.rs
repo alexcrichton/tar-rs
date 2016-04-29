@@ -103,8 +103,9 @@ pub struct GnuSparseHeader {
 #[repr(C)]
 #[allow(missing_docs)]
 pub struct GnuExtSparseHeader {
-    pub sparse: [GnuSparseHeader; 21],
-    pub isextended: [u8; 1],
+    sparse: [GnuSparseHeader; 21],
+    isextended: [u8; 1],
+    padding: [u8; 7],
 }
 
 
@@ -817,9 +818,46 @@ impl GnuHeader {
     pub fn set_ctime(&mut self, ctime: u64) {
         octal_into(&mut self.ctime, ctime);
     }
+
+    /// Does header contain extended sparse file chunk headers
+    pub fn is_extended(&self) -> bool {
+        self.isextended[0] == 1
+    }
 }
 
-pub fn octal_from(slice: &[u8]) -> io::Result<u64> {
+impl GnuSparseHeader {
+    /// Returns true if block is empty
+    pub fn is_empty(&self) -> bool {
+        self.offset[0] == 0 || self.numbytes[0] == 0
+    }
+    /// Offset of the block from the start of the file
+    pub fn offset(&self) -> io::Result<u64> {
+        octal_from(&self.offset[..])
+    }
+    /// Length of the block
+    pub fn length(&self) -> io::Result<u64> {
+        octal_from(&self.numbytes[..])
+    }
+}
+
+impl GnuExtSparseHeader {
+    pub fn new() -> GnuExtSparseHeader {
+        unsafe { mem::zeroed() }
+    }
+    /// Returns a view into this header as a byte array.
+    pub fn as_mut_bytes(&mut self) -> &mut [u8; 512] {
+        debug_assert_eq!(mem::size_of_val(self), 512);
+        unsafe { mem::transmute(self) }
+    }
+    pub fn chunks(&self) -> &[GnuSparseHeader] {
+        &self.sparse[..]
+    }
+    pub fn is_extended(&self) -> bool {
+        self.isextended[0] == 1
+    }
+}
+
+fn octal_from(slice: &[u8]) -> io::Result<u64> {
     let num = match str::from_utf8(truncate(slice)) {
         Ok(n) => n,
         Err(_) => return Err(other("numeric field did not have utf-8 text")),

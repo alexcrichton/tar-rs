@@ -3,13 +3,12 @@ use std::cmp;
 use std::fs;
 use std::io::prelude::*;
 use std::io;
-use std::mem::transmute;
 use std::marker;
 use std::path::{Path, Component};
 
 use entry::EntryFields;
 use error::TarError;
-use header::{GnuExtSparseHeader, octal_from};
+use header::GnuExtSparseHeader;
 use reader::Reader;
 use other;
 use {Entry, Header};
@@ -251,31 +250,30 @@ impl<'a> EntriesFields<'a> {
         let sparse_chunks = if let Some(gnu) = header.as_gnu_mut() {
             let mut chunks = Vec::new();
             for item in &gnu.sparse[..] {
-                if item.offset[0] != 0 && item.numbytes[0] != 0 {
-                    let off = try!(octal_from(&item.offset[..]));
-                    let nbytes = try!(octal_from(&item.numbytes[..]));
+                if !item.is_empty() {
+                    let off = try!(item.offset());
+                    let nbytes = try!(item.length());
                     if nbytes > 0 {
                         chunks.push((off, nbytes));
                     }
                 }
             }
-            if gnu.isextended[0] == 1 {
+            if gnu.is_extended() {
                 loop {
-                    let mut ext_header = [0u8; 512];
-                    try!(read_all(&mut &self.archive.inner, &mut ext_header));
+                    let mut sparse_header = GnuExtSparseHeader::new();
+                    try!(read_all(&mut &self.archive.inner,
+                                  sparse_header.as_mut_bytes()));
                     self.next += 512;
-                    let sparse_header: &GnuExtSparseHeader;
-                    sparse_header = unsafe { transmute(&ext_header) };
-                    for item in &sparse_header.sparse {
-                        if item.offset[0] != 0 && item.numbytes[0] != 0 {
-                            let off = try!(octal_from(&item.offset[..]));
-                            let nbytes = try!(octal_from(&item.numbytes[..]));
+                    for item in sparse_header.chunks() {
+                        if !item.is_empty() {
+                            let off = try!(item.offset());
+                            let nbytes = try!(item.length());
                             if nbytes > 0 {
                                 chunks.push((off, nbytes));
                             }
                         }
                     }
-                    if sparse_header.isextended[0] == 0 {
+                    if !sparse_header.is_extended() {
                         break;
                     }
                 }
