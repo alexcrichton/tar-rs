@@ -530,3 +530,36 @@ fn encoded_long_name_has_trailing_nul() {
     t!(e.read_to_end(&mut name));
     assert_eq!(name[name.len() - 1], 0);
 }
+
+#[test]
+fn reading_sparse() {
+    let rdr = Cursor::new(tar!("sparse.tar"));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+
+    let mut a = t!(entries.next().unwrap());
+    let mut s = String::new();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_begin.txt");
+    t!(a.read_to_string(&mut s));
+    assert_eq!(&s[..5], "test\n");
+    assert!(s[5..].chars().all(|x| x == '\u{0}'));
+
+    let mut a = t!(entries.next().unwrap());
+    let mut s = String::new();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_end.txt");
+    t!(a.read_to_string(&mut s));
+    assert!(s[..s.len() - 9].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[s.len() - 9..], "test_end\n");
+
+    let mut a = t!(entries.next().unwrap());
+    let mut s = String::new();
+    assert_eq!(&*a.header().path_bytes(), b"sparse.txt");
+    t!(a.read_to_string(&mut s));
+    assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x1000..0x1000+6], "hello\n");
+    assert!(s[0x1000+6..0x2fa0].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x2fa0..0x2fa0+6], "world\n");
+    assert!(s[0x2fa0+6..0x4000].chars().all(|x| x == '\u{0}'));
+
+    assert!(entries.next().is_none());
+}
