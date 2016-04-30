@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::cmp;
 use std::fs;
 use std::io::prelude::*;
-use std::io;
+use std::io::{self, SeekFrom};
 use std::marker;
 use std::path::Path;
 
@@ -272,10 +272,21 @@ impl<'a> EntryFields<'a> {
         // as we would normally.
 
         try!(fs::File::create(dst).and_then(|mut f| {
-            // TODO: make this more efficient for sparse files by using `seek`
-            //       to skip over empty regions instead of filling it in with 0s
-            if try!(io::copy(self, &mut f)) != self.size {
-                return Err(other("failed to write entire file"));
+            for io in self.data.drain(..) {
+                match io {
+                    EntryIo::Data(mut d) => {
+                        let expected = d.limit();
+                        if try!(io::copy(&mut d, &mut f)) != expected {
+                            return Err(other("failed to write entire file"));
+                        }
+                    }
+                    EntryIo::Pad(d) => {
+                        // TODO: checked cast to i64
+                        let to = SeekFrom::Current(d.limit() as i64);
+                        let size = try!(f.seek(to));
+                        try!(f.set_len(size));
+                    }
+                }
             }
             Ok(())
         }).map_err(|e| {
