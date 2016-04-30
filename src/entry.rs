@@ -9,10 +9,10 @@ use std::path::Path;
 use filetime::{self, FileTime};
 
 use {Header, Archive, PaxExtensions};
+use archive::ArchiveInner;
 use error::TarError;
 use header::bytes2path;
 use other;
-use reader::Reader;
 use pax::pax_extensions;
 
 /// A read-only view into an entry of an archive.
@@ -33,7 +33,12 @@ pub struct EntryFields<'a> {
     pub pax_extensions: Option<Vec<u8>>,
     pub header: Header,
     pub size: u64,
-    pub data: Reader<'a>,
+    pub data: Vec<EntryIo<'a>>,
+}
+
+pub enum EntryIo<'a> {
+    Pad(io::Take<io::Repeat>),
+    Data(io::Take<&'a ArchiveInner<Read + 'a>>),
 }
 
 impl<'a, R: Read> Entry<'a, R> {
@@ -267,6 +272,8 @@ impl<'a> EntryFields<'a> {
         // as we would normally.
 
         try!(fs::File::create(dst).and_then(|mut f| {
+            // TODO: make this more efficient for sparse files by using `seek`
+            //       to skip over empty regions instead of filling it in with 0s
             if try!(io::copy(self, &mut f)) != self.size {
                 return Err(other("failed to write entire file"));
             }
@@ -313,6 +320,21 @@ impl<'a> EntryFields<'a> {
 
 impl<'a> Read for EntryFields<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        self.data.read(into)
+        loop {
+            match self.data.get_mut(0).map(|io| io.read(into)) {
+                Some(Ok(0)) => { self.data.remove(0); }
+                Some(r) => return r,
+                None => return Ok(0),
+            }
+        }
+    }
+}
+
+impl<'a> Read for EntryIo<'a> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        match *self {
+            EntryIo::Pad(ref mut io) => io.read(into),
+            EntryIo::Data(ref mut io) => io.read(into),
+        }
     }
 }

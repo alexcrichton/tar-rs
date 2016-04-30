@@ -6,12 +6,10 @@ use std::io;
 use std::marker;
 use std::path::{Path, Component};
 
-use entry::EntryFields;
+use entry::{EntryFields, EntryIo};
 use error::TarError;
-use header::GnuExtSparseHeader;
-use reader::Reader;
 use other;
-use {Entry, Header};
+use {Entry, Header, GnuSparseHeader, GnuExtSparseHeader};
 
 /// A top-level representation of an archive file.
 ///
@@ -245,67 +243,11 @@ impl<'a> EntriesFields<'a> {
             return Err(other("archive header checksum mismatch"))
         }
 
-        let data_size = try!(header.data_size());
-        let size = try!(header.size());
-        let sparse_chunks = if let Some(gnu) = header.as_gnu_mut() {
-            let mut chunks = Vec::new();
-            for item in &gnu.sparse[..] {
-                if !item.is_empty() {
-                    let off = try!(item.offset());
-                    let nbytes = try!(item.length());
-                    if nbytes > 0 {
-                        chunks.push((off, nbytes));
-                    }
-                }
-            }
-            if gnu.is_extended() {
-                loop {
-                    let mut sparse_header = GnuExtSparseHeader::new();
-                    try!(read_all(&mut &self.archive.inner,
-                                  sparse_header.as_mut_bytes()));
-                    self.next += 512;
-                    for item in sparse_header.chunks() {
-                        if !item.is_empty() {
-                            let off = try!(item.offset());
-                            let nbytes = try!(item.length());
-                            if nbytes > 0 {
-                                chunks.push((off, nbytes));
-                            }
-                        }
-                    }
-                    if !sparse_header.is_extended() {
-                        break;
-                    }
-                }
-            }
-            if chunks.len() > 0 {
-                // Ensure chunks are in order and sized properly
-                let mut offset = 0;
-                let mut bytes = 0;
-                for chunk in &chunks {
-                    if chunk.0 < offset {
-                        return Err(other(
-                            "out of order or overlapping sparse chunks"))
-                    }
-                    bytes += chunk.1;
-                    offset = chunk.0 + chunk.1;
-                }
-                if bytes != data_size {
-                    return Err(other("wrong total length of data for sparse file"))
-                }
-                if offset > size {
-                    return Err(other("sparse chunk end exceeds file size"))
-                }
-            }
-            chunks
-        } else {
-            Vec::new()
-        };
+        let size = try!(header.entry_size());
 
         let ret = EntryFields {
             size: size,
-            data: Reader::new(header.entry_type(),
-                              &self.archive.inner, sparse_chunks, size),
+            data: vec![EntryIo::Data((&self.archive.inner).take(size))],
             header: header,
             long_pathname: None,
             long_linkname: None,
@@ -314,7 +256,7 @@ impl<'a> EntriesFields<'a> {
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
         // a header);
-        let size = (data_size + 511) & !(512 - 1);
+        let size = (size + 511) & !(512 - 1);
         self.next += size;
 
         Ok(Some(ret.into_entry()))
@@ -329,7 +271,6 @@ impl<'a> EntriesFields<'a> {
         let mut gnu_longlink = None;
         let mut pax_extensions = None;
         let mut processed = 0;
-
         loop {
             processed += 1;
             let entry = match try!(self.next_entry_raw()) {
@@ -375,8 +316,100 @@ impl<'a> EntriesFields<'a> {
             fields.long_pathname = gnu_longname;
             fields.long_linkname = gnu_longlink;
             fields.pax_extensions = pax_extensions;
+            try!(self.parse_sparse_header(&mut fields));
             return Ok(Some(fields.into_entry()))
         }
+    }
+
+    fn parse_sparse_header(&mut self,
+                           entry: &mut EntryFields<'a>) -> io::Result<()> {
+        if !entry.header.entry_type().is_gnu_sparse() {
+            return Ok(())
+        }
+        let gnu = match entry.header.as_gnu() {
+            Some(gnu) => gnu,
+            None => return Err(other("sparse entry type listed but not GNU header")),
+        };
+
+        // Sparse files are represented internally as a list of blocks that are
+        // read. Blocks are either a bunch of 0's or they're data from the
+        // underlying archive.
+        //
+        // Blocks of a sparse file are described by the `GnuSparseHeader`
+        // structure, some of which are contained in `GnuHeader` but some of
+        // which may also be contained after the first header in further
+        // headers.
+        //
+        // We read off all the blocks here and use the `add_block` function to
+        // incrementally add them to the list of I/O block (in `entry.data`).
+        // The `add_block` function also validates that each chunk comes after
+        // the previous, we don't overrun the end of the file, and each block is
+        // aligned to a 512-byte boundary in the archive itself.
+        //
+        // At the end we verify that the sparse file size (`Header::size`) is
+        // the same as the current offset (described by the list of blocks) as
+        // well as the amount of data read equals the size of the entry
+        // (`Header::entry_size`).
+        entry.data.truncate(0);
+
+        let mut cur = 0;
+        let mut remaining = entry.size;
+        {
+            let data = &mut entry.data;
+            let reader = &self.archive.inner;
+            let size = entry.size;
+            let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
+                if block.is_empty() {
+                    return Ok(())
+                }
+                let off = try!(block.offset());
+                let len = try!(block.length());
+
+                if (size - remaining) % 512 != 0 {
+                    return Err(other("previous block in sparse file was not \
+                                      aligned to 512-byte boundary"))
+                } else if off < cur {
+                    return Err(other("out of order or overlapping sparse \
+                                      blocks"))
+                } else if cur < off {
+                    let block = io::repeat(0).take(off - cur);
+                    data.push(EntryIo::Pad(block));
+                }
+                cur = try!(off.checked_add(len).ok_or_else(|| {
+                    other("more bytes listed in sparse file than u64 can hold")
+                }));
+                remaining = try!(remaining.checked_sub(len).ok_or_else(|| {
+                    other("sparse file consumed more data than the header \
+                           listed")
+                }));
+                data.push(EntryIo::Data(reader.take(len)));
+                Ok(())
+            };
+            for block in gnu.sparse.iter() {
+                try!(add_block(block))
+            }
+            if gnu.is_extended() {
+                let mut ext = GnuExtSparseHeader::new();
+                ext.isextended[0] = 1;
+                while ext.is_extended() {
+                    try!(read_all(&mut &self.archive.inner, ext.as_mut_bytes()));
+                    self.next += 512;
+                    for block in ext.sparse.iter() {
+                        try!(add_block(block));
+                    }
+                }
+            }
+        }
+        if cur != try!(gnu.real_size()) {
+            return Err(other("mismatch in sparse file chunks and \
+                              size in header"))
+        }
+        entry.size = cur;
+        if remaining > 0 {
+            return Err(other("mismatch in sparse file chunks and \
+                              entry size in header"))
+        }
+        Ok(())
     }
 }
 

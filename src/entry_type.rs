@@ -172,6 +172,11 @@ impl EntryType {
         self == &EntryType::GNULongName
     }
 
+    /// Returns whether this type represents a GNU sparse header.
+    pub fn is_gnu_sparse(&self) -> bool {
+        self == &EntryType::GNUSparse
+    }
+
     /// Returns whether this type represents a GNU long link header.
     pub fn is_gnu_longlink(&self) -> bool {
         self == &EntryType::GNULongLink

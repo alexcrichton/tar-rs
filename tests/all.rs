@@ -580,3 +580,44 @@ fn reading_sparse() {
 
     assert!(entries.next().is_none());
 }
+
+#[test]
+fn extract_sparse() {
+    let rdr = Cursor::new(tar!("sparse.tar"));
+    let mut ar = Archive::new(rdr);
+    let td = t!(TempDir::new("tar-rs"));
+    t!(ar.unpack(td.path()));
+
+    let mut s = String::new();
+    t!(t!(File::open(td.path().join("sparse_begin.txt"))).read_to_string(&mut s));
+    assert_eq!(&s[..5], "test\n");
+    assert!(s[5..].chars().all(|x| x == '\u{0}'));
+
+    s.truncate(0);
+    t!(t!(File::open(td.path().join("sparse_end.txt"))).read_to_string(&mut s));
+    assert!(s[..s.len() - 9].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[s.len() - 9..], "test_end\n");
+
+    s.truncate(0);
+    t!(t!(File::open(td.path().join("sparse_ext.txt"))).read_to_string(&mut s));
+    assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x1000..0x1000+5], "text\n");
+    assert!(s[0x1000+5..0x3000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x3000..0x3000+5], "text\n");
+    assert!(s[0x3000+5..0x5000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x5000..0x5000+5], "text\n");
+    assert!(s[0x5000+5..0x7000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x7000..0x7000+5], "text\n");
+    assert!(s[0x7000+5..0x9000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x9000..0x9000+5], "text\n");
+    assert!(s[0x9000+5..0xb000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0xb000..0xb000+5], "text\n");
+
+    s.truncate(0);
+    t!(t!(File::open(td.path().join("sparse.txt"))).read_to_string(&mut s));
+    assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x1000..0x1000+6], "hello\n");
+    assert!(s[0x1000+6..0x2fa0].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x2fa0..0x2fa0+6], "world\n");
+    assert!(s[0x2fa0+6..0x4000].chars().all(|x| x == '\u{0}'));
+}

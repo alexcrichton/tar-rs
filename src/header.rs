@@ -93,6 +93,9 @@ pub struct GnuHeader {
     pub pad: [u8; 17],
 }
 
+/// Description of the header of a spare entry.
+///
+/// Specifies the offset/number of bytes of a chunk of data in octal.
 #[repr(C)]
 #[allow(missing_docs)]
 pub struct GnuSparseHeader {
@@ -100,15 +103,17 @@ pub struct GnuSparseHeader {
     pub numbytes: [u8; 12],
 }
 
+/// Representation of the entry found to represent extended GNU sparse files.
+///
+/// When a `GnuHeader` has the `isextended` flag set to `1` then the contents of
+/// the next entry will be one of these headers.
 #[repr(C)]
 #[allow(missing_docs)]
 pub struct GnuExtSparseHeader {
-    sparse: [GnuSparseHeader; 21],
-    isextended: [u8; 1],
-    padding: [u8; 7],
+    pub sparse: [GnuSparseHeader; 21],
+    pub isextended: [u8; 1],
+    pub padding: [u8; 7],
 }
-
-
 
 impl Header {
     /// Creates a new blank GNU header.
@@ -251,13 +256,15 @@ impl Header {
         }
     }
 
-    /// Returns the size of file's data this header represents.
+    /// Returns the size of entry's data this header represents.
     ///
     /// This is different from `Header::size` for sparse files, which have
-    /// some longer `size()` but shorter `data_size()`.
+    /// some longer `size()` but shorter `entry_size()`. The `entry_size()`
+    /// listed here should be the number of bytes in the archive this header
+    /// describes.
     ///
     /// May return an error if the field is corrupted.
-    pub fn data_size(&self) -> io::Result<u64> {
+    pub fn entry_size(&self) -> io::Result<u64> {
         octal_from(&self.as_old().size)
     }
 
@@ -265,13 +272,12 @@ impl Header {
     ///
     /// May return an error if the field is corrupted.
     pub fn size(&self) -> io::Result<u64> {
-        match (self.entry_type(), self.as_gnu()) {
-            (EntryType::GNUSparse, Some(gnu)) => {
-                octal_from(&gnu.realsize)
-            }
-            _ => {
-                octal_from(&self.as_old().size)
-            }
+        if self.entry_type().is_gnu_sparse() {
+            self.as_gnu().ok_or_else(|| {
+                other("sparse header was not a gnu header")
+            }).and_then(|h| h.real_size())
+        } else {
+            self.entry_size()
         }
     }
 
@@ -819,7 +825,19 @@ impl GnuHeader {
         octal_into(&mut self.ctime, ctime);
     }
 
-    /// Does header contain extended sparse file chunk headers
+    /// Returns the "real size" of the file this header represents.
+    ///
+    /// This is applicable for sparse files where the returned size here is the
+    /// size of the entire file after the sparse regions have been filled in.
+    pub fn real_size(&self) -> io::Result<u64> {
+        octal_from(&self.realsize)
+    }
+
+    /// Indicates whether this header will be followed by additional
+    /// sparse-header records.
+    ///
+    /// Note that this is handled internally by this library, and is likely only
+    /// interesting if a `raw` iterator is being used.
     pub fn is_extended(&self) -> bool {
         self.isextended[0] == 1
     }
@@ -830,28 +848,49 @@ impl GnuSparseHeader {
     pub fn is_empty(&self) -> bool {
         self.offset[0] == 0 || self.numbytes[0] == 0
     }
+
     /// Offset of the block from the start of the file
+    ///
+    /// Returns `Err` for a malformed `offset` field.
     pub fn offset(&self) -> io::Result<u64> {
-        octal_from(&self.offset[..])
+        octal_from(&self.offset)
     }
+
     /// Length of the block
+    ///
+    /// Returns `Err` for a malformed `numbytes` field.
     pub fn length(&self) -> io::Result<u64> {
-        octal_from(&self.numbytes[..])
+        octal_from(&self.numbytes)
     }
 }
 
 impl GnuExtSparseHeader {
+    /// Crates a new zero'd out sparse header entry.
     pub fn new() -> GnuExtSparseHeader {
         unsafe { mem::zeroed() }
     }
+
+    /// Returns a view into this header as a byte array.
+    pub fn as_bytes(&self) -> &[u8; 512] {
+        debug_assert_eq!(mem::size_of_val(self), 512);
+        unsafe { mem::transmute(self) }
+    }
+
     /// Returns a view into this header as a byte array.
     pub fn as_mut_bytes(&mut self) -> &mut [u8; 512] {
         debug_assert_eq!(mem::size_of_val(self), 512);
         unsafe { mem::transmute(self) }
     }
-    pub fn chunks(&self) -> &[GnuSparseHeader] {
-        &self.sparse[..]
+
+    /// Returns a slice of the underlying sparse headers.
+    ///
+    /// Some headers may represent empty chunks of both the offset and numbytes
+    /// fields are 0.
+    pub fn sparse(&self) -> &[GnuSparseHeader; 21] {
+        &self.sparse
     }
+
+    /// Indicates if another sparse header should be following this one.
     pub fn is_extended(&self) -> bool {
         self.isextended[0] == 1
     }

@@ -28,6 +28,7 @@ use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};
 
 pub use header::{Header, UstarHeader, GnuHeader, GnuSparseHeader};
+pub use header::{GnuExtSparseHeader};
 pub use entry_type::EntryType;
 pub use entry::Entry;
 pub use archive::{Archive, Entries};
@@ -41,7 +42,6 @@ mod entry_type;
 mod error;
 mod header;
 mod pax;
-mod reader;
 
 // FIXME(rust-lang/rust#26403):
 //      Right now there's a bug when a DST struct's last field has more
