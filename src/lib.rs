@@ -27,7 +27,7 @@ extern crate filetime;
 use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};
 
-pub use header::{Header, UstarHeader, GnuHeader, GnuSparseHeader};
+pub use header::{Header, OldHeader, UstarHeader, GnuHeader, GnuSparseHeader};
 pub use header::{GnuExtSparseHeader};
 pub use entry_type::EntryType;
 pub use entry::Entry;
