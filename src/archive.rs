@@ -86,8 +86,18 @@ impl<R: Read> Archive<R> {
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
         let me: &mut Archive<Read> = self;
-        me._unpack(dst.as_ref())
+        me._unpack(dst.as_ref(), false)
     }
+
+    /// This function has a similar behavior as unpack(), but preserves extended
+    /// file attributes. That also means, that this function shouldn't works if dst
+    /// is placed in pseudo file systems.
+    #[cfg(unix)]
+    pub fn unpack_preserving_xattrs<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
+        let me: &mut Archive<Read> = self;
+        me._unpack(dst.as_ref(), true)
+    }
+
 }
 
 impl<'a> Archive<Read + 'a> {
@@ -104,7 +114,7 @@ impl<'a> Archive<Read + 'a> {
         })
     }
 
-    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+    fn _unpack(&mut self, dst: &Path, preserve_xattrs: bool) -> io::Result<()> {
         'outer: for entry in try!(self._entries()) {
             let mut file = try!(entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
@@ -160,10 +170,18 @@ impl<'a> Archive<Read + 'a> {
                                            parent.display()), e)
                 }));
             }
-            try!(file.unpack(&file_dst).map_err(|e| {
-                TarError::new(&format!("failed to unpack `{}`",
-                                       file_dst.display()), e)
-            }));
+            if preserve_xattrs {
+                try!(file.unpack_preserving_xattrs(&file_dst).map_err(|e| {
+                    TarError::new(&format!("failed to unpack `{}`",
+                                           file_dst.display()), e)
+                }));
+            } else {
+                try!(file.unpack(&file_dst).map_err(|e| {
+                    TarError::new(&format!("failed to unpack `{}`",
+                                           file_dst.display()), e)
+                }));
+
+            }
         }
         Ok(())
     }
