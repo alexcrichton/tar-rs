@@ -25,3 +25,10 @@ xattr = "0.1.7"
 [dev-dependencies]
 tempdir = "0.3"
 xattr = "0.1.7"
+
+[target.'cfg(windows)'.dependencies]
+libc = "0.2"
+filetime = "0.1.5"
+
+[target.'cfg(windows)'.dev-dependencies]
+tempdir = "0.3"
