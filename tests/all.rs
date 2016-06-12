@@ -1,6 +1,8 @@
 extern crate filetime;
 extern crate tar;
 extern crate tempdir;
+#[cfg(unix)]
+extern crate xattr;
 
 use std::fs::{self, File};
 use std::io::prelude::*;
@@ -173,6 +175,30 @@ fn extracting_directories() {
     let mut ar = Archive::new(rdr);
     t!(ar.unpack(td.path()));
     check_dirtree(&td);
+}
+
+#[test]
+#[cfg(unix)]
+fn xattrs() {
+    let td = t!(TempDir::new("tar-rs"));
+    let rdr = Cursor::new(tar!("xattrs.tar"));
+    let mut ar = Archive::new(rdr);
+    t!(ar.unpack_preserving_xattrs(td.path()));
+
+    let val = xattr::get(td.path().join("a/b"), "user.pax.flags").unwrap();
+	assert_eq!(val, "epm".as_bytes());
+}
+
+#[test]
+#[should_panic]
+#[cfg(unix)]
+fn no_xattrs() {
+	let td = t!(TempDir::new("tar-rs"));
+	let rdr = Cursor::new(tar!("xattrs.tar"));
+	let mut ar = Archive::new(rdr);
+	t!(ar.unpack(td.path()));
+
+	t!(xattr::get(td.path().join("a/b"), "user.pax.flags"));
 }
 
 #[test]
