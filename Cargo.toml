@@ -17,12 +17,12 @@ writers. Additionally, great lengths are taken to ensure that the entire
 contents are never required to be entirely resident in memory all at once.
 """
 
-[dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 filetime = "0.1.5"
 xattr = "0.1.7"
 
-[dev-dependencies]
+[target.'cfg(unix)'.dev-dependencies]
 tempdir = "0.3"
 xattr = "0.1.7"
 
