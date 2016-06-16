@@ -15,6 +15,7 @@ use {Entry, Header, GnuSparseHeader, GnuExtSparseHeader};
 ///
 /// This archive can have an entry added to it and it can be iterated over.
 pub struct Archive<R: ?Sized + Read> {
+    unpack_xattrs: bool,
     inner: ArchiveInner<R>,
 }
 
@@ -40,6 +41,7 @@ impl<R: Read> Archive<R> {
     /// Create a new archive with the underlying object as the reader.
     pub fn new(obj: R) -> Archive<R> {
         Archive {
+            unpack_xattrs: false,
             inner: ArchiveInner {
                 obj: RefCell::new(::AlignHigher(0, obj)),
                 pos: Cell::new(0),
@@ -86,16 +88,14 @@ impl<R: Read> Archive<R> {
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
         let me: &mut Archive<Read> = self;
-        me._unpack(dst.as_ref(), false)
+        me._unpack(dst.as_ref())
     }
 
-    /// This function has a similar behavior as unpack(), but preserves extended
-    /// file attributes. That also means, that this function shouldn't works if dst
-    /// is placed in pseudo file systems.
+    /// Sets the flag determining the behavior of unpack(). If flag is set to
+    /// true, unpack() will preserve extended file attributes (xattrs).
     #[cfg(unix)]
-    pub fn unpack_preserving_xattrs<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        let me: &mut Archive<Read> = self;
-        me._unpack(dst.as_ref(), true)
+    pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
+        self.unpack_xattrs = unpack_xattrs;
     }
 
 }
@@ -114,7 +114,8 @@ impl<'a> Archive<Read + 'a> {
         })
     }
 
-    fn _unpack(&mut self, dst: &Path, preserve_xattrs: bool) -> io::Result<()> {
+    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+        let unpack_xattrs = self.unpack_xattrs;
         'outer: for entry in try!(self._entries()) {
             let mut file = try!(entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
@@ -170,18 +171,11 @@ impl<'a> Archive<Read + 'a> {
                                            parent.display()), e)
                 }));
             }
-            if preserve_xattrs {
-                try!(file.unpack_preserving_xattrs(&file_dst).map_err(|e| {
-                    TarError::new(&format!("failed to unpack `{}`",
-                                           file_dst.display()), e)
-                }));
-            } else {
-                try!(file.unpack(&file_dst).map_err(|e| {
-                    TarError::new(&format!("failed to unpack `{}`",
-                                           file_dst.display()), e)
-                }));
-
-            }
+            file.set_unpack_xattrs(unpack_xattrs);
+            try!(file.unpack(&file_dst).map_err(|e| {
+                TarError::new(&format!("failed to unpack `{}`",
+                                       file_dst.display()), e)
+            }));
         }
         Ok(())
     }
