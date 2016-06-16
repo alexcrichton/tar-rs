@@ -326,7 +326,7 @@ impl Header {
         if let Some(ustar) = self.as_ustar_mut() {
             return ustar.set_path(path)
         }
-        copy_path_into(&mut self.as_old_mut().name, path)
+        copy_path_into(&mut self.as_old_mut().name, path, false)
     }
 
     /// Returns the link name stored in this header, if any is found.
@@ -370,7 +370,7 @@ impl Header {
     }
 
     fn _set_link_name(&mut self, path: &Path) -> io::Result<()> {
-        copy_path_into(&mut self.as_old_mut().linkname, path)
+        copy_path_into(&mut self.as_old_mut().linkname, path, true)
     }
 
     /// Returns the mode bits for this file
@@ -695,7 +695,7 @@ impl UstarHeader {
         let bytes = try!(path2bytes(path));
         let (maxnamelen, maxprefixlen) = (self.name.len(), self.prefix.len());
         if bytes.len() <= maxnamelen {
-            try!(copy_path_into(&mut self.name, path));
+            try!(copy_path_into(&mut self.name, path, false));
         } else {
             let mut prefix = path;
             let mut prefixlen;
@@ -710,9 +710,9 @@ impl UstarHeader {
                     break
                 }
             }
-            try!(copy_path_into(&mut self.prefix, prefix));
+            try!(copy_path_into(&mut self.prefix, prefix, false));
             let path = try!(bytes2path(Cow::Borrowed(&bytes[prefixlen + 1..])));
-            try!(copy_path_into(&mut self.name, &path));
+            try!(copy_path_into(&mut self.name, &path, false));
         }
         Ok(())
     }
@@ -945,26 +945,36 @@ fn copy_into(slot: &mut [u8], bytes: &[u8]) -> io::Result<()> {
 /// * a nul byte was found
 /// * an invalid path component is encountered (e.g. a root path or parent dir)
 /// * the path itself is empty
-fn copy_path_into(mut slot: &mut [u8], path: &Path) -> io::Result<()> {
+fn copy_path_into(mut slot: &mut [u8],
+                  path: &Path,
+                  is_link_name: bool) -> io::Result<()> {
     let mut emitted = false;
-    for part in path.components() {
-        let part = match part {
+    for component in path.components() {
+        let bytes = try!(path2bytes(Path::new(component.as_os_str())));
+        match component {
+            Component::Prefix(..) |
+            Component::RootDir if is_link_name => {
+                try!(copy(&mut slot, bytes));
+                continue
+            }
             Component::Prefix(..) |
             Component::RootDir => {
                 return Err(other("paths in archives must be relative"))
             }
+            Component::ParentDir if is_link_name => {},
             Component::ParentDir => {
                 return Err(other("paths in archives must not have `..`"))
             }
             Component::CurDir => continue,
-            Component::Normal(part) => part,
+            Component::Normal(_) => {}
         };
         if emitted {
             try!(copy(&mut slot, &[b'/']));
         }
-        let bytes = try!(path2bytes(Path::new(part)));
         if bytes.contains(&b'/') {
-            return Err(other("path component in archive cannot contain `/`"))
+            if let Component::Normal(..) = component {
+                return Err(other("path component in archive cannot contain `/`"))
+            }
         }
         try!(copy(&mut slot, bytes));
         emitted = true;

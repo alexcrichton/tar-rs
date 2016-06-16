@@ -35,6 +35,10 @@ fn link_name() {
     let mut h = Header::new_gnu();
     t!(h.set_link_name("foo"));
     assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo"));
+    t!(h.set_link_name("../foo"));
+    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("../foo"));
+    t!(h.set_link_name("/foo"));
+    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("/foo"));
     t!(h.set_link_name("foo/bar"));
     assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/bar"));
     t!(h.set_link_name("foo\\ba"));
