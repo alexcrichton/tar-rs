@@ -953,11 +953,6 @@ fn copy_path_into(mut slot: &mut [u8],
         let bytes = try!(path2bytes(Path::new(component.as_os_str())));
         match component {
             Component::Prefix(..) |
-            Component::RootDir if is_link_name => {
-                try!(copy(&mut slot, bytes));
-                continue
-            }
-            Component::Prefix(..) |
             Component::RootDir => {
                 return Err(other("paths in archives must be relative"))
             }
