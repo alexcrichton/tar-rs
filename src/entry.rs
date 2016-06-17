@@ -14,8 +14,6 @@ use error::TarError;
 use header::bytes2path;
 use other;
 use pax::pax_extensions;
-#[cfg(unix)]
-use xattr;
 
 /// A read-only view into an entry of an archive.
 ///
@@ -348,6 +346,7 @@ impl<'a> EntryFields<'a> {
         fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
             use std::os::unix::prelude::*;
             use std::ffi::OsStr;
+            use xattr;
 
             let exts = match me.pax_extensions() {
                 Ok(Some(e)) => e,

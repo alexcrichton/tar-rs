@@ -20,6 +20,7 @@
 #![doc(html_root_url = "http://alexcrichton.com/tar-rs")]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
+
 extern crate libc;
 extern crate filetime;
 #[cfg(unix)]
