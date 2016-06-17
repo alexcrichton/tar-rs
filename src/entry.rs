@@ -23,7 +23,6 @@ use xattr;
 /// be inspected. It acts as a file handle by implementing the Reader trait. An
 /// entry cannot be rewritten once inserted into an archive.
 pub struct Entry<'a, R: 'a + Read> {
-    unpack_xattrs: bool,
     fields: EntryFields<'a>,
     _ignored: marker::PhantomData<&'a Archive<R>>,
 }
@@ -37,6 +36,7 @@ pub struct EntryFields<'a> {
     pub header: Header,
     pub size: u64,
     pub data: Vec<EntryIo<'a>>,
+    pub unpack_xattrs: bool,
 }
 
 pub enum EntryIo<'a> {
@@ -150,14 +150,13 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.fields.unpack(dst.as_ref(), self.unpack_xattrs)
+        self.fields.unpack(dst.as_ref())
     }
 
     /// Sets the flag determining the behavior of unpack(). If flag is set to
     /// true, unpack() will preserve extended file attributes (xattrs).
-    #[cfg(unix)]
     pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
-        self.unpack_xattrs = unpack_xattrs;
+        self.fields.unpack_xattrs = unpack_xattrs;
     }
 }
 
@@ -174,7 +173,6 @@ impl<'a> EntryFields<'a> {
 
     pub fn into_entry<R: Read>(self) -> Entry<'a, R> {
         Entry {
-            unpack_xattrs: false,
             fields: self,
             _ignored: marker::PhantomData,
         }
@@ -236,7 +234,7 @@ impl<'a> EntryFields<'a> {
     }
 
     /// Returns access to the header of this entry in the archive.
-    fn unpack(&mut self, dst: &Path, unpack_xattrs: bool) -> io::Result<()> {
+    fn unpack(&mut self, dst: &Path) -> io::Result<()> {
         let kind = self.header.entry_type();
         if kind.is_dir() {
             // If the directory already exists just let it slide
@@ -320,28 +318,8 @@ impl<'a> EntryFields<'a> {
                                         for `{}`", mode, dst.display()), e)
             }));
         }
-        // Windows does not completely support posix xattrs
-        // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
-        if cfg!(target_family = "unix") && unpack_xattrs {
-            let xattr_prefix = "SCHILY.xattr.";
-            if let Ok(Some(pax_exts)) = self.pax_extensions() {
-                let mut pax_extensions = pax_exts;
-                while let Some(Ok(ext)) = pax_extensions.next() {
-                    if let (Ok(key), Ok(value)) = (ext.key(), ext.value()) {
-                        if key.starts_with(xattr_prefix) {
-                            let key = key.trim_left_matches(xattr_prefix);
-							// xattr::set shoudn't work on pseudo fs
-                            try!(xattr::set(dst, key, value.as_bytes()).map_err(|e| {
-                                TarError::new(&format!("failed to set extended \
-                                                        attributes to {}. \
-                                                        Xattrs: key= {}, value= {}.",
-                                                       dst.display(), key, value),
-                                                       e)
-                            }));
-                        }
-                    }
-                }
-            }
+        if self.unpack_xattrs {
+            try!(set_xattrs(self, dst));
         }
         return Ok(());
 
@@ -359,6 +337,48 @@ impl<'a> EntryFields<'a> {
             let mut perm = try!(fs::metadata(dst)).permissions();
             perm.set_readonly(mode & 0o200 != 0o200);
             fs::set_permissions(dst, perm)
+        }
+
+        #[cfg(unix)]
+        fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
+            use std::os::unix::prelude::*;
+            use std::ffi::OsStr;
+
+            let exts = match me.pax_extensions() {
+                Ok(Some(e)) => e,
+                _ => return Ok(()),
+            };
+            let exts = exts.filter_map(|e| e.ok()).filter_map(|e| {
+                let key = e.key_bytes();
+                let prefix = b"SCHILY.xattr.";
+                if key.starts_with(prefix) {
+                    Some((&key[prefix.len()..], e))
+                } else {
+                    None
+                }
+            }).map(|(key, e)| {
+                (OsStr::from_bytes(key), e.value_bytes())
+            });
+
+            for (key, value) in exts {
+                try!(xattr::set(dst, key, value).map_err(|e| {
+                    TarError::new(&format!("failed to set extended \
+                                            attributes to {}. \
+                                            Xattrs: key={:?}, value={:?}.",
+                                           dst.display(),
+                                           key,
+                                           String::from_utf8_lossy(value)),
+                                  e)
+                }));
+            }
+
+            Ok(())
+        }
+        // Windows does not completely support posix xattrs
+        // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
+        #[cfg(windows)]
+        fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
+            Ok(())
         }
     }
 }
