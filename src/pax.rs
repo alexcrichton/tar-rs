@@ -60,24 +60,24 @@ impl<'entry> PaxExtension<'entry> {
     /// Returns the key for this key/value pair parsed as a string.
     ///
     /// May fail if the key isn't actually utf-8.
-    pub fn key(&self) -> Result<&str, str::Utf8Error> {
+    pub fn key(&self) -> Result<&'entry str, str::Utf8Error> {
         str::from_utf8(self.key)
     }
 
     /// Returns the underlying raw bytes for the key of this key/value pair.
-    pub fn key_bytes(&self) -> &[u8] {
+    pub fn key_bytes(&self) -> &'entry [u8] {
         self.key
     }
 
     /// Returns the value for this key/value pair parsed as a string.
     ///
     /// May fail if the value isn't actually utf-8.
-    pub fn value(&self) -> Result<&str, str::Utf8Error> {
+    pub fn value(&self) -> Result<&'entry str, str::Utf8Error> {
         str::from_utf8(self.value)
     }
 
     /// Returns the underlying raw bytes for this value of this key/value pair.
-    pub fn value_bytes(&self) -> &[u8] {
+    pub fn value_bytes(&self) -> &'entry [u8] {
         self.value
     }
 }
