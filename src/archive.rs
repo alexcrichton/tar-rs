@@ -15,6 +15,7 @@ use {Entry, Header, GnuSparseHeader, GnuExtSparseHeader};
 ///
 /// This archive can have an entry added to it and it can be iterated over.
 pub struct Archive<R: ?Sized + Read> {
+    unpack_xattrs: bool,
     inner: ArchiveInner<R>,
 }
 
@@ -40,6 +41,7 @@ impl<R: Read> Archive<R> {
     /// Create a new archive with the underlying object as the reader.
     pub fn new(obj: R) -> Archive<R> {
         Archive {
+            unpack_xattrs: false,
             inner: ArchiveInner {
                 obj: RefCell::new(::AlignHigher(0, obj)),
                 pos: Cell::new(0),
@@ -88,6 +90,14 @@ impl<R: Read> Archive<R> {
         let me: &mut Archive<Read> = self;
         me._unpack(dst.as_ref())
     }
+
+    /// Sets the flag determining the behavior of unpack(). If flag is set to
+    /// true, unpack() will preserve extended file attributes (xattrs).
+    #[cfg(unix)]
+    pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
+        self.unpack_xattrs = unpack_xattrs;
+    }
+
 }
 
 impl<'a> Archive<Read + 'a> {
@@ -105,6 +115,7 @@ impl<'a> Archive<Read + 'a> {
     }
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+        let unpack_xattrs = self.unpack_xattrs;
         'outer: for entry in try!(self._entries()) {
             let mut file = try!(entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
@@ -160,6 +171,7 @@ impl<'a> Archive<Read + 'a> {
                                            parent.display()), e)
                 }));
             }
+            file.set_unpack_xattrs(unpack_xattrs);
             try!(file.unpack(&file_dst).map_err(|e| {
                 TarError::new(&format!("failed to unpack `{}`",
                                        file_dst.display()), e)

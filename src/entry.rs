@@ -14,6 +14,8 @@ use error::TarError;
 use header::bytes2path;
 use other;
 use pax::pax_extensions;
+#[cfg(unix)]
+use xattr;
 
 /// A read-only view into an entry of an archive.
 ///
@@ -21,6 +23,7 @@ use pax::pax_extensions;
 /// be inspected. It acts as a file handle by implementing the Reader trait. An
 /// entry cannot be rewritten once inserted into an archive.
 pub struct Entry<'a, R: 'a + Read> {
+    unpack_xattrs: bool,
     fields: EntryFields<'a>,
     _ignored: marker::PhantomData<&'a Archive<R>>,
 }
@@ -147,7 +150,14 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.fields.unpack(dst.as_ref())
+        self.fields.unpack(dst.as_ref(), self.unpack_xattrs)
+    }
+
+    /// Sets the flag determining the behavior of unpack(). If flag is set to
+    /// true, unpack() will preserve extended file attributes (xattrs).
+    #[cfg(unix)]
+    pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
+        self.unpack_xattrs = unpack_xattrs;
     }
 }
 
@@ -164,6 +174,7 @@ impl<'a> EntryFields<'a> {
 
     pub fn into_entry<R: Read>(self) -> Entry<'a, R> {
         Entry {
+            unpack_xattrs: false,
             fields: self,
             _ignored: marker::PhantomData,
         }
@@ -225,7 +236,7 @@ impl<'a> EntryFields<'a> {
     }
 
     /// Returns access to the header of this entry in the archive.
-    fn unpack(&mut self, dst: &Path) -> io::Result<()> {
+    fn unpack(&mut self, dst: &Path, unpack_xattrs: bool) -> io::Result<()> {
         let kind = self.header.entry_type();
         if kind.is_dir() {
             // If the directory already exists just let it slide
@@ -308,6 +319,29 @@ impl<'a> EntryFields<'a> {
                 TarError::new(&format!("failed to set permissions to {:o} \
                                         for `{}`", mode, dst.display()), e)
             }));
+        }
+        // Windows does not completely support posix xattrs
+        // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
+        if cfg!(target_family = "unix") && unpack_xattrs {
+            let xattr_prefix = "SCHILY.xattr.";
+            if let Ok(Some(pax_exts)) = self.pax_extensions() {
+                let mut pax_extensions = pax_exts;
+                while let Some(Ok(ext)) = pax_extensions.next() {
+                    if let (Ok(key), Ok(value)) = (ext.key(), ext.value()) {
+                        if key.starts_with(xattr_prefix) {
+                            let key = key.trim_left_matches(xattr_prefix);
+							// xattr::set shoudn't work on pseudo fs
+                            try!(xattr::set(dst, key, value.as_bytes()).map_err(|e| {
+                                TarError::new(&format!("failed to set extended \
+                                                        attributes to {}. \
+                                                        Xattrs: key= {}, value= {}.",
+                                                       dst.display(), key, value),
+                                                       e)
+                            }));
+                        }
+                    }
+                }
+            }
         }
         return Ok(());
 

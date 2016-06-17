@@ -23,3 +23,9 @@ filetime = "0.1.5"
 
 [dev-dependencies]
 tempdir = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+xattr = "0.1.7"
+
+[target.'cfg(unix)'.dev-dependencies]
+xattr = "0.1.7"
