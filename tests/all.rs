@@ -191,7 +191,6 @@ fn xattrs() {
 }
 
 #[test]
-#[should_panic]
 #[cfg(unix)]
 fn no_xattrs() {
 	let td = t!(TempDir::new("tar-rs"));
@@ -200,7 +199,7 @@ fn no_xattrs() {
     ar.set_unpack_xattrs(false);
 	t!(ar.unpack(td.path()));
 
-	t!(xattr::get(td.path().join("a/b"), "user.pax.flags"));
+	xattr::get(td.path().join("a/b"), "user.pax.flags").unwrap_err();
 }
 
 #[test]
