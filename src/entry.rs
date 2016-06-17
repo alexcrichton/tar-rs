@@ -153,8 +153,13 @@ impl<'a, R: Read> Entry<'a, R> {
         self.fields.unpack(dst.as_ref())
     }
 
-    /// Sets the flag determining the behavior of unpack(). If flag is set to
-    /// true, unpack() will preserve extended file attributes (xattrs).
+    /// Indicate whether extended file attributes (xattrs on Unix) are preserved
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default and is currently only implemented on
+    /// Unix using xattr support. This may eventually be implemented for
+    /// Windows, however, if other archive implementations are found which do
+    /// this as well.
     pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
         self.fields.unpack_xattrs = unpack_xattrs;
     }
