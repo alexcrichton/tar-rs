@@ -15,8 +15,8 @@ use tar::Archive;
 fn main() {
     let first_arg = args_os().skip(1).next().unwrap();
     let filename = Path::new(&first_arg);
-    let mut arch = Archive::new(stdin());
-    for file in arch.entries().unwrap() {
+    let mut ar = Archive::new(stdin());
+    for file in ar.entries().unwrap() {
         let mut f = file.unwrap();
         if f.path().unwrap() == filename {
             copy(&mut f, &mut stdout()).unwrap();

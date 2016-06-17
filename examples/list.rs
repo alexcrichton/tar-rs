@@ -9,9 +9,9 @@ use std::io::stdin;
 use tar::Archive;
 
 fn main() {
-    let mut arch = Archive::new(stdin());
-    for file in arch.entries().unwrap() {
-        let f= file.unwrap();
+    let mut ar = Archive::new(stdin());
+    for file in ar.entries().unwrap() {
+        let f = file.unwrap();
         println!("{}", f.path().unwrap().display());
     }
 }
