@@ -113,7 +113,6 @@ impl<'a> Archive<Read + 'a> {
     }
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
-        let unpack_xattrs = self.inner.unpack_xattrs;
         'outer: for entry in try!(self._entries()) {
             let mut file = try!(entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
@@ -169,7 +168,6 @@ impl<'a> Archive<Read + 'a> {
                                            parent.display()), e)
                 }));
             }
-            file.set_unpack_xattrs(unpack_xattrs);
             try!(file.unpack(&file_dst).map_err(|e| {
                 TarError::new(&format!("failed to unpack `{}`",
                                        file_dst.display()), e)
@@ -262,7 +260,7 @@ impl<'a> EntriesFields<'a> {
             long_pathname: None,
             long_linkname: None,
             pax_extensions: None,
-            unpack_xattrs: false,
+            unpack_xattrs: self.archive.inner.unpack_xattrs,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
