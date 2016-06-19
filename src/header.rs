@@ -128,7 +128,7 @@ impl Header {
             gnu.magic = *b"ustar ";
             gnu.version = *b" \0";
         }
-        return header
+        header
     }
 
     /// Creates a new blank UStar header.
@@ -145,7 +145,7 @@ impl Header {
             gnu.magic = *b"ustar\0";
             gnu.version = *b"00";
         }
-        return header
+        header
     }
 
     /// Creates a new blank old header.
@@ -670,10 +670,10 @@ impl UstarHeader {
             let mut bytes = Vec::new();
             let prefix = truncate(&self.prefix);
             if prefix.len() > 0 {
-                bytes.extend(prefix);
+                bytes.extend_from_slice(prefix);
                 bytes.push(b'/');
             }
-            bytes.extend(truncate(&self.name));
+            bytes.extend_from_slice(truncate(&self.name));
             Cow::Owned(bytes)
         }
     }
@@ -949,6 +949,7 @@ fn copy_path_into(mut slot: &mut [u8],
                   path: &Path,
                   is_link_name: bool) -> io::Result<()> {
     let mut emitted = false;
+    let cur_dir_is_path = path.components().filter(|x| x == &Component::CurDir).count() == 1;
     for component in path.components() {
         let bytes = try!(path2bytes(Path::new(component.as_os_str())));
         match component {
@@ -959,7 +960,8 @@ fn copy_path_into(mut slot: &mut [u8],
             Component::ParentDir if is_link_name => {},
             Component::ParentDir => {
                 return Err(other("paths in archives must not have `..`"))
-            }
+            },
+            Component::CurDir if cur_dir_is_path => {},
             Component::CurDir => continue,
             Component::Normal(_) => {}
         };
