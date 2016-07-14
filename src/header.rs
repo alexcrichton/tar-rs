@@ -602,6 +602,15 @@ impl Header {
         self.set_uid(meta.uid() as u32);
         self.set_gid(meta.gid() as u32);
 
+        // Note that if we are a GNU header we *could* set atime/ctime, except
+        // the `tar` utility doesn't do that by default and it causes problems
+        // with 7-zip [1].
+        //
+        // It's always possible to fill them out manually, so we just don't fill
+        // it out automatically here.
+        //
+        // [1]: https://github.com/alexcrichton/tar-rs/issues/70
+
         // TODO: need to bind more file types
         self.set_entry_type(match meta.mode() as libc::mode_t & libc::S_IFMT {
             libc::S_IFREG => EntryType::file(),
