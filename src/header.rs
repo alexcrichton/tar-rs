@@ -599,10 +599,6 @@ impl Header {
 
         self.set_mode((meta.mode() & 0o3777) as u32);
         self.set_mtime(meta.mtime() as u64);
-        if let Some(gnu) = self.as_gnu_mut() {
-            gnu.set_atime(meta.atime() as u64);
-            gnu.set_ctime(meta.ctime() as u64);
-        }
         self.set_uid(meta.uid() as u32);
         self.set_gid(meta.gid() as u32);
 
