@@ -35,6 +35,7 @@ pub struct EntryFields<'a> {
     pub size: u64,
     pub data: Vec<EntryIo<'a>>,
     pub unpack_xattrs: bool,
+    pub preserve_permissions: bool,
 }
 
 pub enum EntryIo<'a> {
@@ -160,6 +161,15 @@ impl<'a, R: Read> Entry<'a, R> {
     /// this as well.
     pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
         self.fields.unpack_xattrs = unpack_xattrs;
+    }
+
+    /// Indicate whether extended permissions (like suid on Unix) are preserved
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default and is currently only implemented on
+    /// Unix.
+    pub fn set_preserve_permissions(&mut self, preserve: bool) {
+        self.fields.preserve_permissions = preserve;
     }
 }
 
@@ -316,7 +326,7 @@ impl<'a> EntryFields<'a> {
             }));
         }
         if let Ok(mode) = self.header.mode() {
-            try!(set_perms(dst, mode).map_err(|e| {
+            try!(set_perms(dst, mode, self.preserve_permissions).map_err(|e| {
                 TarError::new(&format!("failed to set permissions to {:o} \
                                         for `{}`", mode, dst.display()), e)
             }));
@@ -328,15 +338,21 @@ impl<'a> EntryFields<'a> {
 
         #[cfg(unix)]
         #[allow(deprecated)] // raw deprecated in 1.8
-        fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
+        fn set_perms(dst: &Path, mode: u32, preserve: bool) -> io::Result<()> {
             use std::os::unix::raw;
             use std::os::unix::prelude::*;
+
+            let mode = if preserve {
+                mode
+            } else {
+                mode & 0o777
+            };
 
             let perm = fs::Permissions::from_mode(mode as raw::mode_t);
             fs::set_permissions(dst, perm)
         }
         #[cfg(windows)]
-        fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
+        fn set_perms(dst: &Path, mode: u32, _preserve: bool) -> io::Result<()> {
             let mut perm = try!(fs::metadata(dst)).permissions();
             perm.set_readonly(mode & 0o200 != 0o200);
             fs::set_permissions(dst, perm)

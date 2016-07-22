@@ -21,6 +21,7 @@ pub struct Archive<R: ?Sized + Read> {
 pub struct ArchiveInner<R: ?Sized> {
     pos: Cell<u64>,
     unpack_xattrs: bool,
+    preserve_permissions: bool,
     obj: RefCell<::AlignHigher<R>>,
 }
 
@@ -43,6 +44,7 @@ impl<R: Read> Archive<R> {
         Archive {
             inner: ArchiveInner {
                 unpack_xattrs: false,
+                preserve_permissions: false,
                 obj: RefCell::new(::AlignHigher(0, obj)),
                 pos: Cell::new(0),
             },
@@ -100,6 +102,15 @@ impl<R: Read> Archive<R> {
     /// this as well.
     pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
         self.inner.unpack_xattrs = unpack_xattrs;
+    }
+
+    /// Indicate whether extended permissions (like suid on Unix) are preserved
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default and is currently only implemented on
+    /// Unix.
+    pub fn set_preserve_permissions(&mut self, preserve: bool) {
+        self.inner.preserve_permissions = preserve;
     }
 }
 
@@ -266,6 +277,7 @@ impl<'a> EntriesFields<'a> {
             long_linkname: None,
             pax_extensions: None,
             unpack_xattrs: self.archive.inner.unpack_xattrs,
+            preserve_permissions: self.archive.inner.preserve_permissions,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
