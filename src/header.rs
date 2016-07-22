@@ -382,7 +382,7 @@ impl Header {
 
     /// Encodes the `mode` provided into this header.
     pub fn set_mode(&mut self, mode: u32) {
-        octal_into(&mut self.as_old_mut().mode, mode & 0o3777);
+        octal_into(&mut self.as_old_mut().mode, mode);
     }
 
     /// Returns the value of the owner's user ID field
@@ -597,7 +597,7 @@ impl Header {
     fn fill_from(&mut self, meta: &fs::Metadata) {
         use libc;
 
-        self.set_mode((meta.mode() & 0o3777) as u32);
+        self.set_mode(meta.mode() as u32);
         self.set_mtime(meta.mtime() as u64);
         self.set_uid(meta.uid() as u32);
         self.set_gid(meta.gid() as u32);
