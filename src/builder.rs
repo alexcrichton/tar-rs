@@ -244,6 +244,10 @@ fn append_fs(dst: &mut Write,
         }
         let mut header2 = Header::new_gnu();
         try!(header2.set_path("././@LongLink"));
+        header2.set_mode(0o644);
+        header2.set_uid(0);
+        header2.set_gid(0);
+        header2.set_mtime(0);
         header2.set_size((data.len() + 1) as u64);
         header2.set_entry_type(EntryType::new(b'L'));
         header2.set_cksum();
