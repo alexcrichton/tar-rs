@@ -128,7 +128,7 @@ impl Header {
             gnu.magic = *b"ustar ";
             gnu.version = *b" \0";
         }
-        return header
+        header
     }
 
     /// Creates a new blank UStar header.
@@ -145,7 +145,7 @@ impl Header {
             gnu.magic = *b"ustar\0";
             gnu.version = *b"00";
         }
-        return header
+        header
     }
 
     /// Creates a new blank old header.
@@ -675,10 +675,10 @@ impl UstarHeader {
             let mut bytes = Vec::new();
             let prefix = truncate(&self.prefix);
             if prefix.len() > 0 {
-                bytes.extend(prefix);
+                bytes.extend_from_slice(prefix);
                 bytes.push(b'/');
             }
-            bytes.extend(truncate(&self.name));
+            bytes.extend_from_slice(truncate(&self.name));
             Cow::Owned(bytes)
         }
     }
@@ -901,6 +901,12 @@ impl GnuExtSparseHeader {
     }
 }
 
+impl Default for GnuExtSparseHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
     let num = match str::from_utf8(truncate(slice)) {
         Ok(n) => n,
@@ -920,7 +926,7 @@ fn octal_into<T: fmt::Octal>(dst: &mut [u8], val: T) {
     }
 }
 
-fn truncate<'a>(slice: &'a [u8]) -> &'a [u8] {
+fn truncate(slice: &[u8]) -> &[u8] {
     match slice.iter().position(|i| *i == 0) {
         Some(i) => &slice[..i],
         None => slice,
