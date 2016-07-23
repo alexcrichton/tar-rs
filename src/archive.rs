@@ -411,7 +411,7 @@ impl<'a> EntriesFields<'a> {
                 data.push(EntryIo::Data(reader.take(len)));
                 Ok(())
             };
-            for block in &gnu.sparse {
+            for block in gnu.sparse.iter() {
                 try!(add_block(block))
             }
             if gnu.is_extended() {
@@ -420,7 +420,7 @@ impl<'a> EntriesFields<'a> {
                 while ext.is_extended() {
                     try!(read_all(&mut &self.archive.inner, ext.as_mut_bytes()));
                     self.next += 512;
-                    for block in &ext.sparse {
+                    for block in ext.sparse.iter() {
                         try!(add_block(block));
                     }
                 }
