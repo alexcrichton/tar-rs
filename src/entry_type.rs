@@ -69,21 +69,21 @@ impl EntryType {
 
     /// Returns the raw underlying byte that this entry type represents.
     pub fn as_byte(&self) -> u8 {
-        match self {
-            &EntryType::Regular       => b'0',
-            &EntryType::Link          => b'1',
-            &EntryType::Symlink       => b'2',
-            &EntryType::Char          => b'3',
-            &EntryType::Block         => b'4',
-            &EntryType::Directory     => b'5',
-            &EntryType::Fifo          => b'6',
-            &EntryType::Continuous    => b'7',
-            &EntryType::XHeader       => b'x',
-            &EntryType::XGlobalHeader => b'g',
-            &EntryType::GNULongName   => b'L',
-            &EntryType::GNULongLink   => b'K',
-            &EntryType::GNUSparse     => b'S',
-            &EntryType::__Nonexhaustive(b) => b,
+        match *self {
+            EntryType::Regular       => b'0',
+            EntryType::Link          => b'1',
+            EntryType::Symlink       => b'2',
+            EntryType::Char          => b'3',
+            EntryType::Block         => b'4',
+            EntryType::Directory     => b'5',
+            EntryType::Fifo          => b'6',
+            EntryType::Continuous    => b'7',
+            EntryType::XHeader       => b'x',
+            EntryType::XGlobalHeader => b'g',
+            EntryType::GNULongName   => b'L',
+            EntryType::GNULongLink   => b'K',
+            EntryType::GNUSparse     => b'S',
+            EntryType::__Nonexhaustive(b) => b,
         }
     }
 
