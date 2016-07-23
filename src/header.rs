@@ -953,39 +953,44 @@ fn copy_into(slot: &mut [u8], bytes: &[u8]) -> io::Result<()> {
 fn copy_path_into(mut slot: &mut [u8],
                   path: &Path,
                   is_link_name: bool) -> io::Result<()> {
-    let mut emitted = false;
-    for component in path.components() {
-        let bytes = try!(path2bytes(Path::new(component.as_os_str())));
-        match component {
-            Component::Prefix(..) |
-            Component::RootDir => {
-                return Err(other("paths in archives must be relative"))
+    if path == Path::new("././@LongLink") {
+        let bytes = try!(path2bytes(&path));
+        return copy(&mut slot, bytes);
+    } else {
+        let mut emitted = false;
+        for component in path.components() {
+            let bytes = try!(path2bytes(Path::new(component.as_os_str())));
+            match component {
+                Component::Prefix(..) |
+                Component::RootDir => {
+                    return Err(other("paths in archives must be relative"))
+                }
+                Component::ParentDir if is_link_name => {},
+                Component::ParentDir => {
+                    return Err(other("paths in archives must not have `..`"))
+                }
+                Component::CurDir => continue,
+                Component::Normal(_) => {}
+            };
+            if emitted {
+                try!(copy(&mut slot, &[b'/']));
             }
-            Component::ParentDir if is_link_name => {},
-            Component::ParentDir => {
-                return Err(other("paths in archives must not have `..`"))
+            if bytes.contains(&b'/') {
+                if let Component::Normal(..) = component {
+                    return Err(other("path component in archive cannot contain `/`"))
+                }
             }
-            Component::CurDir => continue,
-            Component::Normal(_) => {}
-        };
-        if emitted {
+            try!(copy(&mut slot, bytes));
+            emitted = true;
+        }
+        if !emitted {
+            return Err(other("paths in archives must have at least one component"))
+        }
+        if ends_with_slash(path) {
             try!(copy(&mut slot, &[b'/']));
         }
-        if bytes.contains(&b'/') {
-            if let Component::Normal(..) = component {
-                return Err(other("path component in archive cannot contain `/`"))
-            }
-        }
-        try!(copy(&mut slot, bytes));
-        emitted = true;
+        return Ok(());
     }
-    if !emitted {
-        return Err(other("paths in archives must have at least one component"))
-    }
-    if ends_with_slash(path) {
-        try!(copy(&mut slot, &[b'/']));
-    }
-    return Ok(());
 
     fn copy(slot: &mut &mut [u8], bytes: &[u8]) -> io::Result<()> {
         try!(copy_into(*slot, bytes));
