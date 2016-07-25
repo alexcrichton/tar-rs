@@ -243,7 +243,7 @@ fn append_fs(dst: &mut Write,
             return Err(e)
         }
         let mut header2 = Header::new_gnu();
-        try!(header2.set_path("././@LongLink"));
+        header2.as_gnu_mut().unwrap().name[..13].clone_from_slice(b"././@LongLink");
         header2.set_mode(0o644);
         header2.set_uid(0);
         header2.set_gid(0);
