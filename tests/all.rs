@@ -556,6 +556,9 @@ fn encoded_long_name_has_trailing_nul() {
     let mut name = Vec::new();
     t!(e.read_to_end(&mut name));
     assert_eq!(name[name.len() - 1], 0);
+
+    let header_name = &e.header().as_gnu().unwrap().name;
+    assert!(header_name.starts_with(b"././@LongLink\x00"));
 }
 
 #[test]
