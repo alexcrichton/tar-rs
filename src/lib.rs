@@ -23,7 +23,7 @@
 
 extern crate libc;
 extern crate filetime;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "xattr"))]
 extern crate xattr;
 
 use std::io::{Error, ErrorKind};

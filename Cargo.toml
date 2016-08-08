@@ -25,4 +25,7 @@ filetime = "0.1.5"
 tempdir = "0.3"
 
 [target."cfg(unix)".dependencies]
-xattr = "0.1.7"
+xattr = { version = "0.1.7", optional = true }
+
+[features]
+default = ["xattr"]

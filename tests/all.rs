@@ -1,7 +1,7 @@
 extern crate filetime;
 extern crate tar;
 extern crate tempdir;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "xattr"))]
 extern crate xattr;
 
 use std::fs::{self, File};
@@ -178,7 +178,7 @@ fn extracting_directories() {
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(all(unix, feature = "xattr"))]
 fn xattrs() {
     let td = t!(TempDir::new("tar-rs"));
     let rdr = Cursor::new(tar!("xattrs.tar"));
@@ -191,7 +191,7 @@ fn xattrs() {
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(all(unix, feature = "xattr"))]
 fn no_xattrs() {
 	let td = t!(TempDir::new("tar-rs"));
 	let rdr = Cursor::new(tar!("xattrs.tar"));

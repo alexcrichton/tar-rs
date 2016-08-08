@@ -358,7 +358,7 @@ impl<'a> EntryFields<'a> {
             fs::set_permissions(dst, perm)
         }
 
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "xattr"))]
         fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
             use std::os::unix::prelude::*;
             use std::ffi::OsStr;
@@ -396,7 +396,7 @@ impl<'a> EntryFields<'a> {
         }
         // Windows does not completely support posix xattrs
         // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
-        #[cfg(windows)]
+        #[cfg(any(windows, not(feature = "xattr")))]
         fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
             Ok(())
         }
