@@ -30,4 +30,4 @@ addons:
       - libdw-dev
 env:
   global:
-    secure: UheHECBlvtxfXyN6Me+v1UIjvAwV+VXXSpvVe4X34Yj4mlO4OgnB9XrakGcnO3mZnzphXxjpQ7qPgTVXkKLphzAhCOBXzh7rohSqgBcAh+nBbaXDvGf3gVFYff7lve4dO/82wCaR8a9w5Qgcc0/6DmsUeQHyj13YM3mm6P1lesE=
+    secure: "BkV2h2/dkKFUBhdiN3CvUt/zVdIsLhqlVIpS5uV5mQNyiQyZQ+czCmxvAoBF0r6ER6gdbUwvtBVTZ9fT+JmdpxcRJB7/oJ535MYRVkng13GjmDjj3y4KbGZdKsXgNpWPk5EbpFYZ6VdJ6LnEOBEE2aWbAbHwXgWxDCQtlgTeoXQ="
