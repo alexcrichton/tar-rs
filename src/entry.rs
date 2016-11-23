@@ -4,7 +4,7 @@ use std::fs;
 use std::io::prelude::*;
 use std::io::{self, SeekFrom};
 use std::marker;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use filetime::{self, FileTime};
 
@@ -150,6 +150,90 @@ impl<'a, R: Read> Entry<'a, R> {
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
         self.fields.unpack(dst.as_ref())
+    }
+
+    /// Extracts this file under the specified path, avoiding security issues.
+    ///
+    /// This function will write the entire contents of this file into the
+    /// location obtained by appending the path of this file in the archive to
+    /// `dst`, creating any intermediate directories if needed. Metadata will
+    /// also be propagated to the path `dst`. Any existing file at the location
+    /// `dst` will be overwritten.
+    ///
+    /// This function carefully avoids writing outside of `dst`. If the file has
+    /// a '..' in its path, this function will skip it and return false.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tar::Archive;
+    ///
+    /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
+    ///
+    /// for (i, file) in ar.entries().unwrap().enumerate() {
+    ///     let mut file = file.unwrap();
+    ///     file.unpack_in("target").unwrap();
+    /// }
+    /// ```
+    pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<bool> {
+        // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
+        // * Leading '/'s are trimmed. For example, `///test` is treated as
+        //   `test`.
+        // * If the filename contains '..', then the file is skipped when
+        //   extracting the tarball.
+        // * '//' within a filename is effectively skipped. An error is
+        //   logged, but otherwise the effect is as if any two or more
+        //   adjacent '/'s within the filename were consolidated into one
+        //   '/'.
+        //
+        // Most of this is handled by the `path` module of the standard
+        // library, but we specially handle a few cases here as well.
+
+        let dst = dst.as_ref();
+        let mut file_dst = dst.to_path_buf();
+        {
+            let path = try!(self.path().map_err(|e| {
+                TarError::new("invalid path in entry header", e)
+            }));
+            for part in path.components() {
+                match part {
+                    // Leading '/' characters, root paths, and '.'
+                    // components are just ignored and treated as "empty
+                    // components"
+                    Component::Prefix(..) |
+                    Component::RootDir |
+                    Component::CurDir => continue,
+
+                    // If any part of the filename is '..', then skip over
+                    // unpacking the file to prevent directory traversal
+                    // security issues.  See, e.g.: CVE-2001-1267,
+                    // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
+                    Component::ParentDir => return Ok(false),
+
+                    Component::Normal(part) => file_dst.push(part),
+                }
+            }
+        }
+
+        // Skip cases where only slashes or '.' parts were seen, because
+        // this is effectively an empty filename.
+        if *dst == *file_dst {
+            return Ok(true);
+        }
+
+        if let Some(parent) = file_dst.parent() {
+            try!(fs::create_dir_all(&parent).map_err(|e| {
+                TarError::new(&format!("failed to create `{}`",
+                                       parent.display()), e)
+            }));
+        }
+        try!(self.unpack(&file_dst).map_err(|e| {
+            TarError::new(&format!("failed to unpack `{}`",
+                                   file_dst.display()), e)
+        }));
+
+        Ok(true)
     }
 
     /// Indicate whether extended file attributes (xattrs on Unix) are preserved

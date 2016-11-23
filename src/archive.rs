@@ -1,10 +1,9 @@
 use std::cell::{RefCell, Cell};
 use std::cmp;
-use std::fs;
 use std::io::prelude::*;
 use std::io;
 use std::marker;
-use std::path::{Path, Component};
+use std::path::Path;
 
 use entry::{EntryFields, EntryIo};
 use error::TarError;
@@ -129,65 +128,11 @@ impl<'a> Archive<Read + 'a> {
     }
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
-        'outer: for entry in try!(self._entries()) {
+        for entry in try!(self._entries()) {
             let mut file = try!(entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
             }));
-
-            // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
-            // * Leading '/'s are trimmed. For example, `///test` is treated as
-            //   `test`.
-            // * If the filename contains '..', then the file is skipped when
-            //   extracting the tarball.
-            // * '//' within a filename is effectively skipped. An error is
-            //   logged, but otherwise the effect is as if any two or more
-            //   adjacent '/'s within the filename were consolidated into one
-            //   '/'.
-            //
-            // Most of this is handled by the `path` module of the standard
-            // library, but we specially handle a few cases here as well.
-
-            let mut file_dst = dst.to_path_buf();
-            {
-                let path = try!(file.path().map_err(|e| {
-                    TarError::new("invalid path in entry header", e)
-                }));
-                for part in path.components() {
-                    match part {
-                        // Leading '/' characters, root paths, and '.'
-                        // components are just ignored and treated as "empty
-                        // components"
-                        Component::Prefix(..) |
-                        Component::RootDir |
-                        Component::CurDir => continue,
-
-                        // If any part of the filename is '..', then skip over
-                        // unpacking the file to prevent directory traversal
-                        // security issues.  See, e.g.: CVE-2001-1267,
-                        // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
-                        Component::ParentDir => continue 'outer,
-
-                        Component::Normal(part) => file_dst.push(part),
-                    }
-                }
-            }
-
-            // Skip cases where only slashes or '.' parts were seen, because
-            // this is effectively an empty filename.
-            if *dst == *file_dst {
-                continue
-            }
-
-            if let Some(parent) = file_dst.parent() {
-                try!(fs::create_dir_all(&parent).map_err(|e| {
-                    TarError::new(&format!("failed to create `{}`",
-                                           parent.display()), e)
-                }));
-            }
-            try!(file.unpack(&file_dst).map_err(|e| {
-                TarError::new(&format!("failed to unpack `{}`",
-                                       file_dst.display()), e)
-            }));
+            try!(file.unpack_in(dst));
         }
         Ok(())
     }
