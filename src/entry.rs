@@ -4,7 +4,7 @@ use std::fs;
 use std::io::prelude::*;
 use std::io::{self, SeekFrom};
 use std::marker;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
@@ -135,6 +135,12 @@ impl<'a, R: Read> Entry<'a, R> {
     /// that the intermediate directories are created. Any existing file at the
     /// location `dst` will be overwritten.
     ///
+    /// > **Note**: This function does not have as many sanity checks as
+    /// > `Archive::unpack` or `Entry::unpack_in`. As a result if you're
+    /// > thinking of unpacking untrusted tarballs you may want to review the
+    /// > implementations of the previous two functions and perhaps implement
+    /// > similar logic yourself.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -149,7 +155,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.fields.unpack(dst.as_ref())
+        self.fields.unpack(dst.as_ref(), None)
     }
 
     /// Extracts this file under the specified path, avoiding security issues.
@@ -177,63 +183,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<bool> {
-        // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
-        // * Leading '/'s are trimmed. For example, `///test` is treated as
-        //   `test`.
-        // * If the filename contains '..', then the file is skipped when
-        //   extracting the tarball.
-        // * '//' within a filename is effectively skipped. An error is
-        //   logged, but otherwise the effect is as if any two or more
-        //   adjacent '/'s within the filename were consolidated into one
-        //   '/'.
-        //
-        // Most of this is handled by the `path` module of the standard
-        // library, but we specially handle a few cases here as well.
-
-        let dst = dst.as_ref();
-        let mut file_dst = dst.to_path_buf();
-        {
-            let path = try!(self.path().map_err(|e| {
-                TarError::new("invalid path in entry header", e)
-            }));
-            for part in path.components() {
-                match part {
-                    // Leading '/' characters, root paths, and '.'
-                    // components are just ignored and treated as "empty
-                    // components"
-                    Component::Prefix(..) |
-                    Component::RootDir |
-                    Component::CurDir => continue,
-
-                    // If any part of the filename is '..', then skip over
-                    // unpacking the file to prevent directory traversal
-                    // security issues.  See, e.g.: CVE-2001-1267,
-                    // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
-                    Component::ParentDir => return Ok(false),
-
-                    Component::Normal(part) => file_dst.push(part),
-                }
-            }
-        }
-
-        // Skip cases where only slashes or '.' parts were seen, because
-        // this is effectively an empty filename.
-        if *dst == *file_dst {
-            return Ok(true);
-        }
-
-        if let Some(parent) = file_dst.parent() {
-            try!(fs::create_dir_all(&parent).map_err(|e| {
-                TarError::new(&format!("failed to create `{}`",
-                                       parent.display()), e)
-            }));
-        }
-        try!(self.unpack(&file_dst).map_err(|e| {
-            TarError::new(&format!("failed to unpack `{}`",
-                                   file_dst.display()), e)
-        }));
-
-        Ok(true)
+        self.fields.unpack_in(dst.as_ref())
     }
 
     /// Indicate whether extended file attributes (xattrs on Unix) are preserved
@@ -330,8 +280,69 @@ impl<'a> EntryFields<'a> {
         Ok(Some(pax_extensions(self.pax_extensions.as_ref().unwrap())))
     }
 
+    fn unpack_in(&mut self, dst: &Path) -> io::Result<bool> {
+        // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
+        // * Leading '/'s are trimmed. For example, `///test` is treated as
+        //   `test`.
+        // * If the filename contains '..', then the file is skipped when
+        //   extracting the tarball.
+        // * '//' within a filename is effectively skipped. An error is
+        //   logged, but otherwise the effect is as if any two or more
+        //   adjacent '/'s within the filename were consolidated into one
+        //   '/'.
+        //
+        // Most of this is handled by the `path` module of the standard
+        // library, but we specially handle a few cases here as well.
+
+        let mut file_dst = dst.to_path_buf();
+        {
+            let path = try!(self.path().map_err(|e| {
+                TarError::new("invalid path in entry header", e)
+            }));
+            for part in path.components() {
+                match part {
+                    // Leading '/' characters, root paths, and '.'
+                    // components are just ignored and treated as "empty
+                    // components"
+                    Component::Prefix(..) |
+                    Component::RootDir |
+                    Component::CurDir => continue,
+
+                    // If any part of the filename is '..', then skip over
+                    // unpacking the file to prevent directory traversal
+                    // security issues.  See, e.g.: CVE-2001-1267,
+                    // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
+                    Component::ParentDir => return Ok(false),
+
+                    Component::Normal(part) => file_dst.push(part),
+                }
+            }
+        }
+
+        // Skip cases where only slashes or '.' parts were seen, because
+        // this is effectively an empty filename.
+        if *dst == *file_dst {
+            return Ok(true);
+        }
+
+        if let Some(parent) = file_dst.parent() {
+            try!(fs::create_dir_all(&parent).map_err(|e| {
+                TarError::new(&format!("failed to create `{}`",
+                                       parent.display()), e)
+            }));
+        }
+        try!(self.unpack(&file_dst, Some(&dst)).map_err(|e| {
+            TarError::new(&format!("failed to unpack `{}`",
+                                   file_dst.display()), e)
+        }));
+
+        Ok(true)
+    }
+
     /// Returns access to the header of this entry in the archive.
-    fn unpack(&mut self, dst: &Path) -> io::Result<()> {
+    fn unpack(&mut self,
+              dst: &Path,
+              root: Option<&Path>) -> io::Result<()> {
         let kind = self.header.entry_type();
         if kind.is_dir() {
             // If the directory already exists just let it slide
@@ -347,10 +358,54 @@ impl<'a> EntryFields<'a> {
                                           name found"))
             };
 
+            // Ok, we're going to try to create a symlink. We need to protect
+            // against symlinks which point outside the destination root
+            // directory, however. Otherwise it could be possible to
+            // accidentally write files outside there with malformed tarballs.
+            //
+            // To do that we take a look at the link name for this target, `src`
+            // above. We then recreate the target that we're actually going to
+            // link to, `actual_src`. Root directories and the current directory
+            // are skipped (like `unpack_in` above) and `..` is allowed, but
+            // only if it doesn't escape the root directory. This should allow
+            // for relative symlinks within the destination but disallow
+            // symlinks that point outside.
+            let mut target = dst.to_path_buf();
+            target.pop();
+            let mut actual_src = PathBuf::new();
+            for part in src.components() {
+                match part {
+                    Component::Prefix(..) |
+                    Component::RootDir |
+                    Component::CurDir => continue,
+                    Component::ParentDir => {
+                        actual_src.push("..");
+                        if !target.pop() {
+                            return Err(other("symlink destination points \
+                                              outside unpack destination"))
+                        }
+                        if let Some(root) = root {
+                            if !target.starts_with(root) {
+                                return Err(other("symlink destination points \
+                                                  outside unpack destination"))
+                            }
+                        }
+                    }
+                    Component::Normal(part) => {
+                        target.push(part);
+                        actual_src.push(part);
+                    }
+                }
+            }
+            if actual_src.iter().count() == 0 {
+                return Err(other("symlink destination is empty"))
+            }
+
+            println!("{:?} {:?}", actual_src, dst);
             return if kind.is_hard_link() {
-                fs::hard_link(&src, dst)
+                fs::hard_link(&actual_src, dst)
             } else {
-                symlink(&src, dst)
+                symlink(&actual_src, dst)
             };
 
             #[cfg(windows)]
