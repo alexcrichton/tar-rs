@@ -11,7 +11,7 @@ A tar archive reading/writing library for Rust.
 ```toml
 # Cargo.toml
 [dependencies]
-tar = "0.3"
+tar = "0.4"
 ```
 
 ## Reading an archive
