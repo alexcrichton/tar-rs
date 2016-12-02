@@ -960,6 +960,7 @@ fn copy_path_into(mut slot: &mut [u8],
                   path: &Path,
                   is_link_name: bool) -> io::Result<()> {
     let mut emitted = false;
+    let cur_dir_is_path = path.components().filter(|x| x == &Component::CurDir).count() == 1;
     for component in path.components() {
         let bytes = try!(path2bytes(Path::new(component.as_os_str())));
         match component {
@@ -970,7 +971,8 @@ fn copy_path_into(mut slot: &mut [u8],
             Component::ParentDir if is_link_name => {},
             Component::ParentDir => {
                 return Err(other("paths in archives must not have `..`"))
-            }
+            },
+            Component::CurDir if cur_dir_is_path => {},
             Component::CurDir => continue,
             Component::Normal(_) => {}
         };
