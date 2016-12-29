@@ -13,6 +13,13 @@ use std::str;
 use EntryType;
 use other;
 
+pub unsafe trait HeaderFmt {}
+
+unsafe impl HeaderFmt for OldHeader {}
+unsafe impl HeaderFmt for UstarHeader {}
+unsafe impl HeaderFmt for GnuHeader {}
+unsafe impl HeaderFmt for Header {}
+
 /// Representation of the header of an entry in an archive
 #[repr(C)]
 #[allow(missing_docs)]
@@ -158,12 +165,12 @@ impl Header {
         Header { bytes: [0; 512] }
     }
 
-    fn cast<T>(&self) -> &T {
+    fn cast<T: HeaderFmt>(&self) -> &T {
         assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
         unsafe { &*(self as *const Header as *const T) }
     }
 
-    fn cast_mut<T>(&mut self) -> &mut T {
+    fn cast_mut<T: HeaderFmt>(&mut self) -> &mut T {
         assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
         unsafe { &mut *(self as *mut Header as *mut T) }
     }
