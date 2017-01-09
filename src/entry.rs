@@ -2,9 +2,9 @@ use std::borrow::Cow;
 use std::cmp;
 use std::fs;
 use std::io::prelude::*;
-use std::io::{self, SeekFrom};
+use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 use filetime::{self, FileTime};
 
@@ -155,7 +155,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.fields.unpack(dst.as_ref(), None)
+        self.fields.unpack(dst.as_ref())
     }
 
     /// Extracts this file under the specified path, avoiding security issues.
@@ -325,13 +325,28 @@ impl<'a> EntryFields<'a> {
             return Ok(true);
         }
 
-        if let Some(parent) = file_dst.parent() {
+        // Skip entries without a parent (i.e. outside of FS root)
+        let parent = match file_dst.parent() {
+            Some(p) => p,
+            None    => return Ok(false),
+        };
+
+        if !parent.exists() {
             try!(fs::create_dir_all(&parent).map_err(|e| {
                 TarError::new(&format!("failed to create `{}`",
                                        parent.display()), e)
             }));
         }
-        try!(self.unpack(&file_dst, Some(&dst)).map_err(|e| {
+
+        // Abort if target (canonical) parent is outside of `dst`
+        let canon_parent = try!(parent.canonicalize());
+        let canon_dst = try!(dst.canonicalize());
+        if !canon_parent.starts_with(&canon_dst) {
+            return Err(TarError::new("trying to unpack outside of destination path",
+                          Error::new(ErrorKind::Other, "Invalid argument")).into());
+        }
+
+        try!(self.unpack(&file_dst).map_err(|e| {
             TarError::new(&format!("failed to unpack `{}`",
                                    file_dst.display()), e)
         }));
@@ -341,8 +356,7 @@ impl<'a> EntryFields<'a> {
 
     /// Returns access to the header of this entry in the archive.
     fn unpack(&mut self,
-              dst: &Path,
-              root: Option<&Path>) -> io::Result<()> {
+              dst: &Path) -> io::Result<()> {
         let kind = self.header.entry_type();
         if kind.is_dir() {
             // If the directory already exists just let it slide
@@ -358,54 +372,15 @@ impl<'a> EntryFields<'a> {
                                           name found"))
             };
 
-            // Ok, we're going to try to create a symlink. We need to protect
-            // against symlinks which point outside the destination root
-            // directory, however. Otherwise it could be possible to
-            // accidentally write files outside there with malformed tarballs.
-            //
-            // To do that we take a look at the link name for this target, `src`
-            // above. We then recreate the target that we're actually going to
-            // link to, `actual_src`. Root directories and the current directory
-            // are skipped (like `unpack_in` above) and `..` is allowed, but
-            // only if it doesn't escape the root directory. This should allow
-            // for relative symlinks within the destination but disallow
-            // symlinks that point outside.
-            let mut target = dst.to_path_buf();
-            target.pop();
-            let mut actual_src = PathBuf::new();
-            for part in src.components() {
-                match part {
-                    Component::Prefix(..) |
-                    Component::RootDir |
-                    Component::CurDir => continue,
-                    Component::ParentDir => {
-                        actual_src.push("..");
-                        if !target.pop() {
-                            return Err(other("symlink destination points \
-                                              outside unpack destination"))
-                        }
-                        if let Some(root) = root {
-                            if !target.starts_with(root) {
-                                return Err(other("symlink destination points \
-                                                  outside unpack destination"))
-                            }
-                        }
-                    }
-                    Component::Normal(part) => {
-                        target.push(part);
-                        actual_src.push(part);
-                    }
-                }
-            }
-            if actual_src.iter().count() == 0 {
+            if src.iter().count() == 0 {
                 return Err(other("symlink destination is empty"))
             }
 
-            println!("{:?} {:?}", actual_src, dst);
+            println!("{:?} {:?}", src, dst);
             return if kind.is_hard_link() {
-                fs::hard_link(&actual_src, dst)
+                fs::hard_link(&src, dst)
             } else {
-                symlink(&actual_src, dst)
+                symlink(&src, dst)
             };
 
             #[cfg(windows)]

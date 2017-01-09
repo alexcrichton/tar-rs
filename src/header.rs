@@ -962,17 +962,17 @@ fn copy_path_into(mut slot: &mut [u8],
     let mut emitted = false;
     for component in path.components() {
         let bytes = try!(path2bytes(Path::new(component.as_os_str())));
-        match component {
-            Component::Prefix(..) |
-            Component::RootDir => {
+        match (component, is_link_name) {
+            (Component::Prefix(..), false) |
+            (Component::RootDir, false) => {
                 return Err(other("paths in archives must be relative"))
             }
-            Component::ParentDir if is_link_name => {},
-            Component::ParentDir => {
+            (Component::ParentDir, false) => {
                 return Err(other("paths in archives must not have `..`"))
             }
-            Component::CurDir => continue,
-            Component::Normal(_) => {}
+            (Component::CurDir, false) => continue,
+            (Component::Normal(_), _) |
+            (_, true) => {}
         };
         if emitted {
             try!(copy(&mut slot, &[b'/']));
