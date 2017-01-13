@@ -124,7 +124,8 @@ impl Header {
     pub fn new_gnu() -> Header {
         let mut header = Header { bytes: [0; 512] };
         {
-            let gnu = header.cast_mut::<GnuHeader>();
+            // safe to call because GnuHeader is a valid header format
+            let gnu = unsafe { header.cast_mut::<GnuHeader>() };
             gnu.magic = *b"ustar ";
             gnu.version = *b" \0";
         }
@@ -141,7 +142,8 @@ impl Header {
     pub fn new_ustar() -> Header {
         let mut header = Header { bytes: [0; 512] };
         {
-            let gnu = header.cast_mut::<UstarHeader>();
+            // safe to call because UstarHeader is a valid header format
+            let gnu = unsafe { header.cast_mut::<UstarHeader>() };
             gnu.magic = *b"ustar\0";
             gnu.version = *b"00";
         }
@@ -158,23 +160,33 @@ impl Header {
         Header { bytes: [0; 512] }
     }
 
-    fn cast<T>(&self) -> &T {
+    /// Casts to a particular header format
+    ///
+    /// Only safe to be used with the bit-pattern FooHeader types from this
+    /// module.
+    unsafe fn cast<T>(&self) -> &T {
         assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
-        unsafe { &*(self as *const Header as *const T) }
+        &*(self as *const Header as *const T)
     }
 
-    fn cast_mut<T>(&mut self) -> &mut T {
+    /// Casts to a particular header format as a mutable reference
+    ///
+    /// Only safe to be used with the bit-pattern FooHeader types from this
+    /// module.
+    unsafe fn cast_mut<T>(&mut self) -> &mut T {
         assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
-        unsafe { &mut *(self as *mut Header as *mut T) }
+        &mut *(self as *mut Header as *mut T)
     }
 
     fn is_ustar(&self) -> bool {
-        let ustar = self.cast::<UstarHeader>();
+        // safe to call because UstarHeader is a valid header format
+        let ustar = unsafe { self.cast::<UstarHeader>() };
         ustar.magic[..] == b"ustar\0"[..] && ustar.version[..] == b"00"[..]
     }
 
     fn is_gnu(&self) -> bool {
-        let ustar = self.cast::<UstarHeader>();
+        // safe to call because UstarHeader is a valid header format
+        let ustar = unsafe { self.cast::<UstarHeader>() };
         ustar.magic[..] == b"ustar "[..] && ustar.version[..] == b" \0"[..]
     }
 
@@ -183,12 +195,14 @@ impl Header {
     /// This view will always succeed as all archive header formats will fill
     /// out at least the fields specified in the old header format.
     pub fn as_old(&self) -> &OldHeader {
-        self.cast()
+        // safe to call because OldHeader is a valid header format
+        unsafe { self.cast() }
     }
 
     /// Same as `as_old`, but the mutable version.
     pub fn as_old_mut(&mut self) -> &mut OldHeader {
-        self.cast_mut()
+        // safe to call because OldHeader is a valid header format
+        unsafe { self.cast_mut() }
     }
 
     /// View this archive header as a raw UStar archive header.
@@ -201,12 +215,22 @@ impl Header {
     /// magic/version fields of the UStar format have the appropriate values,
     /// returning `None` if they aren't correct.
     pub fn as_ustar(&self) -> Option<&UstarHeader> {
-        if self.is_ustar() {Some(self.cast())} else {None}
+        if self.is_ustar() {
+            // safe to call because UstarHeader is a valid header format
+            unsafe { Some(self.cast()) }
+        } else {
+            None
+        }
     }
 
     /// Same as `as_ustar_mut`, but the mutable version.
     pub fn as_ustar_mut(&mut self) -> Option<&mut UstarHeader> {
-        if self.is_ustar() {Some(self.cast_mut())} else {None}
+        if self.is_ustar() {
+            // safe to call because UstarHeader is a valid header format
+            unsafe { Some(self.cast_mut()) }
+        } else {
+            None
+        }
     }
 
     /// View this archive header as a raw GNU archive header.
@@ -219,12 +243,22 @@ impl Header {
     /// magic/version fields of the GNU format have the appropriate values,
     /// returning `None` if they aren't correct.
     pub fn as_gnu(&self) -> Option<&GnuHeader> {
-        if self.is_gnu() {Some(self.cast())} else {None}
+        if self.is_gnu() {
+            // safe t call because GnuHeader is a valid header format
+            unsafe { Some(self.cast()) }
+        } else {
+            None
+        }
     }
 
     /// Same as `as_gnu`, but the mutable version.
     pub fn as_gnu_mut(&mut self) -> Option<&mut GnuHeader> {
-        if self.is_gnu() {Some(self.cast_mut())} else {None}
+        if self.is_gnu() {
+            // safe t call because GnuHeader is a valid header format
+            unsafe { Some(self.cast_mut()) }
+        } else {
+            None
+        }
     }
 
     /// Returns a view into this header as a byte array.
