@@ -376,7 +376,6 @@ impl<'a> EntryFields<'a> {
                 return Err(other("symlink destination is empty"))
             }
 
-            println!("{:?} {:?}", src, dst);
             return if kind.is_hard_link() {
                 fs::hard_link(&src, dst)
             } else {
