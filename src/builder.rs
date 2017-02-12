@@ -3,6 +3,7 @@ use std::path::Path;
 use std::io::prelude::*;
 use std::fs;
 use std::borrow::Cow;
+use walkdir::WalkDir;
 
 use {EntryType, Header, other};
 use header::{bytes2path, path2bytes};
@@ -171,6 +172,44 @@ impl<W: Write> Builder<W> {
         where P: AsRef<Path>, Q: AsRef<Path>
     {
         append_dir(self.inner(), path.as_ref(), src_path.as_ref())
+    }
+
+    /// Adds a directory and all of its contents (recursively) to this archive
+    /// with the given path as the name of the directory in the archive.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all files have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs;
+    /// use tar::Builder;
+    ///
+    /// let mut ar = Builder::new(Vec::new());
+    ///
+    /// // Use the directory at one location, but insert it into the archive
+    /// // with a different name.
+    /// ar.append_dir_all("bardir", ".").unwrap();
+    /// ```
+    pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
+        where P: AsRef<Path>, Q: AsRef<Path>
+    {
+        for entry in WalkDir::new(&src_path) {
+            let entry = try!(entry);
+            let src = entry.path();
+            let dest = path.as_ref().join(src.strip_prefix(&src_path).unwrap());
+            if entry.file_type().is_dir() {
+                try!(self.append_dir(dest, src));
+            } else {
+                try!(self.append_file(dest, &mut try!(fs::File::open(src))));
+            }
+        }
+        Ok(())
     }
 
     /// Finish writing this archive, emitting the termination sections.

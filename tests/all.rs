@@ -221,6 +221,33 @@ fn writing_and_extracting_directories() {
 }
 
 #[test]
+fn writing_directories_recursively() {
+    let td = t!(TempDir::new("tar-rs"));
+
+    let base_dir = td.path().join("base");
+    t!(fs::create_dir(&base_dir));
+    t!(t!(File::create(base_dir.join("file1"))).write_all(b"file1"));
+    let sub_dir = base_dir.join("sub");
+    t!(fs::create_dir(&sub_dir));
+    t!(t!(File::create(sub_dir.join("file2"))).write_all(b"file2"));
+
+    let mut ar = Builder::new(Vec::new());
+    t!(ar.append_dir_all("foobar", base_dir));
+    let data = t!(ar.into_inner());
+
+    let mut ar = Archive::new(Cursor::new(data));
+    t!(ar.unpack(td.path()));
+    let base_dir = td.path().join("foobar");
+    assert!(fs::metadata(&base_dir).map(|m| m.is_dir()).unwrap_or(false));
+    let file1_path = base_dir.join("file1");
+    assert!(fs::metadata(&file1_path).map(|m| m.is_file()).unwrap_or(false));
+    let sub_dir = base_dir.join("sub");
+    assert!(fs::metadata(&sub_dir).map(|m| m.is_dir()).unwrap_or(false));
+    let file2_path = sub_dir.join("file2");
+    assert!(fs::metadata(&file2_path).map(|m| m.is_file()).unwrap_or(false));
+}
+
+#[test]
 fn extracting_duplicate_dirs() {
     let td = t!(TempDir::new("tar-rs"));
     let rdr = Cursor::new(tar!("duplicate_dirs.tar"));

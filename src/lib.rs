@@ -25,6 +25,7 @@ extern crate libc;
 extern crate filetime;
 #[cfg(all(unix, feature = "xattr"))]
 extern crate xattr;
+extern crate walkdir;
 
 use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};
