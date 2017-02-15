@@ -33,6 +33,8 @@ pub struct EntryFields<'a> {
     pub pax_extensions: Option<Vec<u8>>,
     pub header: Header,
     pub size: u64,
+    pub header_pos: u64,
+    pub file_pos: u64,
     pub data: Vec<EntryIo<'a>>,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
@@ -123,6 +125,26 @@ impl<'a, R: Read> Entry<'a, R> {
     /// This provides access to the the metadata for this entry in the archive.
     pub fn header(&self) -> &Header {
         &self.fields.header
+    }
+
+    /// Returns the starting position, in bytes, of the header of this entry in
+    /// the archive.
+    ///
+    /// The header is always a contiguous section of 512 bytes, so if the
+    /// underlying reader implements `Seek`, then the slice from `header_pos` to
+    /// `header_pos + 512` contains the raw header bytes.
+    pub fn raw_header_position(&self) -> u64 {
+        self.fields.header_pos
+    }
+
+    /// Returns the starting position, in bytes, of the file of this entry in
+    /// the archive.
+    ///
+    /// If the file of this entry is continuous (e.g. not a sparse file), and
+    /// if the underlying reader implements `Seek`, then the slice from
+    /// `file_pos` to `file_pos + entry_size` contains the raw file bytes.
+    pub fn raw_file_position(&self) -> u64 {
+        self.fields.file_pos
     }
 
     /// Writes this file to the specified location.
