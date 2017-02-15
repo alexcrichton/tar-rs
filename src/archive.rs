@@ -183,6 +183,7 @@ impl<'a> EntriesFields<'a> {
         let delta = self.next - self.archive.inner.pos.get();
         try!(self.archive.skip(delta));
 
+        let header_pos = self.next;
         let mut header = Header::new_old();
         try!(read_all(&mut &self.archive.inner, header.as_mut_bytes()));
         self.next += 512;
@@ -212,10 +213,13 @@ impl<'a> EntriesFields<'a> {
             return Err(other("archive header checksum mismatch"))
         }
 
+        let file_pos = self.next;
         let size = try!(header.entry_size());
 
         let ret = EntryFields {
             size: size,
+            header_pos: header_pos,
+            file_pos: file_pos,
             data: vec![EntryIo::Data((&self.archive.inner).take(size))],
             header: header,
             long_pathname: None,
