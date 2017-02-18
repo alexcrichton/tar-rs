@@ -5,22 +5,25 @@ use std::fs;
 use std::borrow::Cow;
 
 use {EntryType, Header, other};
-use header::{bytes2path, path2bytes};
+use header::{bytes2path, HeaderMode, path2bytes};
 
 /// A structure for building archives
 ///
 /// This structure has methods for building up an archive from scratch into any
 /// arbitrary writer.
 pub struct Builder<W: Write> {
+    mode: HeaderMode,
     finished: bool,
     obj: Option<W>,
 }
 
 impl<W: Write> Builder<W> {
     /// Create a new archive builder with the underlying object as the
-    /// destination of all data written.
+    /// destination of all data written. The builder will use
+    /// `HeaderMode::Complete` by default.
     pub fn new(obj: W) -> Builder<W> {
         Builder {
+            mode: HeaderMode::Complete,
             finished: false,
             obj: Some(obj),
         }
@@ -28,6 +31,13 @@ impl<W: Write> Builder<W> {
 
     fn inner(&mut self) -> &mut W {
         self.obj.as_mut().unwrap()
+    }
+
+    /// Changes the HeaderMode that will be used when reading fs Metadata for
+    /// methods that implicitly read metadata for an input Path. Notably, this
+    /// does _not_ apply to `append(Header)`.
+    pub fn mode(&mut self, mode: HeaderMode) {
+        self.mode = mode;
     }
 
     /// Unwrap this archive, returning the underlying object.
@@ -108,7 +118,8 @@ impl<W: Write> Builder<W> {
     /// ar.append_path("foo/bar.txt").unwrap();
     /// ```
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
-        append_path(self.inner(), path.as_ref())
+        let mode = self.mode.clone();
+        append_path(self.inner(), path.as_ref(), mode)
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -139,7 +150,8 @@ impl<W: Write> Builder<W> {
     /// ```
     pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File)
                                        -> io::Result<()> {
-        append_file(self.inner(), path.as_ref(), file)
+        let mode = self.mode.clone();
+        append_file(self.inner(), path.as_ref(), file, mode)
     }
 
     /// Adds a directory to this archive with the given path as the name of the
@@ -170,7 +182,8 @@ impl<W: Write> Builder<W> {
     pub fn append_dir<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
         where P: AsRef<Path>, Q: AsRef<Path>
     {
-        append_dir(self.inner(), path.as_ref(), src_path.as_ref())
+        let mode = self.mode.clone();
+        append_dir(self.inner(), path.as_ref(), src_path.as_ref(), mode)
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -205,32 +218,33 @@ fn append(mut dst: &mut Write,
     Ok(())
 }
 
-fn append_path(dst: &mut Write, path: &Path) -> io::Result<()> {
+fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode) -> io::Result<()> {
     let stat = try!(fs::metadata(path));
     if stat.is_file() {
-        append_fs(dst, path, &stat, &mut try!(fs::File::open(path)))
+        append_fs(dst, path, &stat, &mut try!(fs::File::open(path)), mode)
     } else if stat.is_dir() {
-        append_fs(dst, path, &stat, &mut io::empty())
+        append_fs(dst, path, &stat, &mut io::empty(), mode)
     } else {
         Err(other("path has unknown file type"))
     }
 }
 
-fn append_file(dst: &mut Write, path: &Path, file: &mut fs::File)
+fn append_file(dst: &mut Write, path: &Path, file: &mut fs::File, mode: HeaderMode)
                 -> io::Result<()> {
     let stat = try!(file.metadata());
-    append_fs(dst, path, &stat, file)
+    append_fs(dst, path, &stat, file, mode)
 }
 
-fn append_dir(dst: &mut Write, path: &Path, src_path: &Path) -> io::Result<()> {
+fn append_dir(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode) -> io::Result<()> {
     let stat = try!(fs::metadata(src_path));
-    append_fs(dst, path, &stat, &mut io::empty())
+    append_fs(dst, path, &stat, &mut io::empty(), mode)
 }
 
 fn append_fs(dst: &mut Write,
              path: &Path,
              meta: &fs::Metadata,
-             read: &mut Read) -> io::Result<()> {
+             read: &mut Read,
+             mode: HeaderMode) -> io::Result<()> {
     let mut header = Header::new_gnu();
 
     // Try to encode the path directly in the header, but if it ends up not
@@ -259,7 +273,7 @@ fn append_fs(dst: &mut Write,
         try!(header.set_path(&path));
     }
 
-    header.set_metadata(meta);
+    header.set_metadata_in_mode(meta, mode);
     header.set_cksum();
     append(dst, &header, read)
 }
