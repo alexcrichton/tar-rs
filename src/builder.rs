@@ -3,7 +3,6 @@ use std::path::Path;
 use std::io::prelude::*;
 use std::fs;
 use std::borrow::Cow;
-use walkdir::WalkDir;
 
 use {EntryType, Header, other};
 use header::{bytes2path, path2bytes};
@@ -199,14 +198,17 @@ impl<W: Write> Builder<W> {
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
         where P: AsRef<Path>, Q: AsRef<Path>
     {
-        for entry in WalkDir::new(&src_path) {
-            let entry = try!(entry);
-            let src = entry.path();
+        let mut stack = vec![src_path.as_ref().to_path_buf()];
+        while let Some(src) = stack.pop() {
             let dest = path.as_ref().join(src.strip_prefix(&src_path).unwrap());
-            if entry.file_type().is_dir() {
-                try!(self.append_dir(dest, src));
-            } else {
+            let metadata = try!(fs::metadata(&src));
+            if metadata.is_file() {
                 try!(self.append_file(dest, &mut try!(fs::File::open(src))));
+            } else if metadata.is_dir() {
+                try!(self.append_dir(dest, &src));
+                for entry in try!(fs::read_dir(src)) {
+                    stack.push(try!(entry).path());
+                }
             }
         }
         Ok(())
