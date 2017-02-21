@@ -248,6 +248,17 @@ fn writing_directories_recursively() {
 }
 
 #[test]
+fn append_dir_all_does_not_work_on_non_directory() {
+    let td = t!(TempDir::new("tar-rs"));
+    let path = td.path().join("test");
+    t!(t!(File::create(&path)).write_all(b"test"));
+
+    let mut ar = Builder::new(Vec::new());
+    let result = ar.append_dir_all("test", path);
+    assert!(result.is_err());
+}
+
+#[test]
 fn extracting_duplicate_dirs() {
     let td = t!(TempDir::new("tar-rs"));
     let rdr = Cursor::new(tar!("duplicate_dirs.tar"));

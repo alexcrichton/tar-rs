@@ -198,17 +198,17 @@ impl<W: Write> Builder<W> {
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
         where P: AsRef<Path>, Q: AsRef<Path>
     {
-        let mut stack = vec![src_path.as_ref().to_path_buf()];
-        while let Some(src) = stack.pop() {
+        let mut stack = vec![(src_path.as_ref().to_path_buf(), true)];
+        while let Some((src, is_dir)) = stack.pop() {
             let dest = path.as_ref().join(src.strip_prefix(&src_path).unwrap());
-            let metadata = try!(fs::metadata(&src));
-            if metadata.is_file() {
-                try!(self.append_file(dest, &mut try!(fs::File::open(src))));
-            } else if metadata.is_dir() {
-                try!(self.append_dir(dest, &src));
-                for entry in try!(fs::read_dir(src)) {
-                    stack.push(try!(entry).path());
+            if is_dir {
+                for entry in try!(fs::read_dir(&src)) {
+                    let entry = try!(entry);
+                    stack.push((entry.path(), try!(entry.file_type()).is_dir()));
                 }
+                try!(self.append_dir(dest, src));
+            } else {
+                try!(self.append_file(dest, &mut try!(fs::File::open(src))));
             }
         }
         Ok(())
