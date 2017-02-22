@@ -211,7 +211,8 @@ impl<W: Write> Builder<W> {
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
         where P: AsRef<Path>, Q: AsRef<Path>
     {
-        append_dir_all(self.inner(), path.as_ref(), src_path.as_ref())
+        let mode = self.mode.clone();
+        append_dir_all(self.inner(), path.as_ref(), src_path.as_ref(), mode)
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -306,7 +307,7 @@ fn append_fs(dst: &mut Write,
     append(dst, &header, read)
 }
 
-fn append_dir_all(dst: &mut Write, path: &Path, src_path: &Path) -> io::Result<()> {
+fn append_dir_all(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode) -> io::Result<()> {
     let mut stack = vec![(src_path.to_path_buf(), true)];
     while let Some((src, is_dir)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());
@@ -315,9 +316,9 @@ fn append_dir_all(dst: &mut Write, path: &Path, src_path: &Path) -> io::Result<(
                 let entry = try!(entry);
                 stack.push((entry.path(), try!(entry.file_type()).is_dir()));
             }
-            try!(append_dir(dst, &dest, &src));
+            try!(append_dir(dst, &dest, &src, mode));
         } else {
-            try!(append_file(dst, &dest, &mut try!(fs::File::open(src))));
+            try!(append_file(dst, &dest, &mut try!(fs::File::open(src)), mode));
         }
     }
     Ok(())
