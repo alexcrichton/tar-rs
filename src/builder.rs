@@ -198,20 +198,7 @@ impl<W: Write> Builder<W> {
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
         where P: AsRef<Path>, Q: AsRef<Path>
     {
-        let mut stack = vec![(src_path.as_ref().to_path_buf(), true)];
-        while let Some((src, is_dir)) = stack.pop() {
-            let dest = path.as_ref().join(src.strip_prefix(&src_path).unwrap());
-            if is_dir {
-                for entry in try!(fs::read_dir(&src)) {
-                    let entry = try!(entry);
-                    stack.push((entry.path(), try!(entry.file_type()).is_dir()));
-                }
-                try!(self.append_dir(dest, src));
-            } else {
-                try!(self.append_file(dest, &mut try!(fs::File::open(src))));
-            }
-        }
-        Ok(())
+        append_dir_all(self.inner(), path.as_ref(), src_path.as_ref())
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -303,6 +290,23 @@ fn append_fs(dst: &mut Write,
     header.set_metadata(meta);
     header.set_cksum();
     append(dst, &header, read)
+}
+
+fn append_dir_all(dst: &mut Write, path: &Path, src_path: &Path) -> io::Result<()> {
+    let mut stack = vec![(src_path.to_path_buf(), true)];
+    while let Some((src, is_dir)) = stack.pop() {
+        let dest = path.join(src.strip_prefix(&src_path).unwrap());
+        if is_dir {
+            for entry in try!(fs::read_dir(&src)) {
+                let entry = try!(entry);
+                stack.push((entry.path(), try!(entry.file_type()).is_dir()));
+            }
+            try!(append_dir(dst, &dest, &src));
+        } else {
+            try!(append_file(dst, &dest, &mut try!(fs::File::open(src))));
+        }
+    }
+    Ok(())
 }
 
 impl<W: Write> Drop for Builder<W> {
