@@ -27,9 +27,13 @@ pub enum HeaderMode {
     /// All supported metadata, including mod/access times and ownership will
     /// be included.
     Complete,
+
     /// Only metadata that is directly relevant to the identity of a file will
     /// be included. In particular, ownership and mod/access times are excluded.
     Deterministic,
+
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 /// Representation of the header of an entry in an archive
@@ -631,6 +635,7 @@ impl Header {
                 self.set_uid(0);
                 self.set_gid(0);
             },
+            HeaderMode::__Nonexhaustive => panic!(),
         }
 
         self.set_mode(meta.mode() as u32);
@@ -674,6 +679,7 @@ impl Header {
                 self.set_gid(0);
                 self.set_mtime(0);
             },
+            HeaderMode::__Nonexhaustive => panic!(),
         }
 
         // There's no concept of a mode on windows, so do a best approximation
