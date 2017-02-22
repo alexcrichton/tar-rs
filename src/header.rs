@@ -20,6 +20,22 @@ pub struct Header {
     bytes: [u8; 512],
 }
 
+/// Declares the information that should be included when filling a Header
+/// from filesystem metadata.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HeaderMode {
+    /// All supported metadata, including mod/access times and ownership will
+    /// be included.
+    Complete,
+
+    /// Only metadata that is directly relevant to the identity of a file will
+    /// be included. In particular, ownership and mod/access times are excluded.
+    Deterministic,
+
+    #[doc(hidden)]
+    __Nonexhaustive,
+}
+
 /// Representation of the header of an entry in an archive
 #[repr(C)]
 #[allow(missing_docs)]
@@ -241,19 +257,16 @@ impl Header {
     /// provided.
     ///
     /// This is useful for initializing a `Header` from the OS's metadata from a
-    /// file.
+    /// file. By default, this will use `HeaderMode::Complete` to include all
+    /// metadata.
     pub fn set_metadata(&mut self, meta: &fs::Metadata) {
-        self.fill_from(meta);
-        // Set size of directories to zero
-        self.set_size(if meta.is_dir() { 0 } else { meta.len() });
-        if let Some(ustar) = self.as_ustar_mut() {
-            ustar.set_device_major(0);
-            ustar.set_device_minor(0);
-        }
-        if let Some(gnu) = self.as_gnu_mut() {
-            gnu.set_device_major(0);
-            gnu.set_device_minor(0);
-        }
+        self.fill_from(meta, HeaderMode::Complete);
+    }
+
+    /// Sets only the metadata relevant to the given HeaderMode in this header
+    /// from the metadata argument provided.
+    pub fn set_metadata_in_mode(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
+        self.fill_from(meta, mode);
     }
 
     /// Returns the size of entry's data this header represents.
@@ -593,14 +606,39 @@ impl Header {
         octal_into(&mut self.as_old_mut().cksum, cksum);
     }
 
+    fn fill_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
+        self.fill_platform_from(meta, mode);
+        // Set size of directories to zero
+        self.set_size(if meta.is_dir() { 0 } else { meta.len() });
+        if let Some(ustar) = self.as_ustar_mut() {
+            ustar.set_device_major(0);
+            ustar.set_device_minor(0);
+        }
+        if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_device_major(0);
+            gnu.set_device_minor(0);
+        }
+    }
+
     #[cfg(unix)]
-    fn fill_from(&mut self, meta: &fs::Metadata) {
+    fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         use libc;
 
+        match mode {
+            HeaderMode::Complete => {
+                self.set_mtime(meta.mtime() as u64);
+                self.set_uid(meta.uid() as u32);
+                self.set_gid(meta.gid() as u32);
+            },
+            HeaderMode::Deterministic => {
+                self.set_mtime(0);
+                self.set_uid(0);
+                self.set_gid(0);
+            },
+            HeaderMode::__Nonexhaustive => panic!(),
+        }
+
         self.set_mode(meta.mode() as u32);
-        self.set_mtime(meta.mtime() as u64);
-        self.set_uid(meta.uid() as u32);
-        self.set_gid(meta.gid() as u32);
 
         // Note that if we are a GNU header we *could* set atime/ctime, except
         // the `tar` utility doesn't do that by default and it causes problems
@@ -624,21 +662,39 @@ impl Header {
     }
 
     #[cfg(windows)]
-    fn fill_from(&mut self, meta: &fs::Metadata) {
-        const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
-        let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
+    fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
+        match mode {
+            HeaderMode::Complete => {
+                self.set_uid(0);
+                self.set_gid(0);
+                // The dates listed in tarballs are always seconds relative to
+                // January 1, 1970. On Windows, however, the timestamps are returned as
+                // dates relative to January 1, 1601 (in 100ns intervals), so we need to
+                // add in some offset for those dates.
+                let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
+                self.set_mtime(mtime);
+            },
+            HeaderMode::Deterministic => {
+                self.set_uid(0);
+                self.set_gid(0);
+                self.set_mtime(0);
+            },
+            HeaderMode::__Nonexhaustive => panic!(),
+        }
 
         // There's no concept of a mode on windows, so do a best approximation
         // here.
-        let mode = match (meta.is_dir(), readonly != 0) {
-            (true, false) => 0o755,
-            (true, true) => 0o555,
-            (false, false) => 0o644,
-            (false, true) => 0o444,
+        let fs_mode = {
+            const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
+            let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
+            match (meta.is_dir(), readonly != 0) {
+                (true, false) => 0o755,
+                (true, true) => 0o555,
+                (false, false) => 0o644,
+                (false, true) => 0o444,
+            }
         };
-        self.set_mode(mode);
-        self.set_uid(0);
-        self.set_gid(0);
+        self.set_mode(fs_mode);
 
         let ft = meta.file_type();
         self.set_entry_type(if ft.is_dir() {
@@ -650,13 +706,6 @@ impl Header {
         } else {
             EntryType::new(b' ')
         });
-
-        // The dates listed in tarballs are always seconds relative to
-        // January 1, 1970. On Windows, however, the timestamps are returned as
-        // dates relative to January 1, 1601 (in 100ns intervals), so we need to
-        // add in some offset for those dates.
-        let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
-        self.set_mtime(mtime);
     }
 }
 
