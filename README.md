@@ -4,7 +4,7 @@
 [![Build status](https://ci.appveyor.com/api/projects/status/0udgokm2fc6ljorj?svg=true)](https://ci.appveyor.com/project/alexcrichton/tar-rs)
 [![Coverage Status](https://coveralls.io/repos/alexcrichton/tar-rs/badge.svg?branch=master&service=github)](https://coveralls.io/github/alexcrichton/tar-rs?branch=master)
 
-[Documentation](http://alexcrichton.com/tar-rs/tar/index.html)
+[Documentation](https://docs.rs/tar)
 
 A tar archive reading/writing library for Rust.
 
