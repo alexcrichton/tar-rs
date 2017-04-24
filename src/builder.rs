@@ -316,7 +316,9 @@ fn append_dir_all(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMod
                 let entry = try!(entry);
                 stack.push((entry.path(), try!(entry.file_type()).is_dir()));
             }
-            try!(append_dir(dst, &dest, &src, mode));
+            if dest != Path::new("") {
+                try!(append_dir(dst, &dest, &src, mode));
+            }
         } else {
             try!(append_file(dst, &dest, &mut try!(fs::File::open(src)), mode));
         }
