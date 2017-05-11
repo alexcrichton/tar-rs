@@ -1031,7 +1031,7 @@ fn copy_path_into(mut slot: &mut [u8],
                 return Err(other("path component in archive cannot contain `/`"))
             }
         }
-        try!(copy(&mut slot, bytes));
+        try!(copy(&mut slot, &*bytes));
         emitted = true;
     }
     if !emitted {
@@ -1052,7 +1052,8 @@ fn copy_path_into(mut slot: &mut [u8],
 
 #[cfg(windows)]
 fn ends_with_slash(p: &Path) -> bool {
-    p.as_os_str().encode_wide().last() == Some(b'/' as u16)
+    let last = p.as_os_str().encode_wide().last();
+    last == Some(b'/' as u16) || last == Some(b'\\' as u16)
 }
 
 #[cfg(unix)]
@@ -1061,15 +1062,28 @@ fn ends_with_slash(p: &Path) -> bool {
 }
 
 #[cfg(windows)]
-pub fn path2bytes(p: &Path) -> io::Result<&[u8]> {
+pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     p.as_os_str().to_str().map(|s| s.as_bytes()).ok_or_else(|| {
         other("path was not valid unicode")
+    }).map(|bytes| {
+        if bytes.contains(&b'\\') {
+            // Normalize to Unix-style path separators
+            let mut bytes = bytes.to_owned();
+            for b in &mut bytes {
+                if *b == b'\\' {
+                    *b = b'/';
+                }
+            }
+            Cow::Owned(bytes)
+        } else {
+            Cow::Borrowed(bytes)
+        }
     })
 }
 
 #[cfg(unix)]
-pub fn path2bytes(p: &Path) -> io::Result<&[u8]> {
-    Ok(p.as_os_str().as_bytes())
+pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
+    Ok(p.as_os_str().as_bytes()).map(Cow::Borrowed)
 }
 
 #[cfg(windows)]
