@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{self, Cursor};
 use std::iter::repeat;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
 use self::tempdir::TempDir;
@@ -715,4 +715,46 @@ fn extract_sparse() {
     assert!(s[0x1000+6..0x2fa0].chars().all(|x| x == '\u{0}'));
     assert_eq!(&s[0x2fa0..0x2fa0+6], "world\n");
     assert!(s[0x2fa0+6..0x4000].chars().all(|x| x == '\u{0}'));
+}
+
+#[test]
+fn path_separators() {
+    let mut ar = Builder::new(Vec::new());
+    let td = t!(TempDir::new("tar-rs"));
+
+    let path = td.path().join("test");
+    t!(t!(File::create(&path)).write_all(b"test"));
+
+    let short_path: PathBuf = repeat("abcd").take(2).collect();
+    let long_path: PathBuf = repeat("abcd").take(50).collect();
+
+    // Make sure UStar headers normalize to Unix path separators
+    let mut header = Header::new_ustar();
+
+    t!(header.set_path(&short_path));
+    assert_eq!(t!(header.path()), short_path);
+    assert!(!header.path_bytes().contains(&b'\\'));
+
+    t!(header.set_path(&long_path));
+    assert_eq!(t!(header.path()), long_path);
+    assert!(!header.path_bytes().contains(&b'\\'));
+
+    // Make sure GNU headers normalize to Unix path separators,
+    // including the `@LongLink` fallback used by `append_file`.
+    t!(ar.append_file(&short_path, &mut t!(File::open(&path))));
+    t!(ar.append_file(&long_path, &mut t!(File::open(&path))));
+
+    let rd = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rd);
+    let mut entries = t!(ar.entries());
+
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(t!(entry.path()), short_path);
+    assert!(!entry.path_bytes().contains(&b'\\'));
+
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(t!(entry.path()), long_path);
+    assert!(!entry.path_bytes().contains(&b'\\'));
+
+    assert!(entries.next().is_none());
 }
