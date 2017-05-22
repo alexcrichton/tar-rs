@@ -10,6 +10,8 @@ use std::mem;
 use std::path::{Path, PathBuf, Component};
 use std::str;
 
+use libc;
+
 use EntryType;
 use other;
 
@@ -130,6 +132,9 @@ pub struct GnuExtSparseHeader {
     pub isextended: [u8; 1],
     pub padding: [u8; 7],
 }
+
+/// Mask to select only file type and the executable bit.
+const DETERMINISTIC_FILE_MODE_MASK: u32 = libc::S_IFMT as u32 | libc::S_IXUSR as u32 | libc::S_IXGRP as u32 | libc::S_IXOTH as u32;
 
 impl Header {
     /// Creates a new blank GNU header.
@@ -622,23 +627,23 @@ impl Header {
 
     #[cfg(unix)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        use libc;
+        let fs_mode = meta.mode() as u32;
 
         match mode {
             HeaderMode::Complete => {
                 self.set_mtime(meta.mtime() as u64);
                 self.set_uid(meta.uid() as u32);
                 self.set_gid(meta.gid() as u32);
+                self.set_mode(fs_mode);
             },
             HeaderMode::Deterministic => {
                 self.set_mtime(0);
                 self.set_uid(0);
                 self.set_gid(0);
+                self.set_mode(fs_mode & DETERMINISTIC_FILE_MODE_MASK);
             },
             HeaderMode::__Nonexhaustive => panic!(),
         }
-
-        self.set_mode(meta.mode() as u32);
 
         // Note that if we are a GNU header we *could* set atime/ctime, except
         // the `tar` utility doesn't do that by default and it causes problems
@@ -663,25 +668,6 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        match mode {
-            HeaderMode::Complete => {
-                self.set_uid(0);
-                self.set_gid(0);
-                // The dates listed in tarballs are always seconds relative to
-                // January 1, 1970. On Windows, however, the timestamps are returned as
-                // dates relative to January 1, 1601 (in 100ns intervals), so we need to
-                // add in some offset for those dates.
-                let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
-                self.set_mtime(mtime);
-            },
-            HeaderMode::Deterministic => {
-                self.set_uid(0);
-                self.set_gid(0);
-                self.set_mtime(0);
-            },
-            HeaderMode::__Nonexhaustive => panic!(),
-        }
-
         // There's no concept of a mode on windows, so do a best approximation
         // here.
         let fs_mode = {
@@ -694,7 +680,27 @@ impl Header {
                 (false, true) => 0o444,
             }
         };
-        self.set_mode(fs_mode);
+
+        match mode {
+            HeaderMode::Complete => {
+                self.set_uid(0);
+                self.set_gid(0);
+                // The dates listed in tarballs are always seconds relative to
+                // January 1, 1970. On Windows, however, the timestamps are returned as
+                // dates relative to January 1, 1601 (in 100ns intervals), so we need to
+                // add in some offset for those dates.
+                let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
+                self.set_mtime(mtime);
+                self.set_mode(fs_mode);
+            },
+            HeaderMode::Deterministic => {
+                self.set_uid(0);
+                self.set_gid(0);
+                self.set_mtime(0);
+                self.set_mode(fs_mode & DETERMINISTIC_FILE_MODE_MASK);
+            },
+            HeaderMode::__Nonexhaustive => panic!(),
+        }
 
         let ft = meta.file_type();
         self.set_entry_type(if ft.is_dir() {
