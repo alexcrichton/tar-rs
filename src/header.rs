@@ -636,7 +636,7 @@ impl Header {
                 self.set_uid(0);
                 self.set_gid(0);
 
-                // Use a default umask value, but propogate the (user) execute bit.
+                // Use a default umask value, but propagate the (user) execute bit.
                 let fs_mode =
                   if meta.is_dir() || (0o100 & meta.mode() == 0o100) {
                     0o755
