@@ -10,8 +10,6 @@ use std::mem;
 use std::path::{Path, PathBuf, Component};
 use std::str;
 
-use libc;
-
 use EntryType;
 use other;
 
@@ -132,9 +130,6 @@ pub struct GnuExtSparseHeader {
     pub isextended: [u8; 1],
     pub padding: [u8; 7],
 }
-
-/// Mask to select only file type and the executable bit.
-const DETERMINISTIC_FILE_MODE_MASK: u32 = libc::S_IFMT as u32 | libc::S_IXUSR as u32 | libc::S_IXGRP as u32 | libc::S_IXOTH as u32;
 
 impl Header {
     /// Creates a new blank GNU header.
@@ -627,20 +622,28 @@ impl Header {
 
     #[cfg(unix)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        let fs_mode = meta.mode() as u32;
+        use libc;
 
         match mode {
             HeaderMode::Complete => {
                 self.set_mtime(meta.mtime() as u64);
                 self.set_uid(meta.uid() as u32);
                 self.set_gid(meta.gid() as u32);
-                self.set_mode(fs_mode);
+                self.set_mode(meta.mode() as u32);
             },
             HeaderMode::Deterministic => {
                 self.set_mtime(0);
                 self.set_uid(0);
                 self.set_gid(0);
-                self.set_mode(fs_mode & DETERMINISTIC_FILE_MODE_MASK);
+
+                // Use a default umask value, but propogate the (user) execute bit.
+                let fs_mode =
+                  if meta.is_dir() || (0o100 & meta.mode() == 0o100) {
+                    0o755
+                  } else {
+                    0o644
+                  };
+                self.set_mode(fs_mode);
             },
             HeaderMode::__Nonexhaustive => panic!(),
         }
@@ -668,19 +671,7 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        // There's no concept of a mode on windows, so do a best approximation
-        // here.
-        let fs_mode = {
-            const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
-            let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
-            match (meta.is_dir(), readonly != 0) {
-                (true, false) => 0o755,
-                (true, true) => 0o555,
-                (false, false) => 0o644,
-                (false, true) => 0o444,
-            }
-        };
-
+        // There's no concept of a file mode on windows, so do a best approximation here.
         match mode {
             HeaderMode::Complete => {
                 self.set_uid(0);
@@ -691,13 +682,29 @@ impl Header {
                 // add in some offset for those dates.
                 let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
                 self.set_mtime(mtime);
+                let fs_mode = {
+                    const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
+                    let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
+                    match (meta.is_dir(), readonly != 0) {
+                        (true, false) => 0o755,
+                        (true, true) => 0o555,
+                        (false, false) => 0o644,
+                        (false, true) => 0o444,
+                    }
+                };
                 self.set_mode(fs_mode);
             },
             HeaderMode::Deterministic => {
                 self.set_uid(0);
                 self.set_gid(0);
                 self.set_mtime(0);
-                self.set_mode(fs_mode & DETERMINISTIC_FILE_MODE_MASK);
+                let fs_mode =
+                  if meta.is_dir() {
+                    0o755
+                  } else {
+                    0o644
+                  };
+                self.set_mode(fs_mode);
             },
             HeaderMode::__Nonexhaustive => panic!(),
         }
