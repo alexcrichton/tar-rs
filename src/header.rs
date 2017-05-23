@@ -629,16 +629,24 @@ impl Header {
                 self.set_mtime(meta.mtime() as u64);
                 self.set_uid(meta.uid() as u32);
                 self.set_gid(meta.gid() as u32);
+                self.set_mode(meta.mode() as u32);
             },
             HeaderMode::Deterministic => {
                 self.set_mtime(0);
                 self.set_uid(0);
                 self.set_gid(0);
+
+                // Use a default umask value, but propagate the (user) execute bit.
+                let fs_mode =
+                  if meta.is_dir() || (0o100 & meta.mode() == 0o100) {
+                    0o755
+                  } else {
+                    0o644
+                  };
+                self.set_mode(fs_mode);
             },
             HeaderMode::__Nonexhaustive => panic!(),
         }
-
-        self.set_mode(meta.mode() as u32);
 
         // Note that if we are a GNU header we *could* set atime/ctime, except
         // the `tar` utility doesn't do that by default and it causes problems
@@ -663,6 +671,7 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
+        // There's no concept of a file mode on windows, so do a best approximation here.
         match mode {
             HeaderMode::Complete => {
                 self.set_uid(0);
@@ -673,28 +682,32 @@ impl Header {
                 // add in some offset for those dates.
                 let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
                 self.set_mtime(mtime);
+                let fs_mode = {
+                    const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
+                    let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
+                    match (meta.is_dir(), readonly != 0) {
+                        (true, false) => 0o755,
+                        (true, true) => 0o555,
+                        (false, false) => 0o644,
+                        (false, true) => 0o444,
+                    }
+                };
+                self.set_mode(fs_mode);
             },
             HeaderMode::Deterministic => {
                 self.set_uid(0);
                 self.set_gid(0);
                 self.set_mtime(0);
+                let fs_mode =
+                  if meta.is_dir() {
+                    0o755
+                  } else {
+                    0o644
+                  };
+                self.set_mode(fs_mode);
             },
             HeaderMode::__Nonexhaustive => panic!(),
         }
-
-        // There's no concept of a mode on windows, so do a best approximation
-        // here.
-        let fs_mode = {
-            const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
-            let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
-            match (meta.is_dir(), readonly != 0) {
-                (true, false) => 0o755,
-                (true, true) => 0o555,
-                (false, false) => 0o644,
-                (false, true) => 0o444,
-            }
-        };
-        self.set_mode(fs_mode);
 
         let ft = meta.file_type();
         self.set_entry_type(if ft.is_dir() {
