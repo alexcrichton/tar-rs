@@ -93,6 +93,53 @@ impl<W: Write> Builder<W> {
         append(self.inner(), header, &mut data)
     }
 
+    /// Adds a new entry to this archive with the specified path.
+    ///
+    /// This function will set the specified path in the given header, which may
+    /// require appending a GNU long-name extension entry to the archive first.
+    /// The checksum for the header will be automatically updated via the
+    /// `set_cksum` method after setting the path. No other metadata in the
+    /// header will be modified.
+    ///
+    /// Then it will append the header, followed by contents of the stream
+    /// specified by `data`. To produce a valid archive the `size` field of
+    /// `header` must be the same as the length of the stream that's being
+    /// written.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all entries have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when either reading or writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tar::{Builder, Header};
+    ///
+    /// let mut header = Header::new_gnu();
+    /// header.set_size(4);
+    /// header.set_cksum();
+    ///
+    /// let mut data: &[u8] = &[1, 2, 3, 4];
+    ///
+    /// let mut ar = Builder::new(Vec::new());
+    /// ar.append_data(&mut header, "really/long/path/to/foo", data).unwrap();
+    /// let data = ar.into_inner().unwrap();
+    /// ```
+    pub fn append_data<P: AsRef<Path>, R: Read>(&mut self, header: &mut Header, path: P, data: R)
+                                                -> io::Result<()> {
+        try!(prepare_header(self.inner(), header, path.as_ref()));
+        header.set_cksum();
+        self.append(&header, data)
+    }
+
     /// Adds a file on the local filesystem to this archive.
     ///
     /// This function will open the file specified by `path` and insert the file
@@ -269,13 +316,7 @@ fn append_dir(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode) -
     append_fs(dst, path, &stat, &mut io::empty(), mode)
 }
 
-fn append_fs(dst: &mut Write,
-             path: &Path,
-             meta: &fs::Metadata,
-             read: &mut Read,
-             mode: HeaderMode) -> io::Result<()> {
-    let mut header = Header::new_gnu();
-
+fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Result<()> {
     // Try to encode the path directly in the header, but if it ends up not
     // working (e.g. it's too long) then use the GNU-specific long name
     // extension by emitting an entry which indicates that it's the filename
@@ -301,7 +342,17 @@ fn append_fs(dst: &mut Write,
         let path = try!(bytes2path(Cow::Borrowed(&data[..max])));
         try!(header.set_path(&path));
     }
+    Ok(())
+}
 
+fn append_fs(dst: &mut Write,
+             path: &Path,
+             meta: &fs::Metadata,
+             read: &mut Read,
+             mode: HeaderMode) -> io::Result<()> {
+    let mut header = Header::new_gnu();
+
+    try!(prepare_header(dst, &mut header, path));
     header.set_metadata_in_mode(meta, mode);
     header.set_cksum();
     append(dst, &header, read)

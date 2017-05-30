@@ -115,11 +115,13 @@ fn large_filename() {
     t!(ar.append(&header, &b"test"[..]));
     let too_long = repeat("abcd").take(200).collect::<String>();
     t!(ar.append_file(&too_long, &mut t!(File::open(&path))));
+    t!(ar.append_data(&mut header, &too_long, &b"test"[..]));
 
     let rd = Cursor::new(t!(ar.into_inner()));
     let mut ar = Archive::new(rd);
     let mut entries = t!(ar.entries());
 
+    // The short entry added with `append`
     let mut f = entries.next().unwrap().unwrap();
     assert_eq!(&*f.header().path_bytes(), filename.as_bytes());
     assert_eq!(f.header().size().unwrap(), 4);
@@ -127,7 +129,17 @@ fn large_filename() {
     t!(f.read_to_string(&mut s));
     assert_eq!(s, "test");
 
+    // The long entry added with `append_file`
     let mut f = entries.next().unwrap().unwrap();
+    assert_eq!(&*f.path_bytes(), too_long.as_bytes());
+    assert_eq!(f.header().size().unwrap(), 4);
+    let mut s = String::new();
+    t!(f.read_to_string(&mut s));
+    assert_eq!(s, "test");
+
+    // The long entry added with `append_data`
+    let mut f = entries.next().unwrap().unwrap();
+    assert!(f.header().path_bytes().len() < too_long.len());
     assert_eq!(&*f.path_bytes(), too_long.as_bytes());
     assert_eq!(f.header().size().unwrap(), 4);
     let mut s = String::new();
