@@ -247,7 +247,7 @@ impl<'a> EntryFields<'a> {
         }
     }
 
-    pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
+    pub fn read_all_limited(&mut self) -> io::Result<Vec<u8>> {
         // Preallocate some data but don't let ourselves get too crazy now.
         let cap = cmp::min(self.size, 128 * 1024);
         let mut v = Vec::with_capacity(cap as usize);
@@ -297,7 +297,7 @@ impl<'a> EntryFields<'a> {
                !self.header.entry_type().is_pax_local_extensions() {
                 return Ok(None)
             }
-            self.pax_extensions = Some(try!(self.read_all()));
+            self.pax_extensions = Some(try!(self.read_all_limited()));
         }
         Ok(Some(pax_extensions(self.pax_extensions.as_ref().unwrap())))
     }
