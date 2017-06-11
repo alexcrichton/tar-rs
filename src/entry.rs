@@ -177,7 +177,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.fields.unpack(dst.as_ref())
+        self.fields.unpack(None, dst.as_ref())
     }
 
     /// Extracts this file under the specified path, avoiding security issues.
@@ -362,13 +362,13 @@ impl<'a> EntryFields<'a> {
 
         // Abort if target (canonical) parent is outside of `dst`
         let canon_parent = try!(parent.canonicalize());
-        let canon_dst = try!(dst.canonicalize());
-        if !canon_parent.starts_with(&canon_dst) {
+        let canon_target = try!(dst.canonicalize());
+        if !canon_parent.starts_with(&canon_target) {
             return Err(TarError::new("trying to unpack outside of destination path",
                           Error::new(ErrorKind::Other, "Invalid argument")).into());
         }
 
-        try!(self.unpack(&file_dst).map_err(|e| {
+        try!(self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
             TarError::new(&format!("failed to unpack `{}`",
                                    file_dst.display()), e)
         }));
@@ -378,6 +378,7 @@ impl<'a> EntryFields<'a> {
 
     /// Returns access to the header of this entry in the archive.
     fn unpack(&mut self,
+              target_base: Option<&Path>,
               dst: &Path) -> io::Result<()> {
         let kind = self.header.entry_type();
         if kind.is_dir() {
@@ -399,7 +400,11 @@ impl<'a> EntryFields<'a> {
             }
 
             return if kind.is_hard_link() {
-                fs::hard_link(&src, dst)
+                let link_src = match target_base {
+                    None => src.into_owned(),
+                    Some(ref p) => p.join(src),
+                };
+                fs::hard_link(&link_src, dst)
             } else {
                 symlink(&src, dst)
             };
