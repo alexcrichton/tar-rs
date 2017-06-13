@@ -14,7 +14,7 @@ macro_rules! t {
 }
 
 #[test]
-fn absolute_link() {
+fn absolute_symlink() {
     let mut ar = tar::Builder::new(Vec::new());
 
     let mut header = tar::Header::new_gnu();
@@ -32,6 +32,63 @@ fn absolute_link() {
     t!(ar.unpack(td.path()));
 
     t!(td.path().join("foo").symlink_metadata());
+}
+
+#[test]
+fn absolute_hardlink() {
+    let td = t!(TempDir::new("tar"));
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("foo"));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Link);
+    t!(header.set_path("bar"));
+    // This absolute path under tempdir will be created at unpack time
+    t!(header.set_link_name(td.path().join("foo")));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+
+    t!(ar.unpack(td.path()));
+    t!(td.path().join("foo").metadata());
+    t!(td.path().join("bar").metadata());
+}
+
+#[test]
+fn relative_hardlink() {
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("foo"));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Link);
+    t!(header.set_path("bar"));
+    t!(header.set_link_name("foo"));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+
+    let td = t!(TempDir::new("tar"));
+    t!(ar.unpack(td.path()));
+    t!(td.path().join("foo").metadata());
+    t!(td.path().join("bar").metadata());
 }
 
 #[test]
