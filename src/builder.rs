@@ -78,7 +78,7 @@ impl<W: Write> Builder<W> {
     /// use tar::{Builder, Header};
     ///
     /// let mut header = Header::new_gnu();
-    /// header.set_path("foo");
+    /// header.set_path("foo").unwrap();
     /// header.set_size(4);
     /// header.set_cksum();
     ///
