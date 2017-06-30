@@ -611,7 +611,7 @@ impl Header {
     fn fill_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         self.fill_platform_from(meta, mode);
         // Set size of directories to zero
-        self.set_size(if meta.is_dir() { 0 } else { meta.len() });
+        self.set_size(if meta.is_dir() || meta.file_type().is_symlink() { 0 } else { meta.len() });
         if let Some(ustar) = self.as_ustar_mut() {
             ustar.set_device_major(0);
             ustar.set_device_minor(0);
