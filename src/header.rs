@@ -6,6 +6,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::iter::repeat;
+use std::iter;
 use std::mem;
 use std::path::{Path, PathBuf, Component};
 use std::str;
@@ -139,8 +140,8 @@ impl Header {
     /// atime/ctime metadata attributes of files.
     pub fn new_gnu() -> Header {
         let mut header = Header { bytes: [0; 512] };
-        {
-            let gnu = header.cast_mut::<GnuHeader>();
+        unsafe {
+            let gnu = cast_mut::<_, GnuHeader>(&mut header);
             gnu.magic = *b"ustar ";
             gnu.version = *b" \0";
         }
@@ -156,8 +157,8 @@ impl Header {
     /// UStar is also the basis used for pax archives.
     pub fn new_ustar() -> Header {
         let mut header = Header { bytes: [0; 512] };
-        {
-            let gnu = header.cast_mut::<UstarHeader>();
+        unsafe {
+            let gnu = cast_mut::<_, UstarHeader>(&mut header);
             gnu.magic = *b"ustar\0";
             gnu.version = *b"00";
         }
@@ -174,23 +175,13 @@ impl Header {
         Header { bytes: [0; 512] }
     }
 
-    fn cast<T>(&self) -> &T {
-        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
-        unsafe { &*(self as *const Header as *const T) }
-    }
-
-    fn cast_mut<T>(&mut self) -> &mut T {
-        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
-        unsafe { &mut *(self as *mut Header as *mut T) }
-    }
-
     fn is_ustar(&self) -> bool {
-        let ustar = self.cast::<UstarHeader>();
+        let ustar = unsafe { cast::<_, UstarHeader>(self) };
         ustar.magic[..] == b"ustar\0"[..] && ustar.version[..] == b"00"[..]
     }
 
     fn is_gnu(&self) -> bool {
-        let ustar = self.cast::<UstarHeader>();
+        let ustar = unsafe { cast::<_, UstarHeader>(self) };
         ustar.magic[..] == b"ustar "[..] && ustar.version[..] == b" \0"[..]
     }
 
@@ -199,12 +190,12 @@ impl Header {
     /// This view will always succeed as all archive header formats will fill
     /// out at least the fields specified in the old header format.
     pub fn as_old(&self) -> &OldHeader {
-        self.cast()
+        unsafe { cast(self) }
     }
 
     /// Same as `as_old`, but the mutable version.
     pub fn as_old_mut(&mut self) -> &mut OldHeader {
-        self.cast_mut()
+        unsafe { cast_mut(self) }
     }
 
     /// View this archive header as a raw UStar archive header.
@@ -217,12 +208,12 @@ impl Header {
     /// magic/version fields of the UStar format have the appropriate values,
     /// returning `None` if they aren't correct.
     pub fn as_ustar(&self) -> Option<&UstarHeader> {
-        if self.is_ustar() {Some(self.cast())} else {None}
+        if self.is_ustar() {Some(unsafe { cast(self) })} else {None}
     }
 
     /// Same as `as_ustar_mut`, but the mutable version.
     pub fn as_ustar_mut(&mut self) -> Option<&mut UstarHeader> {
-        if self.is_ustar() {Some(self.cast_mut())} else {None}
+        if self.is_ustar() {Some(unsafe { cast_mut(self) })} else {None}
     }
 
     /// View this archive header as a raw GNU archive header.
@@ -235,12 +226,12 @@ impl Header {
     /// magic/version fields of the GNU format have the appropriate values,
     /// returning `None` if they aren't correct.
     pub fn as_gnu(&self) -> Option<&GnuHeader> {
-        if self.is_gnu() {Some(self.cast())} else {None}
+        if self.is_gnu() {Some(unsafe { cast(self) })} else {None}
     }
 
     /// Same as `as_gnu`, but the mutable version.
     pub fn as_gnu_mut(&mut self) -> Option<&mut GnuHeader> {
-        if self.is_gnu() {Some(self.cast_mut())} else {None}
+        if self.is_gnu() {Some(unsafe { cast_mut(self) })} else {None}
     }
 
     /// Returns a view into this header as a byte array.
@@ -601,9 +592,20 @@ impl Header {
     /// Sets the checksum field of this header based on the current fields in
     /// this header.
     pub fn set_cksum(&mut self) {
-        self.as_old_mut().cksum = *b"        ";
-        let cksum = self.bytes.iter().fold(0, |a, b| a + (*b as u32));
+        let cksum = self.calculate_cksum();
         octal_into(&mut self.as_old_mut().cksum, cksum);
+    }
+
+    fn calculate_cksum(&self) -> u32 {
+        let old = self.as_old();
+        let start = old as *const _ as usize;
+        let cksum_start = old.cksum.as_ptr() as *const _ as usize;
+        let offset = cksum_start - start;
+        let len = old.cksum.len();
+        self.bytes[0..offset].iter()
+            .chain(iter::repeat(&b' ').take(len))
+            .chain(&self.bytes[offset + len..])
+            .fold(0, |a, b| a + (*b as u32))
     }
 
     fn fill_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
@@ -720,11 +722,106 @@ impl Header {
             EntryType::new(b' ')
         });
     }
+
+    fn debug_fields(&self, b: &mut fmt::DebugStruct) {
+        if let Ok(entry_size) = self.entry_size() {
+            b.field("entry_size", &entry_size);
+        }
+        if let Ok(size) = self.size() {
+            b.field("size", &size);
+        }
+        if let Ok(path) = self.path() {
+            b.field("path", &path);
+        }
+        if let Ok(link_name) = self.link_name() {
+            b.field("link_name", &link_name);
+        }
+        if let Ok(mode) = self.mode() {
+            b.field("mode", &DebugAsOctal(mode));
+        }
+        if let Ok(uid) = self.uid() {
+            b.field("uid", &uid);
+        }
+        if let Ok(gid) = self.gid() {
+            b.field("gid", &gid);
+        }
+        if let Ok(mtime) = self.mtime() {
+            b.field("mtime", &mtime);
+        }
+        if let Ok(username) = self.username() {
+            b.field("username", &username);
+        }
+        if let Ok(groupname) = self.groupname() {
+            b.field("groupname", &groupname);
+        }
+        if let Ok(device_major) = self.device_major() {
+            b.field("device_major", &device_major);
+        }
+        if let Ok(device_minor) = self.device_minor() {
+            b.field("device_minor", &device_minor);
+        }
+        if let Ok(cksum) = self.cksum() {
+            b.field("cksum", &cksum);
+            b.field("cksum_valid", &(cksum == self.calculate_cksum()));
+        }
+    }
+}
+
+struct DebugAsOctal<T>(T);
+
+impl<T: fmt::Octal> fmt::Debug for DebugAsOctal<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Octal::fmt(&self.0, f)
+    }
+}
+
+unsafe fn cast<T, U>(a: &T) -> &U {
+    assert_eq!(mem::size_of_val(a), mem::size_of::<U>());
+    assert_eq!(mem::align_of_val(a), mem::align_of::<U>());
+    &*(a as *const T as *const U)
+}
+
+unsafe fn cast_mut<T, U>(a: &mut T) -> &mut U {
+    assert_eq!(mem::size_of_val(a), mem::size_of::<U>());
+    assert_eq!(mem::align_of_val(a), mem::align_of::<U>());
+    &mut *(a as *mut T as *mut U)
 }
 
 impl Clone for Header {
     fn clone(&self) -> Header {
         Header { bytes: self.bytes }
+    }
+}
+
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(me) = self.as_ustar() {
+            me.fmt(f)
+        } else if let Some(me) = self.as_gnu() {
+            me.fmt(f)
+        } else {
+            self.as_old().fmt(f)
+        }
+    }
+}
+
+impl OldHeader {
+    /// Views this as a normal `Header`
+    pub fn as_header(&self) -> &Header {
+        unsafe { cast(self) }
+    }
+
+    /// Views this as a normal `Header`
+    pub fn as_header_mut(&mut self) -> &mut Header {
+        unsafe { cast_mut(self) }
+    }
+}
+
+impl fmt::Debug for OldHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_struct("OldHeader");
+        self.as_header().debug_fields(&mut f);
+        f.finish()
     }
 }
 
@@ -823,6 +920,24 @@ impl UstarHeader {
     pub fn set_device_minor(&mut self, minor: u32) {
         octal_into(&mut self.dev_minor, minor);
     }
+
+    /// Views this as a normal `Header`
+    pub fn as_header(&self) -> &Header {
+        unsafe { cast(self) }
+    }
+
+    /// Views this as a normal `Header`
+    pub fn as_header_mut(&mut self) -> &mut Header {
+        unsafe { cast_mut(self) }
+    }
+}
+
+impl fmt::Debug for UstarHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_struct("UstarHeader");
+        self.as_header().debug_fields(&mut f);
+        f.finish()
+    }
 }
 
 impl GnuHeader {
@@ -908,6 +1023,46 @@ impl GnuHeader {
     pub fn is_extended(&self) -> bool {
         self.isextended[0] == 1
     }
+
+    /// Views this as a normal `Header`
+    pub fn as_header(&self) -> &Header {
+        unsafe { cast(self) }
+    }
+
+    /// Views this as a normal `Header`
+    pub fn as_header_mut(&mut self) -> &mut Header {
+        unsafe { cast_mut(self) }
+    }
+}
+
+impl fmt::Debug for GnuHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_struct("GnuHeader");
+        self.as_header().debug_fields(&mut f);
+        if let Ok(atime) = self.atime() {
+            f.field("atime", &atime);
+        }
+        if let Ok(ctime) = self.ctime() {
+            f.field("ctime", &ctime);
+        }
+        f.field("is_extended", &self.is_extended())
+         .field("sparse", &DebugSparseHeaders(&self.sparse))
+         .finish()
+    }
+}
+
+struct DebugSparseHeaders<'a>(&'a [GnuSparseHeader]);
+
+impl<'a> fmt::Debug for DebugSparseHeaders<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_list();
+        for header in self.0 {
+            if !header.is_empty() {
+                f.entry(header);
+            }
+        }
+        f.finish()
+    }
 }
 
 impl GnuSparseHeader {
@@ -928,6 +1083,19 @@ impl GnuSparseHeader {
     /// Returns `Err` for a malformed `numbytes` field.
     pub fn length(&self) -> io::Result<u64> {
         octal_from(&self.numbytes)
+    }
+}
+
+impl fmt::Debug for GnuSparseHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_struct("GnuSparseHeader");
+        if let Ok(offset) = self.offset() {
+            f.field("offset", &offset);
+        }
+        if let Ok(length) = self.length() {
+            f.field("length", &length);
+        }
+        f.finish()
     }
 }
 
