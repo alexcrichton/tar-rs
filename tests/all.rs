@@ -192,7 +192,9 @@ fn extracting_directories() {
 #[test]
 #[cfg(all(unix, feature = "xattr"))]
 fn xattrs() {
-    let td = t!(TempDir::new("tar-rs"));
+    // If /tmp is a tmpfs, xattr will fail
+    // The xattr crate's unit tests also use /var/tmp for this reason
+    let td = t!(TempDir::new_in("/var/tmp", "tar-rs"));
     let rdr = Cursor::new(tar!("xattrs.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_unpack_xattrs(true);
