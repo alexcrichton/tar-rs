@@ -772,3 +772,30 @@ fn path_separators() {
 
     assert!(entries.next().is_none());
 }
+
+#[test]
+#[cfg(unix)]
+fn append_path_symlink() {
+    use std::os::unix::fs::symlink;
+    use std::env;
+    use std::borrow::Cow;
+
+    let mut ar = Builder::new(Vec::new());
+    ar.follow_symlinks(false);
+    let td = t!(TempDir::new("tar-rs"));
+
+    t!(env::set_current_dir(td.path()));
+    t!(symlink("testdest", "test"));
+    t!(ar.append_path("test"));
+
+    let rd = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rd);
+    let mut entries = t!(ar.entries());
+
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(t!(entry.path()), Path::new("test"));
+    assert_eq!(t!(entry.link_name()), Some(Cow::from(Path::new("testdest"))));
+    assert_eq!(t!(entry.header().size()), 0);
+
+    assert!(entries.next().is_none());
+}
