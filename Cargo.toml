@@ -27,5 +27,8 @@ tempdir = "0.3"
 [target."cfg(unix)".dependencies]
 xattr = { version = "0.1.7", optional = true }
 
+[target.'cfg(target_os = "redox")'.dependencies]
+redox_syscall = "0.1"
+
 [features]
 default = ["xattr"]

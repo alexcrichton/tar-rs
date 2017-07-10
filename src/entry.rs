@@ -413,7 +413,7 @@ impl<'a> EntryFields<'a> {
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::windows::fs::symlink_file(src, dst)
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "redox"))]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::unix::fs::symlink(src, dst)
             }
@@ -476,10 +476,8 @@ impl<'a> EntryFields<'a> {
         }
         return Ok(());
 
-        #[cfg(unix)]
-        #[allow(deprecated)] // raw deprecated in 1.8
+        #[cfg(any(unix, target_os = "redox"))]
         fn set_perms(dst: &Path, mode: u32, preserve: bool) -> io::Result<()> {
-            use std::os::unix::raw;
             use std::os::unix::prelude::*;
 
             let mode = if preserve {
@@ -488,7 +486,7 @@ impl<'a> EntryFields<'a> {
                 mode & 0o777
             };
 
-            let perm = fs::Permissions::from_mode(mode as raw::mode_t);
+            let perm = fs::Permissions::from_mode(mode as _);
             fs::set_permissions(dst, perm)
         }
         #[cfg(windows)]
@@ -536,7 +534,7 @@ impl<'a> EntryFields<'a> {
         }
         // Windows does not completely support posix xattrs
         // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
-        #[cfg(any(windows, not(feature = "xattr")))]
+        #[cfg(any(windows, target_os = "redox", not(feature = "xattr")))]
         fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
             Ok(())
         }
