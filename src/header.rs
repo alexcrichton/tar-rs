@@ -1215,6 +1215,8 @@ fn copy_path_into(mut slot: &mut [u8],
             (Component::ParentDir, false) => {
                 return Err(other("paths in archives must not have `..`"))
             }
+            // Allow "./" as the path
+            (Component::CurDir, false) if path.components().count() == 1 => {},
             (Component::CurDir, false) => continue,
             (Component::Normal(_), _) |
             (_, true) => {}
