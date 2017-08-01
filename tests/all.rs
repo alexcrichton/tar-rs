@@ -370,8 +370,10 @@ fn extracting_malicious_tarball() {
         append("./../rel_evil3.txt");
         append("some/../../rel_evil4.txt");
         append("");
-        append("././//./");
-        append(".");
+        append("././//./..");
+        append("..");
+        append("/////////..");
+        append("/////////");
     }
 
     let mut ar = Archive::new(&evil_tar[..]);
