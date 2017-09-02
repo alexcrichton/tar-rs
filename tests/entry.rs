@@ -215,6 +215,7 @@ fn parent_paths_error() {
 #[test]
 #[cfg(unix)]
 fn good_parent_paths_ok() {
+    use std::path::PathBuf;
     let mut ar = tar::Builder::new(Vec::new());
 
     let mut header = tar::Header::new_gnu();
