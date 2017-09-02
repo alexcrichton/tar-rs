@@ -350,7 +350,7 @@ fn extracting_malicious_tarball() {
             assert!(header.set_path(path).is_err(),
                     "was ok: {:?}", path);
             {
-                let mut h = header.as_gnu_mut().unwrap();
+                let h = header.as_gnu_mut().unwrap();
                 for (a, b) in h.name.iter_mut().zip(path.as_bytes()) {
                     *a = *b;
                 }

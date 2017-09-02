@@ -4,7 +4,6 @@ extern crate tempdir;
 use std::fs::File;
 
 use tempdir::TempDir;
-use std::path::PathBuf;
 
 macro_rules! t {
     ($e:expr) => (match $e {
