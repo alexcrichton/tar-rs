@@ -21,6 +21,7 @@
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
+#[cfg(unix)]
 extern crate libc;
 extern crate filetime;
 #[cfg(all(unix, feature = "xattr"))]

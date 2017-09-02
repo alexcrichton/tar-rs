@@ -18,7 +18,6 @@ contents are never required to be entirely resident in memory all at once.
 """
 
 [dependencies]
-libc = "0.2"
 filetime = "0.1.5"
 
 [dev-dependencies]
@@ -26,6 +25,7 @@ tempdir = "0.3"
 
 [target."cfg(unix)".dependencies]
 xattr = { version = "0.1.7", optional = true }
+libc = "0.2"
 
 [target.'cfg(target_os = "redox")'.dependencies]
 redox_syscall = "0.1"
