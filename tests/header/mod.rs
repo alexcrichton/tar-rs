@@ -1,11 +1,11 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
-use std::{iter, thread, time};
+use std::{iter, mem, thread, time};
 
 use tempdir::TempDir;
 
-use tar::{Header, HeaderMode};
+use tar::{Header, HeaderMode, GnuHeader};
 
 #[test]
 fn default_gnu() {
@@ -94,8 +94,8 @@ fn dev_major_minor() {
     assert_eq!(t!(h.device_major()), Some(1));
     assert_eq!(t!(h.device_minor()), Some(2));
 
-    h.as_ustar_mut().unwrap().dev_minor[0] = 0xff;
-    h.as_ustar_mut().unwrap().dev_major[0] = 0xff;
+    h.as_ustar_mut().unwrap().dev_minor[0] = 0x7f;
+    h.as_ustar_mut().unwrap().dev_major[0] = 0x7f;
     assert!(h.device_major().is_err());
     assert!(h.device_minor().is_err());
 
@@ -186,4 +186,16 @@ fn set_metadata_deterministic() {
     // check them anyway.
     assert_eq!(t!(one.uid()), t!(two.uid()));
     assert_eq!(t!(one.gid()), t!(two.gid()));
+}
+
+#[test]
+fn extended_numeric_format() {
+    let mut h: GnuHeader = unsafe { mem::zeroed() };
+    h.size = [0x80, 0, 0, 0, 0, 0, 0, 0x02, 0, 0, 0, 0];
+    assert_eq!(h.as_header().entry_size().unwrap(), 0x0200000000);
+    // TODO uids can be up to 63 bits technically
+    h.uid = [0x80, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78];
+    assert_eq!(h.as_header().uid().unwrap(), 0x12345678);
+    h.mtime = [0x80, 0, 0, 0, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+    assert_eq!(h.as_header().mtime().unwrap(), 0x0123456789abcdef);
 }

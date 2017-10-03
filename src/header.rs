@@ -1153,13 +1153,24 @@ impl Default for GnuExtSparseHeader {
 }
 
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
-    let num = match str::from_utf8(truncate(slice)) {
-        Ok(n) => n,
-        Err(_) => return Err(other("numeric field did not have utf-8 text")),
-    };
-    match u64::from_str_radix(num.trim(), 8) {
-        Ok(n) => Ok(n),
-        Err(_) => Err(other("numeric field was not a number"))
+    if slice[0] & 0x80 != 0 { // GNU length extension
+        let mut total: u64 = (slice[0] ^ 0x80) as u64;
+        let mut index = 1;
+        while index < slice.len() {
+            total <<= 8;
+            total |= slice[index] as u64;
+            index += 1;
+        }
+        Ok(total)
+    } else {
+        let num = match str::from_utf8(truncate(slice)) {
+            Ok(n) => n,
+            Err(_) => return Err(other("numeric field did not have utf-8 text")),
+        };
+        match u64::from_str_radix(num.trim(), 8) {
+            Ok(n) => Ok(n),
+            Err(_) => Err(other("numeric field was not a number"))
+        }
     }
 }
 
