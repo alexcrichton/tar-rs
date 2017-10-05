@@ -1153,8 +1153,11 @@ impl Default for GnuExtSparseHeader {
 }
 
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
-    if slice[0] & 0x80 != 0 { // GNU length extension
-        let mut total: u64 = (slice[0] ^ 0x80) as u64;
+    if slice[0] & 0x80 != 0 {
+        // number is expressed in binary as a GNU numeric extension -
+        // see https://www.freebsd.org/cgi/man.cgi?query=tar&sektion=5&manpath=FreeBSD+8-current
+        // under section "Numeric Extensions"
+        let mut total = (slice[0] ^ 0x80) as u64;
         let mut index = 1;
         while index < slice.len() {
             total <<= 8;
