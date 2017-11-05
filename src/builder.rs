@@ -173,9 +173,24 @@ impl<W: Write> Builder<W> {
     /// ar.append_path("foo/bar.txt").unwrap();
     /// ```
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
-        let mode = self.mode.clone();
-        let follow = self.follow;
-        append_path(self.inner(), path.as_ref(), mode, follow)
+        let path = path.as_ref();
+
+        let stat = if self.follow {
+            try!(fs::metadata(path))
+        } else {
+            try!(fs::symlink_metadata(path))
+        };
+
+        if stat.is_file() {
+            self.append_fs(path, &stat, &mut try!(fs::File::open(path)), None)
+        } else if stat.is_dir() {
+            self.append_fs(path, &stat, &mut io::empty(), None)
+        } else if stat.file_type().is_symlink() {
+            let link_name = try!(fs::read_link(path));
+            self.append_fs(path, &stat, &mut io::empty(), Some(&link_name))
+        } else {
+            Err(other("path has unknown file type"))
+        }
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -206,8 +221,8 @@ impl<W: Write> Builder<W> {
     /// ```
     pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File)
                                        -> io::Result<()> {
-        let mode = self.mode.clone();
-        append_file(self.inner(), path.as_ref(), file, mode)
+        let stat = try!(file.metadata());
+        self.append_fs(path.as_ref(), &stat, file, None)
     }
 
     /// Adds a directory to this archive with the given path as the name of the
@@ -238,8 +253,8 @@ impl<W: Write> Builder<W> {
     pub fn append_dir<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
         where P: AsRef<Path>, Q: AsRef<Path>
     {
-        let mode = self.mode.clone();
-        append_dir(self.inner(), path.as_ref(), src_path.as_ref(), mode)
+        let stat = try!(fs::metadata(src_path));
+        self.append_fs(path.as_ref(), &stat, &mut io::empty(), None)
     }
 
     /// Adds a directory and all of its contents (recursively) to this archive
@@ -267,9 +282,49 @@ impl<W: Write> Builder<W> {
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
         where P: AsRef<Path>, Q: AsRef<Path>
     {
+        let path = path.as_ref();
+        let src_path = src_path.as_ref();
+
+        let mut stack = vec![(src_path.to_path_buf(), true, false)];
+        while let Some((src, is_dir, is_symlink)) = stack.pop() {
+            let dest = path.join(src.strip_prefix(&src_path).unwrap());
+            if is_dir {
+                for entry in try!(fs::read_dir(&src)) {
+                    let entry = try!(entry);
+                    let file_type = try!(entry.file_type());
+                    stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
+                }
+                if dest != Path::new("") {
+                    try!(self.append_dir(&dest, &src));
+                }
+            } else if !self.follow && is_symlink {
+                let stat = try!(fs::symlink_metadata(&src));
+                let link_name = try!(fs::read_link(&src));
+                try!(self.append_fs(&dest, &stat, &mut io::empty(), Some(&link_name)));
+            } else {
+                try!(self.append_file(&dest, &mut try!(fs::File::open(src))));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn append_fs(&mut self,
+                 path: &Path,
+                 meta: &fs::Metadata,
+                 read: &mut Read,
+                 link_name: Option<&Path>) -> io::Result<()> {
         let mode = self.mode.clone();
-        let follow = self.follow;
-        append_dir_all(self.inner(), path.as_ref(), src_path.as_ref(), mode, follow)
+        let dst = self.inner();
+        let mut header = Header::new_gnu();
+
+        try!(prepare_header(dst, &mut header, path));
+        header.set_metadata_in_mode(meta, mode);
+        if let Some(link_name) = link_name {
+            try!(header.set_link_name(link_name));
+        }
+        header.set_cksum();
+        append(dst, &header, read)
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -304,35 +359,6 @@ fn append(mut dst: &mut Write,
     Ok(())
 }
 
-fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> io::Result<()> {
-    let stat = if follow {
-        try!(fs::metadata(path))
-    } else {
-        try!(fs::symlink_metadata(path))
-    };
-    if stat.is_file() {
-        append_fs(dst, path, &stat, &mut try!(fs::File::open(path)), mode, None)
-    } else if stat.is_dir() {
-        append_fs(dst, path, &stat, &mut io::empty(), mode, None)
-    } else if stat.file_type().is_symlink() {
-        let link_name = try!(fs::read_link(path));
-        append_fs(dst, path, &stat, &mut io::empty(), mode, Some(&link_name))
-    } else {
-        Err(other("path has unknown file type"))
-    }
-}
-
-fn append_file(dst: &mut Write, path: &Path, file: &mut fs::File, mode: HeaderMode)
-                -> io::Result<()> {
-    let stat = try!(file.metadata());
-    append_fs(dst, path, &stat, file, mode, None)
-}
-
-fn append_dir(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode) -> io::Result<()> {
-    let stat = try!(fs::metadata(src_path));
-    append_fs(dst, path, &stat, &mut io::empty(), mode, None)
-}
-
 fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Result<()> {
     // Try to encode the path directly in the header, but if it ends up not
     // working (e.g. it's too long) then use the GNU-specific long name
@@ -358,47 +384,6 @@ fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Resu
         // ensure we've got something at least mentioned.
         let path = try!(bytes2path(Cow::Borrowed(&data[..max])));
         try!(header.set_path(&path));
-    }
-    Ok(())
-}
-
-fn append_fs(dst: &mut Write,
-             path: &Path,
-             meta: &fs::Metadata,
-             read: &mut Read,
-             mode: HeaderMode,
-             link_name: Option<&Path>) -> io::Result<()> {
-    let mut header = Header::new_gnu();
-
-    try!(prepare_header(dst, &mut header, path));
-    header.set_metadata_in_mode(meta, mode);
-    if let Some(link_name) = link_name {
-        try!(header.set_link_name(link_name));
-    }
-    header.set_cksum();
-    append(dst, &header, read)
-}
-
-fn append_dir_all(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode, follow: bool) -> io::Result<()> {
-    let mut stack = vec![(src_path.to_path_buf(), true, false)];
-    while let Some((src, is_dir, is_symlink)) = stack.pop() {
-        let dest = path.join(src.strip_prefix(&src_path).unwrap());
-        if is_dir {
-            for entry in try!(fs::read_dir(&src)) {
-                let entry = try!(entry);
-                let file_type = try!(entry.file_type());
-                stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
-            }
-            if dest != Path::new("") {
-                try!(append_dir(dst, &dest, &src, mode));
-            }
-        } else if !follow && is_symlink {
-            let stat = try!(fs::symlink_metadata(&src));
-            let link_name = try!(fs::read_link(&src));
-            try!(append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name)));
-        } else {
-            try!(append_file(dst, &dest, &mut try!(fs::File::open(src)), mode));
-        }
     }
     Ok(())
 }
