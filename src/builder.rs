@@ -1,11 +1,22 @@
+#[cfg(any(unix, target_os = "redox"))] use std::os::unix::prelude::*;
 use std::io;
 use std::path::Path;
 use std::io::prelude::*;
 use std::fs;
 use std::borrow::Cow;
+use std::collections::{HashMap, hash_map};
+use std::ffi::OsString;
 
 use {EntryType, Header, other};
 use header::{bytes2path, HeaderMode, path2bytes};
+
+// Record of a file's identity, which is uniquely determined by the device ID
+// and inode number.
+#[derive(PartialEq, Eq, Hash)]
+struct HardLinkInfo {
+    dev: u64,
+    ino: u64,
+}
 
 /// A structure for building archives
 ///
@@ -16,6 +27,7 @@ pub struct Builder<W: Write> {
     follow: bool,
     finished: bool,
     obj: Option<W>,
+    hl_info: HashMap<HardLinkInfo, OsString>,
 }
 
 impl<W: Write> Builder<W> {
@@ -28,6 +40,7 @@ impl<W: Write> Builder<W> {
             follow: true,
             finished: false,
             obj: Some(obj),
+            hl_info: HashMap::new(),
         }
     }
 
@@ -315,16 +328,55 @@ impl<W: Write> Builder<W> {
                  read: &mut Read,
                  link_name: Option<&Path>) -> io::Result<()> {
         let mode = self.mode.clone();
-        let dst = self.inner();
         let mut header = Header::new_gnu();
 
-        try!(prepare_header(dst, &mut header, path));
+        try!(prepare_header(self.inner(), &mut header, path));
         header.set_metadata_in_mode(meta, mode);
-        if let Some(link_name) = link_name {
+
+        if let Some(link_name) = self.check_for_hard_link(path, meta) {
+            header.set_entry_type(EntryType::hard_link());
+            header.set_size(0);
+            try!(header.set_link_name(link_name));
+        } else if let Some(link_name) = link_name {
             try!(header.set_link_name(link_name));
         }
         header.set_cksum();
-        append(dst, &header, read)
+        if header.entry_type() == EntryType::hard_link() {
+            append(self.inner(), &header, &mut io::empty())
+        } else {
+            append(self.inner(), &header, read)
+        }
+    }
+
+    #[cfg(windows)]
+    fn check_for_hard_link(&mut self,
+                           path: &Path,
+                           meta: &fs::Metadata) -> Option<&Path> {
+        None
+    }
+
+    #[cfg(any(unix, target_os = "redox"))]
+    fn check_for_hard_link(&mut self,
+                           path: &Path,
+                           meta: &fs::Metadata) -> Option<&Path> {
+        if meta.file_type().is_dir() || meta.nlink() <= 1 {
+            return None;
+        }
+        let hl_info = HardLinkInfo {dev: meta.dev(), ino: meta.ino()};
+
+        match self.hl_info.entry(hl_info) {
+            hash_map::Entry::Occupied(o) => {
+                // The file has been written before.  Set the current file as
+                // hard link.
+                let name: &OsString = o.into_mut();
+                Some(name.as_ref())
+            },
+            hash_map::Entry::Vacant(v) => {
+                let name = path.as_os_str().to_owned();
+                v.insert(name);
+                None
+            }
+        }
     }
 
     /// Finish writing this archive, emitting the termination sections.

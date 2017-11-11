@@ -216,6 +216,35 @@ fn no_xattrs() {
 	xattr::get(td.path().join("a/b"), "user.pax.flags").unwrap_err();
 }
 
+#[cfg(any(unix, target_os = "redox"))]
+#[test]
+fn writing_and_extracting_hardlinks() {
+    use std::os::unix::prelude::*;
+    use std::env;
+    use std::fs;
+
+    let td = t!(TempDir::new("tar-rs"));
+    let base_dir = td.path().join("base");
+    t!(fs::create_dir(&base_dir));
+
+    t!(t!(File::create(base_dir.join("a1"))).write_all(b"file1"));
+    t!(fs::hard_link(base_dir.join("a1"), base_dir.join("a2")));
+
+    let mut ar = Builder::new(Vec::new());
+    t!(env::set_current_dir(base_dir));
+    t!(ar.append_path("a1"));
+    t!(ar.append_path("a2"));
+    t!(ar.finish());
+
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+
+    t!(ar.unpack(td.path()));
+    let file_a1 = td.path().join("a1");
+    let file_a2 = td.path().join("a2");
+    assert!(t!(fs::metadata(&file_a1)).ino() == t!(fs::metadata(&file_a2)).ino());
+}
+
 #[test]
 fn writing_and_extracting_directories() {
     let td = t!(TempDir::new("tar-rs"));
