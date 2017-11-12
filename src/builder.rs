@@ -1,11 +1,14 @@
-#[cfg(any(unix, target_os = "redox"))] use std::os::unix::prelude::*;
+#[cfg(any(unix, target_os = "redox"))]
+use std::os::unix::prelude::*;
+#[cfg(any(unix, target_os = "redox"))]
+use std::collections::{HashMap, hash_map};
+#[cfg(any(unix, target_os = "redox"))]
+use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 use std::io::prelude::*;
 use std::fs;
 use std::borrow::Cow;
-use std::collections::{HashMap, hash_map};
-use std::ffi::OsString;
 
 use {EntryType, Header, other};
 use header::{bytes2path, HeaderMode, path2bytes};
@@ -27,7 +30,8 @@ pub struct Builder<W: Write> {
     follow: bool,
     finished: bool,
     obj: Option<W>,
-    hl_info: HashMap<HardLinkInfo, OsString>,
+    #[cfg(any(unix, target_os = "redox"))]
+    hl_info_map: HashMap<HardLinkInfo, OsString>,
 }
 
 impl<W: Write> Builder<W> {
@@ -40,7 +44,8 @@ impl<W: Write> Builder<W> {
             follow: true,
             finished: false,
             obj: Some(obj),
-            hl_info: HashMap::new(),
+            #[cfg(any(unix, target_os = "redox"))]
+            hl_info_map: HashMap::new(),
         }
     }
 
@@ -348,10 +353,11 @@ impl<W: Write> Builder<W> {
         }
     }
 
+    // Windows does not support using inode to check for hard link
     #[cfg(windows)]
     fn check_for_hard_link(&mut self,
-                           path: &Path,
-                           meta: &fs::Metadata) -> Option<&Path> {
+                           _: &Path,
+                           _: &fs::Metadata) -> Option<&Path> {
         None
     }
 
@@ -364,10 +370,10 @@ impl<W: Write> Builder<W> {
         }
         let hl_info = HardLinkInfo {dev: meta.dev(), ino: meta.ino()};
 
-        match self.hl_info.entry(hl_info) {
+        // If the file has been written before.  Set the current file as hard link.
+        // Else record this file as a HardLinkInfo.
+        match self.hl_info_map.entry(hl_info) {
             hash_map::Entry::Occupied(o) => {
-                // The file has been written before.  Set the current file as
-                // hard link.
                 let name: &OsString = o.into_mut();
                 Some(name.as_ref())
             },
