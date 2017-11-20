@@ -1219,6 +1219,7 @@ fn copy_path_into(mut slot: &mut [u8],
                   path: &Path,
                   is_link_name: bool) -> io::Result<()> {
     let mut emitted = false;
+    let mut needs_slash = false;
     for component in path.components() {
         let bytes = try!(path2bytes(Path::new(component.as_os_str())));
         match (component, is_link_name) {
@@ -1235,8 +1236,8 @@ fn copy_path_into(mut slot: &mut [u8],
             (Component::Normal(_), _) |
             (_, true) => {}
         };
-        if emitted {
-            try!(copy(&mut slot, &[b'/']));
+        if needs_slash {
+            try!(copy(&mut slot, b"/"));
         }
         if bytes.contains(&b'/') {
             if let Component::Normal(..) = component {
@@ -1244,6 +1245,9 @@ fn copy_path_into(mut slot: &mut [u8],
             }
         }
         try!(copy(&mut slot, &*bytes));
+        if &*bytes != b"/" {
+            needs_slash = true;
+        }
         emitted = true;
     }
     if !emitted {

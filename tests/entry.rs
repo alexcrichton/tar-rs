@@ -31,6 +31,11 @@ fn absolute_symlink() {
     t!(ar.unpack(td.path()));
 
     t!(td.path().join("foo").symlink_metadata());
+
+    let mut ar = tar::Archive::new(&bytes[..]);
+    let mut entries = t!(ar.entries());
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(&*entry.link_name_bytes().unwrap(), b"/bar");
 }
 
 #[test]
