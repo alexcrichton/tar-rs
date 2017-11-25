@@ -46,7 +46,14 @@ mod entry;
 mod entry_type;
 mod error;
 mod header;
+mod realpath;
 mod pax;
+
+#[cfg(test)]
+mod realpath_test_common;
+
+#[cfg(all(unix, test))]
+mod realpath_test_unix;
 
 // FIXME(rust-lang/rust#26403):
 //      Right now there's a bug when a DST struct's last field has more

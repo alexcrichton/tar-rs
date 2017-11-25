@@ -124,6 +124,76 @@ fn absolute_link_deref_error() {
 }
 
 #[test]
+fn chase_absolute_link_error() {
+    let outside = t!(TempDir::new("outside"));
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Symlink);
+    t!(header.set_path("symlink"));
+    t!(header.set_link_name(outside.path().join("unreachable")));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("symlink"));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+
+    let td = t!(TempDir::new("tar"));
+    assert!(ar.unpack(td.path()).is_err());
+    t!(td.path().join("symlink").symlink_metadata());
+    assert!(File::open(outside.path().join("unreachable")).is_err());
+}
+
+#[test]
+fn chase_relative_link_error() {
+    use std::path::PathBuf;
+    let outside = t!(TempDir::new("outside"));
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Symlink);
+    t!(header.set_path("symlink"));
+    let target = outside.path().components()
+        .fold(PathBuf::new(), |acc, _| acc.join("../"))
+        .components()
+        .chain(outside.path().join("unreachable").components())
+        .fold(PathBuf::new(), |acc, p| {
+            match p == ::std::path::Component::RootDir {
+                false => acc.join(p.as_os_str()),
+                true => acc,
+            }
+        });
+
+    t!(header.set_link_name(target));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("symlink"));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+
+    let td = t!(TempDir::new("tar_chase_relative"));
+    ar.unpack(td.path()).unwrap_err();
+    t!(td.path().join("symlink").symlink_metadata());
+    File::open(outside.path().join("unreachable")).unwrap_err();
+}
+
+#[test]
 fn relative_link_deref_error() {
     let mut ar = tar::Builder::new(Vec::new());
 

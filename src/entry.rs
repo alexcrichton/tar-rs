@@ -13,6 +13,7 @@ use archive::ArchiveInner;
 use error::TarError;
 use header::bytes2path;
 use other;
+use realpath::{normalize, realpath};
 use pax::pax_extensions;
 
 /// A read-only view into an entry of an archive.
@@ -360,11 +361,21 @@ impl<'a> EntryFields<'a> {
             }));
         }
 
-        // Abort if target (canonical) parent is outside of `dst`
-        let canon_parent = try!(parent.canonicalize());
+        // Abort if target path will end up outside of `dst`.
+        let normalized_dst = normalize(dst);
+        let real_file_dst = try!(realpath(&file_dst, Some(normalized_dst.clone())));
+        if !real_file_dst.starts_with(&normalized_dst) {
+            return Err(TarError::new(&format!("trying to write {}, outside of destination {}",
+                                              real_file_dst.display(), normalized_dst.display()),
+                                     Error::new(ErrorKind::Other, "Invalid argument")).into());
+        }
+
+        // Abort if target (canonical) parent is outside of `dst`.
         let canon_target = try!(dst.canonicalize());
+        let canon_parent = try!(parent.canonicalize());
         if !canon_parent.starts_with(&canon_target) {
-            return Err(TarError::new("trying to unpack outside of destination path",
+            return Err(TarError::new(&format!("trying to unpack in {}, outside of destination {}",
+                                             canon_parent.display(), canon_target.display()),
                           Error::new(ErrorKind::Other, "Invalid argument")).into());
         }
 
