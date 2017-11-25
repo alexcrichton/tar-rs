@@ -60,6 +60,18 @@ fn link_name() {
 }
 
 #[test]
+fn mtime() {
+    let h = Header::new_gnu();
+    assert_eq!(t!(h.mtime()), 0);
+
+    let h = Header::new_ustar();
+    assert_eq!(t!(h.mtime()), 0);
+
+    let h = Header::new_old();
+    assert_eq!(t!(h.mtime()), 0);
+}
+
+#[test]
 fn user_and_group_name() {
     let mut h = Header::new_gnu();
     t!(h.set_username("foo"));

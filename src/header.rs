@@ -145,6 +145,7 @@ impl Header {
             gnu.magic = *b"ustar ";
             gnu.version = *b" \0";
         }
+        header.set_mtime(0);
         header
     }
 
@@ -162,6 +163,7 @@ impl Header {
             gnu.magic = *b"ustar\0";
             gnu.version = *b"00";
         }
+        header.set_mtime(0);
         header
     }
 
@@ -172,7 +174,9 @@ impl Header {
     /// format limits the path name limit and isn't able to contain extra
     /// metadata like atime/ctime.
     pub fn new_old() -> Header {
-        Header { bytes: [0; 512] }
+        let mut header = Header { bytes: [0; 512] };
+        header.set_mtime(0);
+        header
     }
 
     fn is_ustar(&self) -> bool {
