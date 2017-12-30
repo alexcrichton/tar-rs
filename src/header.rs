@@ -238,9 +238,9 @@ impl Header {
         if self.is_gnu() {Some(unsafe { cast_mut(self) })} else {None}
     }
 
-    /// Creates a header from the given byte array
-    pub fn from_bytes(bytes: [u8; 512]) -> Header {
-        Header { bytes : bytes }
+    /// Treats the given byte array as a header
+    pub fn from_byte_ref(bytes: &[u8; 512]) -> &Header {
+        unsafe { cast(bytes) }
     }
 
     /// Returns a view into this header as a byte array.
