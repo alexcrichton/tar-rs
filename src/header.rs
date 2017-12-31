@@ -238,9 +238,13 @@ impl Header {
         if self.is_gnu() {Some(unsafe { cast_mut(self) })} else {None}
     }
 
-    /// Treats the given byte array as a header
-    pub fn from_byte_ref(bytes: &[u8; 512]) -> &Header {
-        unsafe { cast(bytes) }
+    /// Treats the given byte slice as a header.
+    ///
+    /// Panics if the length of the passed slice is not equal to 512.
+    pub fn from_byte_slice(bytes: &[u8]) -> &Header {
+        assert_eq!(bytes.len(), mem::size_of::<Header>());
+        assert_eq!(mem::align_of_val(bytes), mem::align_of::<Header>());
+        unsafe { &*(bytes.as_ptr() as * const Header) }
     }
 
     /// Returns a view into this header as a byte array.

@@ -211,3 +211,11 @@ fn extended_numeric_format() {
     h.mtime = [0x80, 0, 0, 0, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
     assert_eq!(h.as_header().mtime().unwrap(), 0x0123456789abcdef);
 }
+
+#[test]
+fn byte_slice_conversion() {
+    let h = Header::new_gnu();
+    let b: &[u8] = h.as_bytes();
+    let b_conv: &[u8] = Header::from_byte_slice(h.as_bytes()).as_bytes();
+    assert_eq!(b, b_conv);
+}
