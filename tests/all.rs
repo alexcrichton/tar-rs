@@ -201,19 +201,21 @@ fn xattrs() {
     t!(ar.unpack(td.path()));
 
     let val = xattr::get(td.path().join("a/b"), "user.pax.flags").unwrap();
-	assert_eq!(val, "epm".as_bytes());
+    assert_eq!(val.unwrap(), "epm".as_bytes());
 }
 
 #[test]
 #[cfg(all(unix, feature = "xattr"))]
 fn no_xattrs() {
-	let td = t!(TempDir::new("tar-rs"));
-	let rdr = Cursor::new(tar!("xattrs.tar"));
-	let mut ar = Archive::new(rdr);
+    // If /tmp is a tmpfs, xattr will fail
+    // The xattr crate's unit tests also use /var/tmp for this reason
+    let td = t!(TempDir::new_in("/var/tmp", "tar-rs"));
+    let rdr = Cursor::new(tar!("xattrs.tar"));
+    let mut ar = Archive::new(rdr);
     ar.set_unpack_xattrs(false);
-	t!(ar.unpack(td.path()));
+    t!(ar.unpack(td.path()));
 
-	xattr::get(td.path().join("a/b"), "user.pax.flags").unwrap_err();
+    assert_eq!(xattr::get(td.path().join("a/b"), "user.pax.flags").unwrap(), None);
 }
 
 #[test]
