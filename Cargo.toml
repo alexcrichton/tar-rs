@@ -24,7 +24,7 @@ filetime = "0.1.5"
 tempdir = "0.3"
 
 [target."cfg(unix)".dependencies]
-xattr = { version = "0.1.7", optional = true }
+xattr = { version = "0.2", optional = true }
 libc = "0.2"
 
 [target.'cfg(target_os = "redox")'.dependencies]
