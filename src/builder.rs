@@ -306,9 +306,15 @@ fn append(mut dst: &mut Write,
 
 fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> io::Result<()> {
     let stat = if follow {
-        try!(fs::metadata(path))
+        try!(fs::metadata(path).map_err(|err| io::Error::new(
+            err.kind(),
+            format!("{} when getting metadata for {}", err, path.display()),
+        )))
     } else {
-        try!(fs::symlink_metadata(path))
+        try!(fs::symlink_metadata(path).map_err(|err| io::Error::new(
+            err.kind(),
+            format!("{} when getting metadata for {}", err, path.display()),
+        )))
     };
     if stat.is_file() {
         append_fs(dst, path, &stat, &mut try!(fs::File::open(path)), mode, None)
@@ -318,7 +324,7 @@ fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> 
         let link_name = try!(fs::read_link(path));
         append_fs(dst, path, &stat, &mut io::empty(), mode, Some(&link_name))
     } else {
-        Err(other("path has unknown file type"))
+        Err(other(&format!("{} has unknown file type", path.display())))
     }
 }
 

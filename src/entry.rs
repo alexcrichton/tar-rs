@@ -271,6 +271,11 @@ impl<'a> EntryFields<'a> {
         }
     }
 
+    /// Gets the path in a "lossy" way, used for error reporting ONLY.
+    fn path_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.path_bytes()).to_string()
+    }
+
     fn link_name(&self) -> io::Result<Option<Cow<Path>>> {
         match self.link_name_bytes() {
             Some(bytes) => bytes2path(bytes).map(Some),
@@ -319,7 +324,7 @@ impl<'a> EntryFields<'a> {
         let mut file_dst = dst.to_path_buf();
         {
             let path = try!(self.path().map_err(|e| {
-                TarError::new("invalid path in entry header", e)
+                TarError::new(&format!("invalid path in entry header: {}", self.path_lossy()), e)
             }));
             for part in path.components() {
                 match part {
@@ -361,16 +366,32 @@ impl<'a> EntryFields<'a> {
         }
 
         // Abort if target (canonical) parent is outside of `dst`
-        let canon_parent = try!(parent.canonicalize());
-        let canon_target = try!(dst.canonicalize());
+        let canon_parent = try!(parent.canonicalize().map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, parent.display()),
+            )
+        }));
+        let canon_target = try!(dst.canonicalize().map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, dst.display()),
+            )
+        }));
         if !canon_parent.starts_with(&canon_target) {
-            return Err(TarError::new("trying to unpack outside of destination path",
-                          Error::new(ErrorKind::Other, "Invalid argument")).into());
+            let err = TarError::new(
+                &format!(
+                    "trying to unpack outside of destination path: {}",
+                    canon_target.display()
+                ),
+                // TODO: use ErrorKind::InvalidInput here? (minor breaking change)
+                Error::new(ErrorKind::Other, "Invalid argument"),
+            );
+            return Err(err.into());
         }
 
         try!(self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
-            TarError::new(&format!("failed to unpack `{}`",
-                                   file_dst.display()), e)
+            TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e)
         }));
 
         Ok(true)
@@ -387,16 +408,24 @@ impl<'a> EntryFields<'a> {
             if prev.map(|m| m.is_dir()).unwrap_or(false) {
                 return Ok(())
             }
-            return fs::create_dir(&dst)
+            return fs::create_dir(&dst).map_err(|err| Error::new(
+                err.kind(),
+                format!("{} when creating dir {}", err, dst.display())
+            ));
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match try!(self.link_name()) {
                 Some(name) => name,
-                None => return Err(other("hard link listed but no link \
-                                          name found"))
+                None => return Err(other(&format!(
+                    "hard link listed for {} but no link name found",
+                    String::from_utf8_lossy(self.header.as_bytes())
+                ))),
             };
 
             if src.iter().count() == 0 {
-                return Err(other("symlink destination is empty"))
+                return Err(other(&format!(
+                    "symlink destination for {} is empty",
+                    String::from_utf8_lossy(self.header.as_bytes())
+                )));
             }
 
             return if kind.is_hard_link() {
@@ -404,15 +433,32 @@ impl<'a> EntryFields<'a> {
                     None => src.into_owned(),
                     Some(ref p) => p.join(src),
                 };
-                fs::hard_link(&link_src, dst)
+                fs::hard_link(&link_src, dst).map_err(|err| Error::new(
+                    err.kind(),
+                    format!(
+                        "{} when hard linking {} to {}",
+                        err,
+                        link_src.display(),
+                        dst.display()
+                    )
+                ))
             } else {
-                symlink(&src, dst)
+                symlink(&src, dst).map_err(|err| Error::new(
+                    err.kind(),
+                    format!(
+                        "{} when symlinking {} to {}",
+                        err,
+                        src.display(),
+                        dst.display()
+                    )
+                ))
             };
 
             #[cfg(windows)]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::windows::fs::symlink_file(src, dst)
             }
+
             #[cfg(any(unix, target_os = "redox"))]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::unix::fs::symlink(src, dst)
