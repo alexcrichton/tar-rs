@@ -282,7 +282,10 @@ impl Header {
     ///
     /// May return an error if the field is corrupted.
     pub fn entry_size(&self) -> io::Result<u64> {
-        octal_from(&self.as_old().size)
+        octal_from(&self.as_old().size).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting size for {}", err, self.path_lossy()),
+        ))
     }
 
     /// Returns the file size this header represents.
@@ -330,6 +333,11 @@ impl Header {
         }
     }
 
+    /// Gets the path in a "lossy" way, used for error reporting ONLY.
+    fn path_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.path_bytes()).to_string()
+    }
+
     /// Sets the path name for this header.
     ///
     /// This function will set the pathname listed in this header, encoding it
@@ -344,6 +352,10 @@ impl Header {
             return ustar.set_path(path)
         }
         copy_path_into(&mut self.as_old_mut().name, path, false)
+            .map_err(|err| io::Error::new(
+                err.kind(),
+                format!( "{} when setting path for {}", err, self.path_lossy()),
+            ))
     }
 
     /// Returns the link name stored in this header, if any is found.
@@ -388,13 +400,20 @@ impl Header {
 
     fn _set_link_name(&mut self, path: &Path) -> io::Result<()> {
         copy_path_into(&mut self.as_old_mut().linkname, path, true)
+            .map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when setting link name for {}", err, self.path_lossy()),
+        ))
     }
 
     /// Returns the mode bits for this file
     ///
     /// May return an error if the field is corrupted.
     pub fn mode(&self) -> io::Result<u32> {
-        octal_from(&self.as_old().mode).map(|u| u as u32)
+        octal_from(&self.as_old().mode).map(|u| u as u32).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting mode for {}", err, self.path_lossy()),
+        ))
     }
 
     /// Encodes the `mode` provided into this header.
@@ -406,7 +425,10 @@ impl Header {
     ///
     /// May return an error if the field is corrupted.
     pub fn uid(&self) -> io::Result<u32> {
-        octal_from(&self.as_old().uid).map(|u| u as u32)
+        octal_from(&self.as_old().uid).map(|u| u as u32).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting uid for {}", err, self.path_lossy()),
+        ))
     }
 
     /// Encodes the `uid` provided into this header.
@@ -416,7 +438,10 @@ impl Header {
 
     /// Returns the value of the group's user ID field
     pub fn gid(&self) -> io::Result<u32> {
-        octal_from(&self.as_old().gid).map(|u| u as u32)
+        octal_from(&self.as_old().gid).map(|u| u as u32).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting gid for {}", err, self.path_lossy()),
+        ))
     }
 
     /// Encodes the `gid` provided into this header.
@@ -426,7 +451,10 @@ impl Header {
 
     /// Returns the last modification time in Unix time format
     pub fn mtime(&self) -> io::Result<u64> {
-        octal_from(&self.as_old().mtime)
+        octal_from(&self.as_old().mtime).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting mtime for {}", err, self.path_lossy()),
+        ))
     }
 
     /// Encodes the `mtime` provided into this header.
@@ -599,7 +627,10 @@ impl Header {
     ///
     /// May return an error if the field is corrupted.
     pub fn cksum(&self) -> io::Result<u32> {
-        octal_from(&self.as_old().cksum).map(|u| u as u32)
+        octal_from(&self.as_old().cksum).map(|u| u as u32).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting cksum for {}", err, self.path_lossy()),
+        ))
     }
 
     /// Sets the checksum field of this header based on the current fields in
@@ -870,6 +901,11 @@ impl UstarHeader {
         }
     }
 
+    /// Gets the path in a "lossy" way, used for error reporting ONLY.
+    fn path_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.path_bytes()).to_string()
+    }
+
     /// See `Header::set_path`
     pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
         self._set_path(p.as_ref())
@@ -887,24 +923,37 @@ impl UstarHeader {
         let bytes = try!(path2bytes(path));
         let (maxnamelen, maxprefixlen) = (self.name.len(), self.prefix.len());
         if bytes.len() <= maxnamelen {
-            try!(copy_path_into(&mut self.name, path, false));
+            try!(copy_path_into(&mut self.name, path, false)
+                .map_err(|err| io::Error::new(
+                err.kind(),
+                format!( "{} when setting path for {}", err, self.path_lossy()),
+            )));
         } else {
             let mut prefix = path;
             let mut prefixlen;
             loop {
                 match prefix.parent() {
                     Some(parent) => prefix = parent,
-                    None => return Err(other("path cannot be split to be \
-                                              inserted into archive")),
+                    None => return Err(other(&format!(
+                        "path cannot be split to be inserted into archive: {}", path.display()
+                    ))),
                 }
                 prefixlen = try!(path2bytes(prefix)).len();
                 if prefixlen <= maxprefixlen {
                     break
                 }
             }
-            try!(copy_path_into(&mut self.prefix, prefix, false));
+            try!(copy_path_into(&mut self.prefix, prefix, false)
+                .map_err(|err| io::Error::new(
+                err.kind(),
+                format!( "{} when setting path for {}", err, self.path_lossy()),
+            )));
             let path = try!(bytes2path(Cow::Borrowed(&bytes[prefixlen + 1..])));
-            try!(copy_path_into(&mut self.name, &path, false));
+            try!(copy_path_into(&mut self.name, &path, false)
+                .map_err(|err| io::Error::new(
+                err.kind(),
+                format!( "{} when setting path for {}", err, self.path_lossy()),
+            )));
         }
         Ok(())
     }
@@ -916,7 +965,10 @@ impl UstarHeader {
 
     /// See `Header::set_username`
     pub fn set_username(&mut self, name: &str) -> io::Result<()> {
-        copy_into(&mut self.uname, name.as_bytes())
+        copy_into(&mut self.uname, name.as_bytes()).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when setting username for {}", err, self.path_lossy()),
+        ))
     }
 
     /// See `Header::groupname_bytes`
@@ -926,12 +978,18 @@ impl UstarHeader {
 
     /// See `Header::set_groupname`
     pub fn set_groupname(&mut self, name: &str) -> io::Result<()> {
-        copy_into(&mut self.gname, name.as_bytes())
+        copy_into(&mut self.gname, name.as_bytes()).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when setting groupname for {}", err, self.path_lossy()),
+        ))
     }
 
     /// See `Header::device_major`
     pub fn device_major(&self) -> io::Result<u32> {
-        octal_from(&self.dev_major).map(|u| u as u32)
+        octal_from(&self.dev_major).map(|u| u as u32).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting device_major for {}", err, self.path_lossy()),
+        ))
     }
 
     /// See `Header::set_device_major`
@@ -941,7 +999,10 @@ impl UstarHeader {
 
     /// See `Header::device_minor`
     pub fn device_minor(&self) -> io::Result<u32> {
-        octal_from(&self.dev_minor).map(|u| u as u32)
+        octal_from(&self.dev_minor).map(|u| u as u32).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting device_minor for {}", err, self.path_lossy()),
+        ))
     }
 
     /// See `Header::set_device_minor`
@@ -974,9 +1035,21 @@ impl GnuHeader {
         truncate(&self.uname)
     }
 
+    /// Gets the fullname (group:user) in a "lossy" way, used for error reporting ONLY.
+    fn fullname_lossy(&self) -> String {
+        format!(
+            "{}:{}",
+            String::from_utf8_lossy(&self.groupname_bytes()),
+            String::from_utf8_lossy(&self.username_bytes()),
+        )
+    }
+
     /// See `Header::set_username`
     pub fn set_username(&mut self, name: &str) -> io::Result<()> {
-        copy_into(&mut self.uname, name.as_bytes())
+        copy_into(&mut self.uname, name.as_bytes()).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when setting username for {}", err, self.fullname_lossy()),
+        ))
     }
 
     /// See `Header::groupname_bytes`
@@ -986,12 +1059,18 @@ impl GnuHeader {
 
     /// See `Header::set_groupname`
     pub fn set_groupname(&mut self, name: &str) -> io::Result<()> {
-        copy_into(&mut self.gname, name.as_bytes())
+        copy_into(&mut self.gname, name.as_bytes()).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when setting groupname for {}", err, self.fullname_lossy()),
+        ))
     }
 
     /// See `Header::device_major`
     pub fn device_major(&self) -> io::Result<u32> {
-        octal_from(&self.dev_major).map(|u| u as u32)
+        octal_from(&self.dev_major).map(|u| u as u32).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting device_major for {}", err, self.fullname_lossy()),
+        ))
     }
 
     /// See `Header::set_device_major`
@@ -1001,7 +1080,10 @@ impl GnuHeader {
 
     /// See `Header::device_minor`
     pub fn device_minor(&self) -> io::Result<u32> {
-        octal_from(&self.dev_minor).map(|u| u as u32)
+        octal_from(&self.dev_minor).map(|u| u as u32).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting device_minor for {}", err, self.fullname_lossy()),
+        ))
     }
 
     /// See `Header::set_device_minor`
@@ -1011,7 +1093,10 @@ impl GnuHeader {
 
     /// Returns the last modification time in Unix time format
     pub fn atime(&self) -> io::Result<u64> {
-        octal_from(&self.atime)
+        octal_from(&self.atime).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting atime for {}", err, self.fullname_lossy()),
+        ))
     }
 
     /// Encodes the `atime` provided into this header.
@@ -1024,7 +1109,10 @@ impl GnuHeader {
 
     /// Returns the last modification time in Unix time format
     pub fn ctime(&self) -> io::Result<u64> {
-        octal_from(&self.ctime)
+        octal_from(&self.ctime).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting ctime for {}", err, self.fullname_lossy()),
+        ))
     }
 
     /// Encodes the `ctime` provided into this header.
@@ -1040,7 +1128,10 @@ impl GnuHeader {
     /// This is applicable for sparse files where the returned size here is the
     /// size of the entire file after the sparse regions have been filled in.
     pub fn real_size(&self) -> io::Result<u64> {
-        octal_from(&self.realsize)
+        octal_from(&self.realsize).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting real_size for {}", err, self.fullname_lossy()),
+        ))
     }
 
     /// Indicates whether this header will be followed by additional
@@ -1103,14 +1194,20 @@ impl GnuSparseHeader {
     ///
     /// Returns `Err` for a malformed `offset` field.
     pub fn offset(&self) -> io::Result<u64> {
-        octal_from(&self.offset)
+        octal_from(&self.offset).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting offset from sparce header", err),
+        ))
     }
 
     /// Length of the block
     ///
     /// Returns `Err` for a malformed `numbytes` field.
     pub fn length(&self) -> io::Result<u64> {
-        octal_from(&self.numbytes)
+        octal_from(&self.numbytes).map_err(|err| io::Error::new(
+            err.kind(),
+            format!( "{} when getting length from sparse header", err),
+        ))
     }
 }
 
@@ -1179,13 +1276,16 @@ fn octal_from(slice: &[u8]) -> io::Result<u64> {
         }
         Ok(total)
     } else {
-        let num = match str::from_utf8(truncate(slice)) {
+        let trun = truncate(slice);
+        let num = match str::from_utf8(trun) {
             Ok(n) => n,
-            Err(_) => return Err(other("numeric field did not have utf-8 text")),
+            Err(_) => return Err(other(
+                &format!("numeric field did not have utf-8 text: {}", String::from_utf8_lossy(trun))
+            )),
         };
         match u64::from_str_radix(num.trim(), 8) {
             Ok(n) => Ok(n),
-            Err(_) => Err(other("numeric field was not a number"))
+            Err(_) => Err(other(&format!("numeric field was not a number: {}", num))),
         }
     }
 }
@@ -1293,7 +1393,9 @@ fn ends_with_slash(p: &Path) -> bool {
 #[cfg(windows)]
 pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     p.as_os_str().to_str().map(|s| s.as_bytes()).ok_or_else(|| {
-        other("path was not valid unicode")
+        other(format!(
+            "path {} was not valid unicode", String::from_utf8_lossy(p.as_os_str().as_bytes())
+        ))
     }).map(|bytes| {
         if bytes.contains(&b'\\') {
             // Normalize to Unix-style path separators
@@ -1311,33 +1413,40 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
 }
 
 #[cfg(any(unix, target_os = "redox"))]
+/// On unix this will never fail
 pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     Ok(p.as_os_str().as_bytes()).map(Cow::Borrowed)
 }
 
 #[cfg(windows)]
+/// On windows we cannot accept non-unicode bytes because it
+/// is impossible to convert it to UTF-16.
 pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     return match bytes {
         Cow::Borrowed(bytes) => {
             let s = try!(str::from_utf8(bytes).map_err(|_| {
-                not_unicode()
+                not_unicode(bytes)
             }));
             Ok(Cow::Borrowed(Path::new(s)))
         }
         Cow::Owned(bytes) => {
-            let s = try!(String::from_utf8(bytes).map_err(|_| {
-                not_unicode()
+            let s = try!(String::from_utf8(bytes).map_err(|uerr| {
+                not_unicode(&uerr.into_bytes())
             }));
             Ok(Cow::Owned(PathBuf::from(s)))
         }
     };
 
-    fn not_unicode() -> io::Error {
-        other("only unicode paths are supported on windows")
+    fn not_unicode(v: &[u8]) -> io::Error {
+        other(&format!(
+            "only unicode paths are supported on windows: {}",
+            String::from_utf8_lossy(v)
+        ))
     }
 }
 
 #[cfg(any(unix, target_os = "redox"))]
+/// On unix this operation can never fail.
 pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     use std::ffi::{OsStr, OsString};
 
