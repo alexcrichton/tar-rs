@@ -3,7 +3,7 @@ rust:
   - stable
   - beta
   - nightly
-  - 1.10.0
+  - 1.21.0
 env:
   global:
     - RUSTFLAGS='-C link-dead-code'
