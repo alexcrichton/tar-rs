@@ -1393,9 +1393,7 @@ fn ends_with_slash(p: &Path) -> bool {
 #[cfg(windows)]
 pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     p.as_os_str().to_str().map(|s| s.as_bytes()).ok_or_else(|| {
-        other(format!(
-            "path {} was not valid unicode", String::from_utf8_lossy(p.as_os_str().as_bytes())
-        ))
+        other(&format!("path {} was not valid unicode", p.display()))
     }).map(|bytes| {
         if bytes.contains(&b'\\') {
             // Normalize to Unix-style path separators
