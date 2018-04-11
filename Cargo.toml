@@ -1,7 +1,7 @@
 [package]
 
 name = "tar"
-version = "0.4.14"
+version = "0.4.15"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 homepage = "https://github.com/alexcrichton/tar-rs"
 repository = "https://github.com/alexcrichton/tar-rs"
@@ -18,7 +18,7 @@ contents are never required to be entirely resident in memory all at once.
 """
 
 [dependencies]
-filetime = "0.1.5"
+filetime = "0.2"
 
 [dev-dependencies]
 tempdir = "0.3"

@@ -505,7 +505,7 @@ impl<'a> EntryFields<'a> {
         }));
 
         if let Ok(mtime) = self.header.mtime() {
-            let mtime = FileTime::from_seconds_since_1970(mtime, 0);
+            let mtime = FileTime::from_unix_time(mtime as i64, 0);
             try!(filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
                 TarError::new(&format!("failed to set mtime for `{}`",
                                        dst.display()), e)

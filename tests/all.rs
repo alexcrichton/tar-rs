@@ -473,9 +473,9 @@ fn file_times() {
     let meta = fs::metadata(td.path().join("a")).unwrap();
     let mtime = FileTime::from_last_modification_time(&meta);
     let atime = FileTime::from_last_access_time(&meta);
-    assert_eq!(mtime.seconds_relative_to_1970(), 1000000000);
+    assert_eq!(mtime.unix_seconds(), 1000000000);
     assert_eq!(mtime.nanoseconds(), 0);
-    assert_eq!(atime.seconds_relative_to_1970(), 1000000000);
+    assert_eq!(atime.unix_seconds(), 1000000000);
     assert_eq!(atime.nanoseconds(), 0);
 }
 
