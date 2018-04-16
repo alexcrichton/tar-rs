@@ -302,7 +302,7 @@ impl<'a> EntryFields<'a> {
                !self.header.entry_type().is_pax_local_extensions() {
                 return Ok(None)
             }
-            self.pax_extensions = Some(try!(self.read_all()));
+            self.pax_extensions = Some(self.read_all()?);
         }
         Ok(Some(pax_extensions(self.pax_extensions.as_ref().unwrap())))
     }
@@ -323,9 +323,9 @@ impl<'a> EntryFields<'a> {
 
         let mut file_dst = dst.to_path_buf();
         {
-            let path = try!(self.path().map_err(|e| {
+            let path = self.path().map_err(|e| {
                 TarError::new(&format!("invalid path in entry header: {}", self.path_lossy()), e)
-            }));
+            })?;
             for part in path.components() {
                 match part {
                     // Leading '/' characters, root paths, and '.'
@@ -359,25 +359,25 @@ impl<'a> EntryFields<'a> {
         };
 
         if !parent.exists() {
-            try!(fs::create_dir_all(&parent).map_err(|e| {
+            fs::create_dir_all(&parent).map_err(|e| {
                 TarError::new(&format!("failed to create `{}`",
                                        parent.display()), e)
-            }));
+            })?;
         }
 
         // Abort if target (canonical) parent is outside of `dst`
-        let canon_parent = try!(parent.canonicalize().map_err(|err| {
+        let canon_parent = parent.canonicalize().map_err(|err| {
             Error::new(
                 err.kind(),
                 format!("{} while canonicalizing {}", err, parent.display()),
             )
-        }));
-        let canon_target = try!(dst.canonicalize().map_err(|err| {
+        })?;
+        let canon_target = dst.canonicalize().map_err(|err| {
             Error::new(
                 err.kind(),
                 format!("{} while canonicalizing {}", err, dst.display()),
             )
-        }));
+        })?;
         if !canon_parent.starts_with(&canon_target) {
             let err = TarError::new(
                 &format!(
@@ -390,9 +390,9 @@ impl<'a> EntryFields<'a> {
             return Err(err.into());
         }
 
-        try!(self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
+        self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
             TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e)
-        }));
+        })?;
 
         Ok(true)
     }
@@ -413,7 +413,7 @@ impl<'a> EntryFields<'a> {
                 format!("{} when creating dir {}", err, dst.display())
             ));
         } else if kind.is_hard_link() || kind.is_symlink() {
-            let src = match try!(self.link_name()) {
+            let src = match self.link_name()? {
                 Some(name) => name,
                 None => return Err(other(&format!(
                     "hard link listed for {} but no link name found",
@@ -479,20 +479,20 @@ impl<'a> EntryFields<'a> {
         // As a result if we don't recognize the kind we just write out the file
         // as we would normally.
 
-        try!(fs::File::create(dst).and_then(|mut f| {
+        fs::File::create(dst).and_then(|mut f| {
             for io in self.data.drain(..) {
                 match io {
                     EntryIo::Data(mut d) => {
                         let expected = d.limit();
-                        if try!(io::copy(&mut d, &mut f)) != expected {
+                        if io::copy(&mut d, &mut f)? != expected {
                             return Err(other("failed to write entire file"));
                         }
                     }
                     EntryIo::Pad(d) => {
                         // TODO: checked cast to i64
                         let to = SeekFrom::Current(d.limit() as i64);
-                        let size = try!(f.seek(to));
-                        try!(f.set_len(size));
+                        let size = f.seek(to)?;
+                        f.set_len(size)?;
                     }
                 }
             }
@@ -502,23 +502,23 @@ impl<'a> EntryFields<'a> {
             TarError::new(&format!("failed to unpack `{}` into `{}`",
                                    String::from_utf8_lossy(&header),
                                    dst.display()), e)
-        }));
+        })?;
 
         if let Ok(mtime) = self.header.mtime() {
             let mtime = FileTime::from_unix_time(mtime as i64, 0);
-            try!(filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
+            filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
                 TarError::new(&format!("failed to set mtime for `{}`",
                                        dst.display()), e)
-            }));
+            })?;
         }
         if let Ok(mode) = self.header.mode() {
-            try!(set_perms(dst, mode, self.preserve_permissions).map_err(|e| {
+            set_perms(dst, mode, self.preserve_permissions).map_err(|e| {
                 TarError::new(&format!("failed to set permissions to {:o} \
                                         for `{}`", mode, dst.display()), e)
-            }));
+            })?;
         }
         if self.unpack_xattrs {
-            try!(set_xattrs(self, dst));
+            set_xattrs(self, dst)?;
         }
         return Ok(());
 
@@ -565,7 +565,7 @@ impl<'a> EntryFields<'a> {
             });
 
             for (key, value) in exts {
-                try!(xattr::set(dst, key, value).map_err(|e| {
+                xattr::set(dst, key, value).map_err(|e| {
                     TarError::new(&format!("failed to set extended \
                                             attributes to {}. \
                                             Xattrs: key={:?}, value={:?}.",
@@ -573,7 +573,7 @@ impl<'a> EntryFields<'a> {
                                            key,
                                            String::from_utf8_lossy(value)),
                                   e)
-                }));
+                })?;
             }
 
             Ok(())

@@ -55,7 +55,7 @@ impl<W: Write> Builder<W> {
     /// that operation.
     pub fn into_inner(mut self) -> io::Result<W> {
         if !self.finished {
-            try!(self.finish());
+            self.finish()?;
         }
         Ok(self.obj.take().unwrap())
     }
@@ -143,7 +143,7 @@ impl<W: Write> Builder<W> {
     /// ```
     pub fn append_data<P: AsRef<Path>, R: Read>(&mut self, header: &mut Header, path: P, data: R)
                                                 -> io::Result<()> {
-        try!(prepare_header(self.inner(), header, path.as_ref()));
+        prepare_header(self.inner(), header, path.as_ref())?;
         header.set_cksum();
         self.append(&header, data)
     }
@@ -291,14 +291,14 @@ impl<W: Write> Builder<W> {
 fn append(mut dst: &mut Write,
           header: &Header,
           mut data: &mut Read) -> io::Result<()> {
-    try!(dst.write_all(header.as_bytes()));
-    let len = try!(io::copy(&mut data, &mut dst));
+    dst.write_all(header.as_bytes())?;
+    let len = io::copy(&mut data, &mut dst)?;
 
     // Pad with zeros if necessary.
     let buf = [0; 512];
     let remaining = 512 - (len % 512);
     if remaining < 512 {
-        try!(dst.write_all(&buf[..remaining as usize]));
+        dst.write_all(&buf[..remaining as usize])?;
     }
 
     Ok(())
@@ -306,22 +306,22 @@ fn append(mut dst: &mut Write,
 
 fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> io::Result<()> {
     let stat = if follow {
-        try!(fs::metadata(path).map_err(|err| io::Error::new(
+        fs::metadata(path).map_err(|err| io::Error::new(
             err.kind(),
             format!("{} when getting metadata for {}", err, path.display()),
-        )))
+        ))?
     } else {
-        try!(fs::symlink_metadata(path).map_err(|err| io::Error::new(
+        fs::symlink_metadata(path).map_err(|err| io::Error::new(
             err.kind(),
             format!("{} when getting metadata for {}", err, path.display()),
-        )))
+        ))?
     };
     if stat.is_file() {
-        append_fs(dst, path, &stat, &mut try!(fs::File::open(path)), mode, None)
+        append_fs(dst, path, &stat, &mut fs::File::open(path)?, mode, None)
     } else if stat.is_dir() {
         append_fs(dst, path, &stat, &mut io::empty(), mode, None)
     } else if stat.file_type().is_symlink() {
-        let link_name = try!(fs::read_link(path));
+        let link_name = fs::read_link(path)?;
         append_fs(dst, path, &stat, &mut io::empty(), mode, Some(&link_name))
     } else {
         Err(other(&format!("{} has unknown file type", path.display())))
@@ -330,12 +330,12 @@ fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> 
 
 fn append_file(dst: &mut Write, path: &Path, file: &mut fs::File, mode: HeaderMode)
                 -> io::Result<()> {
-    let stat = try!(file.metadata());
+    let stat = file.metadata()?;
     append_fs(dst, path, &stat, file, mode, None)
 }
 
 fn append_dir(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode) -> io::Result<()> {
-    let stat = try!(fs::metadata(src_path));
+    let stat = fs::metadata(src_path)?;
     append_fs(dst, path, &stat, &mut io::empty(), mode, None)
 }
 
@@ -344,7 +344,7 @@ fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Resu
     // working (e.g. it's too long) then use the GNU-specific long name
     // extension by emitting an entry which indicates that it's the filename
     if let Err(e) = header.set_path(path) {
-        let data = try!(path2bytes(&path));
+        let data = path2bytes(&path)?;
         let max = header.as_old().name.len();
         if data.len() < max {
             return Err(e)
@@ -359,11 +359,11 @@ fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Resu
         header2.set_entry_type(EntryType::new(b'L'));
         header2.set_cksum();
         let mut data2 = data.chain(io::repeat(0).take(0));
-        try!(append(dst, &header2, &mut data2));
+        append(dst, &header2, &mut data2)?;
         // Truncate the path to store in the header we're about to emit to
         // ensure we've got something at least mentioned.
-        let path = try!(bytes2path(Cow::Borrowed(&data[..max])));
-        try!(header.set_path(&path));
+        let path = bytes2path(Cow::Borrowed(&data[..max]))?;
+        header.set_path(&path)?;
     }
     Ok(())
 }
@@ -376,10 +376,10 @@ fn append_fs(dst: &mut Write,
              link_name: Option<&Path>) -> io::Result<()> {
     let mut header = Header::new_gnu();
 
-    try!(prepare_header(dst, &mut header, path));
+    prepare_header(dst, &mut header, path)?;
     header.set_metadata_in_mode(meta, mode);
     if let Some(link_name) = link_name {
-        try!(header.set_link_name(link_name));
+        header.set_link_name(link_name)?;
     }
     header.set_cksum();
     append(dst, &header, read)
@@ -390,20 +390,20 @@ fn append_dir_all(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMod
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());
         if is_dir {
-            for entry in try!(fs::read_dir(&src)) {
-                let entry = try!(entry);
-                let file_type = try!(entry.file_type());
+            for entry in fs::read_dir(&src)? {
+                let entry = entry?;
+                let file_type = entry.file_type()?;
                 stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
             }
             if dest != Path::new("") {
-                try!(append_dir(dst, &dest, &src, mode));
+                append_dir(dst, &dest, &src, mode)?;
             }
         } else if !follow && is_symlink {
-            let stat = try!(fs::symlink_metadata(&src));
-            let link_name = try!(fs::read_link(&src));
-            try!(append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name)));
+            let stat = fs::symlink_metadata(&src)?;
+            let link_name = fs::read_link(&src)?;
+            append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name))?;
         } else {
-            try!(append_file(dst, &dest, &mut try!(fs::File::open(src)), mode));
+            append_file(dst, &dest, &mut fs::File::open(src)?, mode)?;
         }
     }
     Ok(())

@@ -128,11 +128,11 @@ impl<'a> Archive<Read + 'a> {
     }
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
-        for entry in try!(self._entries()) {
-            let mut file = try!(entry.map_err(|e| {
+        for entry in self._entries()? {
+            let mut file = entry.map_err(|e| {
                 TarError::new("failed to iterate over archive", e)
-            }));
-            try!(file.unpack_in(dst));
+            })?;
+            file.unpack_in(dst)?;
         }
         Ok(())
     }
@@ -141,7 +141,7 @@ impl<'a> Archive<Read + 'a> {
         let mut buf = [0u8; 4096 * 8];
         while amt > 0 {
             let n = cmp::min(amt, buf.len() as u64);
-            let n = try!((&self.inner).read(&mut buf[..n as usize]));
+            let n = (&self.inner).read(&mut buf[..n as usize])?;
             if n == 0 {
                 return Err(other("unexpected EOF during skip"))
             }
@@ -181,11 +181,11 @@ impl<'a> EntriesFields<'a> {
     fn next_entry_raw(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
         // Seek to the start of the next header in the archive
         let delta = self.next - self.archive.inner.pos.get();
-        try!(self.archive.skip(delta));
+        self.archive.skip(delta)?;
 
         let header_pos = self.next;
         let mut header = Header::new_old();
-        try!(read_all(&mut &self.archive.inner, header.as_mut_bytes()));
+        read_all(&mut &self.archive.inner, header.as_mut_bytes())?;
         self.next += 512;
 
         // If we have an all 0 block, then this should be the start of the end
@@ -193,8 +193,7 @@ impl<'a> EntriesFields<'a> {
         // the checksum), so if it's all zero it must be the first of the two
         // end blocks
         if header.as_bytes().iter().all(|i| *i == 0) {
-            try!(read_all(&mut &self.archive.inner,
-                                     header.as_mut_bytes()));
+            read_all(&mut &self.archive.inner, header.as_mut_bytes())?;
             self.next += 512;
             return if header.as_bytes().iter().all(|i| *i == 0) {
                 Ok(None)
@@ -208,13 +207,13 @@ impl<'a> EntriesFields<'a> {
         let sum = header.as_bytes()[..148].iter()
                         .chain(&header.as_bytes()[156..])
                         .fold(0, |a, b| a + (*b as u32)) + 8 * 32;
-        let cksum = try!(header.cksum());
+        let cksum = header.cksum()?;
         if sum != cksum {
             return Err(other("archive header checksum mismatch"))
         }
 
         let file_pos = self.next;
-        let size = try!(header.entry_size());
+        let size = header.entry_size()?;
 
         let ret = EntryFields {
             size: size,
@@ -248,7 +247,7 @@ impl<'a> EntriesFields<'a> {
         let mut processed = 0;
         loop {
             processed += 1;
-            let entry = match try!(self.next_entry_raw()) {
+            let entry = match self.next_entry_raw()? {
                 Some(entry) => entry,
                 None if processed > 1 => {
                     return Err(other("members found describing a future member \
@@ -263,7 +262,7 @@ impl<'a> EntriesFields<'a> {
                     return Err(other("two long name entries describing \
                                       the same member"))
                 }
-                gnu_longname = Some(try!(EntryFields::from(entry).read_all()));
+                gnu_longname = Some(EntryFields::from(entry).read_all()?);
                 continue
             }
 
@@ -273,7 +272,7 @@ impl<'a> EntriesFields<'a> {
                     return Err(other("two long name entries describing \
                                       the same member"))
                 }
-                gnu_longlink = Some(try!(EntryFields::from(entry).read_all()));
+                gnu_longlink = Some(EntryFields::from(entry).read_all()?);
                 continue
             }
 
@@ -283,7 +282,7 @@ impl<'a> EntriesFields<'a> {
                     return Err(other("two pax extensions entries describing \
                                       the same member"))
                 }
-                pax_extensions = Some(try!(EntryFields::from(entry).read_all()));
+                pax_extensions = Some(EntryFields::from(entry).read_all()?);
                 continue
             }
 
@@ -291,7 +290,7 @@ impl<'a> EntriesFields<'a> {
             fields.long_pathname = gnu_longname;
             fields.long_linkname = gnu_longlink;
             fields.pax_extensions = pax_extensions;
-            try!(self.parse_sparse_header(&mut fields));
+            self.parse_sparse_header(&mut fields)?;
             return Ok(Some(fields.into_entry()))
         }
     }
@@ -337,8 +336,8 @@ impl<'a> EntriesFields<'a> {
                 if block.is_empty() {
                     return Ok(())
                 }
-                let off = try!(block.offset());
-                let len = try!(block.length());
+                let off = block.offset()?;
+                let len = block.length()?;
 
                 if (size - remaining) % 512 != 0 {
                     return Err(other("previous block in sparse file was not \
@@ -350,32 +349,32 @@ impl<'a> EntriesFields<'a> {
                     let block = io::repeat(0).take(off - cur);
                     data.push(EntryIo::Pad(block));
                 }
-                cur = try!(off.checked_add(len).ok_or_else(|| {
+                cur = off.checked_add(len).ok_or_else(|| {
                     other("more bytes listed in sparse file than u64 can hold")
-                }));
-                remaining = try!(remaining.checked_sub(len).ok_or_else(|| {
+                })?;
+                remaining = remaining.checked_sub(len).ok_or_else(|| {
                     other("sparse file consumed more data than the header \
                            listed")
-                }));
+                })?;
                 data.push(EntryIo::Data(reader.take(len)));
                 Ok(())
             };
             for block in gnu.sparse.iter() {
-                try!(add_block(block))
+                add_block(block)?
             }
             if gnu.is_extended() {
                 let mut ext = GnuExtSparseHeader::new();
                 ext.isextended[0] = 1;
                 while ext.is_extended() {
-                    try!(read_all(&mut &self.archive.inner, ext.as_mut_bytes()));
+                    read_all(&mut &self.archive.inner, ext.as_mut_bytes())?;
                     self.next += 512;
                     for block in ext.sparse.iter() {
-                        try!(add_block(block));
+                        add_block(block)?;
                     }
                 }
             }
         }
-        if cur != try!(gnu.real_size()) {
+        if cur != gnu.real_size()? {
             return Err(other("mismatch in sparse file chunks and \
                               size in header"))
         }
@@ -422,7 +421,7 @@ impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
 fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
     let mut read = 0;
     while read < buf.len() {
-        match try!(r.read(&mut buf[read..])) {
+        match r.read(&mut buf[read..])? {
             0 => return Err(other("failed to read entire block")),
             n => read += n,
         }
