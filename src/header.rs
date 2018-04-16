@@ -920,14 +920,14 @@ impl UstarHeader {
         // components where it can fit in name/prefix. To do that we peel off
         // enough until the path fits in `prefix`, then we try to put both
         // halves into their destination.
-        let bytes = try!(path2bytes(path));
+        let bytes = path2bytes(path)?;
         let (maxnamelen, maxprefixlen) = (self.name.len(), self.prefix.len());
         if bytes.len() <= maxnamelen {
-            try!(copy_path_into(&mut self.name, path, false)
+            copy_path_into(&mut self.name, path, false)
                 .map_err(|err| io::Error::new(
                 err.kind(),
                 format!( "{} when setting path for {}", err, self.path_lossy()),
-            )));
+            ))?;
         } else {
             let mut prefix = path;
             let mut prefixlen;
@@ -938,22 +938,22 @@ impl UstarHeader {
                         "path cannot be split to be inserted into archive: {}", path.display()
                     ))),
                 }
-                prefixlen = try!(path2bytes(prefix)).len();
+                prefixlen = path2bytes(prefix)?.len();
                 if prefixlen <= maxprefixlen {
                     break
                 }
             }
-            try!(copy_path_into(&mut self.prefix, prefix, false)
+            copy_path_into(&mut self.prefix, prefix, false)
                 .map_err(|err| io::Error::new(
                 err.kind(),
                 format!( "{} when setting path for {}", err, self.path_lossy()),
-            )));
-            let path = try!(bytes2path(Cow::Borrowed(&bytes[prefixlen + 1..])));
-            try!(copy_path_into(&mut self.name, &path, false)
+            ))?;
+            let path = bytes2path(Cow::Borrowed(&bytes[prefixlen + 1..]))?;
+            copy_path_into(&mut self.name, &path, false)
                 .map_err(|err| io::Error::new(
                 err.kind(),
                 format!( "{} when setting path for {}", err, self.path_lossy()),
-            )));
+            ))?;
         }
         Ok(())
     }
@@ -1334,7 +1334,7 @@ fn copy_path_into(mut slot: &mut [u8],
     let mut emitted = false;
     let mut needs_slash = false;
     for component in path.components() {
-        let bytes = try!(path2bytes(Path::new(component.as_os_str())));
+        let bytes = path2bytes(Path::new(component.as_os_str()))?;
         match (component, is_link_name) {
             (Component::Prefix(..), false) |
             (Component::RootDir, false) => {
@@ -1350,14 +1350,14 @@ fn copy_path_into(mut slot: &mut [u8],
             (_, true) => {}
         };
         if needs_slash {
-            try!(copy(&mut slot, b"/"));
+            copy(&mut slot, b"/")?;
         }
         if bytes.contains(&b'/') {
             if let Component::Normal(..) = component {
                 return Err(other("path component in archive cannot contain `/`"))
             }
         }
-        try!(copy(&mut slot, &*bytes));
+        copy(&mut slot, &*bytes)?;
         if &*bytes != b"/" {
             needs_slash = true;
         }
@@ -1367,12 +1367,12 @@ fn copy_path_into(mut slot: &mut [u8],
         return Err(other("paths in archives must have at least one component"))
     }
     if ends_with_slash(path) {
-        try!(copy(&mut slot, &[b'/']));
+        copy(&mut slot, &[b'/'])?;
     }
     return Ok(());
 
     fn copy(slot: &mut &mut [u8], bytes: &[u8]) -> io::Result<()> {
-        try!(copy_into(*slot, bytes));
+        copy_into(*slot, bytes)?;
         let tmp = mem::replace(slot, &mut []);
         *slot = &mut tmp[bytes.len()..];
         Ok(())
