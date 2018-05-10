@@ -40,6 +40,9 @@ pub use archive::{Archive, Entries};
 pub use builder::Builder;
 pub use pax::{PaxExtensions, PaxExtension};
 
+#[cfg(tokio)]
+pub mod async;
+
 mod archive;
 mod builder;
 mod entry;

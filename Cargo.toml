@@ -19,7 +19,7 @@ contents are never required to be entirely resident in memory all at once.
 
 [dependencies]
 filetime = "0.2"
-
+tokio = { version = "0.1.6", optional = true }
 [dev-dependencies]
 tempdir = "0.3"
 
