@@ -267,7 +267,18 @@ impl<'a> EntryFields<'a> {
                     Cow::Borrowed(bytes)
                 }
             }
-            None => self.header.path_bytes(),
+            None => {
+                if let Some(ref pax) = self.pax_extensions {
+                    let pax = pax_extensions(pax)
+                        .filter_map(|f| f.ok())
+                        .find(|f| f.key_bytes() == b"path")
+                        .map(|f| f.value_bytes());
+                    if let Some(field) = pax {
+                        return Cow::Borrowed(field)
+                    }
+                }
+                self.header.path_bytes()
+            }
         }
     }
 

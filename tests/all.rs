@@ -572,6 +572,15 @@ fn pax_simple() {
 }
 
 #[test]
+fn pax_path() {
+    let mut ar = Archive::new(tar!("pax2.tar"));
+    let mut entries = t!(ar.entries());
+
+    let first = t!(entries.next().unwrap());
+    assert!(first.path().unwrap().ends_with("aaaaaaaaaaaaaaa"));
+}
+
+#[test]
 fn long_name_trailing_nul() {
     let mut b = Builder::new(Vec::<u8>::new());
 
