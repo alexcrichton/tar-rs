@@ -17,8 +17,8 @@ fn main() {
         println!("size: {}", f.header().size().unwrap());
         println!("entry size: {}", f.header().entry_size().unwrap());
         println!("link name: {:?}", f.link_name().unwrap());
-        println!("file type: {:x}", f.header().entry_type().as_byte());
-        println!("mode: {:o}", f.header().mode().unwrap());
+        println!("file type: {:#x}", f.header().entry_type().as_byte());
+        println!("mode: {:#o}", f.header().mode().unwrap());
         println!("uid: {}", f.header().uid().unwrap());
         println!("gid: {}", f.header().gid().unwrap());
         println!("mtime: {}", f.header().mtime().unwrap());
