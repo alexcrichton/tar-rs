@@ -283,3 +283,38 @@ fn modify_hard_link_just_created() {
     t!(t!(File::open(&test)).read_to_end(&mut contents));
     assert_eq!(contents.len(), 0);
 }
+
+#[test]
+fn modify_symlink_just_created() {
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Symlink);
+    t!(header.set_path("foo"));
+    t!(header.set_link_name("../test"));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(1);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("foo"));
+    header.set_cksum();
+    t!(ar.append(&header, &b"x"[..]));
+
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+
+    let td = t!(TempDir::new("tar"));
+
+    let test = td.path().join("test");
+    t!(File::create(&test));
+
+    let dir = td.path().join("dir");
+    t!(ar.unpack(&dir));
+
+    let mut contents = Vec::new();
+    t!(t!(File::open(&test)).read_to_end(&mut contents));
+    assert_eq!(contents.len(), 0);
+}

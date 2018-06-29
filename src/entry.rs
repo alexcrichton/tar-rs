@@ -482,7 +482,16 @@ impl<'a> EntryFields<'a> {
         // As a result if we don't recognize the kind we just write out the file
         // as we would normally.
 
-        fs::File::create(dst).and_then(|mut f| {
+        // Remove an existing file, if any, to avoid writing through
+        // symlinks/hardlinks to weird locations. The tar archive says this is a
+        // regular file, so let's make it a regular file.
+        (|| -> io::Result<()> {
+            match fs::remove_file(dst) {
+                Ok(()) => {}
+                Err(ref e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e)
+            }
+            let mut f = fs::File::create(dst)?;
             for io in self.data.drain(..) {
                 match io {
                     EntryIo::Data(mut d) => {
@@ -500,7 +509,7 @@ impl<'a> EntryFields<'a> {
                 }
             }
             Ok(())
-        }).map_err(|e| {
+        })().map_err(|e| {
             let header = self.header.path_bytes();
             TarError::new(&format!("failed to unpack `{}` into `{}`",
                                    String::from_utf8_lossy(&header),
