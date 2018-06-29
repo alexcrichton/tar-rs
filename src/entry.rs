@@ -4,7 +4,7 @@ use std::fs;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
@@ -369,37 +369,14 @@ impl<'a> EntryFields<'a> {
             None    => return Ok(false),
         };
 
-        if !parent.exists() {
+        if parent.symlink_metadata().is_err() {
             fs::create_dir_all(&parent).map_err(|e| {
                 TarError::new(&format!("failed to create `{}`",
                                        parent.display()), e)
             })?;
         }
 
-        // Abort if target (canonical) parent is outside of `dst`
-        let canon_parent = parent.canonicalize().map_err(|err| {
-            Error::new(
-                err.kind(),
-                format!("{} while canonicalizing {}", err, parent.display()),
-            )
-        })?;
-        let canon_target = dst.canonicalize().map_err(|err| {
-            Error::new(
-                err.kind(),
-                format!("{} while canonicalizing {}", err, dst.display()),
-            )
-        })?;
-        if !canon_parent.starts_with(&canon_target) {
-            let err = TarError::new(
-                &format!(
-                    "trying to unpack outside of destination path: {}",
-                    canon_target.display()
-                ),
-                // TODO: use ErrorKind::InvalidInput here? (minor breaking change)
-                Error::new(ErrorKind::Other, "Invalid argument"),
-            );
-            return Err(err.into());
-        }
+        let canon_target = self.validate_inside_dst(&dst, parent)?;
 
         self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
             TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e)
@@ -441,8 +418,23 @@ impl<'a> EntryFields<'a> {
 
             return if kind.is_hard_link() {
                 let link_src = match target_base {
+                    // If we're unpacking within a directory then ensure that
+                    // the destination of this hard link is both present and
+                    // inside our own directory. This is needed because we want
+                    // to make sure to not overwrite anything outside the root.
+                    //
+                    // Note that this logic is only needed for hard links
+                    // currently. With symlinks the `validate_inside_dst` which
+                    // happens before this method as part of `unpack_in` will
+                    // use canonicalization to ensure this guarantee. For hard
+                    // links though they're canonicalized to their existing path
+                    // so we need to validate at this time.
+                    Some(ref p) => {
+                        let link_src = p.join(src);
+                        self.validate_inside_dst(p, &link_src)?;
+                        link_src
+                    }
                     None => src.into_owned(),
-                    Some(ref p) => p.join(src),
                 };
                 fs::hard_link(&link_src, dst).map_err(|err| Error::new(
                     err.kind(),
@@ -595,6 +587,34 @@ impl<'a> EntryFields<'a> {
         fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    fn validate_inside_dst(&self, dst: &Path, file_dst: &Path) -> io::Result<PathBuf> {
+        // Abort if target (canonical) parent is outside of `dst`
+        let canon_parent = file_dst.canonicalize().map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, file_dst.display()),
+            )
+        })?;
+        let canon_target = dst.canonicalize().map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, dst.display()),
+            )
+        })?;
+        if !canon_parent.starts_with(&canon_target) {
+            let err = TarError::new(
+                &format!(
+                    "trying to unpack outside of destination path: {}",
+                    canon_target.display()
+                ),
+                // TODO: use ErrorKind::InvalidInput here? (minor breaking change)
+                Error::new(ErrorKind::Other, "Invalid argument"),
+            );
+            return Err(err.into());
+        }
+        Ok(canon_target)
     }
 }
 
