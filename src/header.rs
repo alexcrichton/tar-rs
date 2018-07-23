@@ -303,7 +303,21 @@ impl Header {
 
     /// Encodes the `size` argument into the size field of this header.
     pub fn set_size(&mut self, size: u64) {
-        octal_into(&mut self.as_old_mut().size, size)
+        // If size can't be encoded in 11 octal digits (> 8GB), the value is
+        // stored in binary and the high bit of the first byte is set to 1
+        // according to tar's Numeric Extensions.
+        if size >= 8589934592 {
+            self.as_old_mut().size[0] = 0x80;
+            // The size field can actually use 95 bits (11 bytes + 7 bits) but
+            // since u64 is only 8 bytes (should be enough ?) we're skipping
+            // the first 4 bytes.
+            for (slot, val) in self.as_old_mut().size.iter_mut().skip(4)
+                .zip((0..8).map(|x| ((size.to_be() >> (8 * x)) & 0xff) as u8)) {
+                    *slot = val;
+            }
+        } else {
+            octal_into(&mut self.as_old_mut().size, size)
+        }
     }
 
     /// Returns the raw path name stored in this header.

@@ -210,6 +210,10 @@ fn extended_numeric_format() {
     assert_eq!(h.as_header().uid().unwrap(), 0x12345678);
     h.mtime = [0x80, 0, 0, 0, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
     assert_eq!(h.as_header().mtime().unwrap(), 0x0123456789abcdef);
+
+    let large_file_size = 8589934593; // 8GB + 1B
+    h.as_header_mut().set_size(large_file_size);
+    assert_eq!(h.as_header().entry_size().unwrap(), large_file_size);
 }
 
 #[test]
