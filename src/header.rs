@@ -307,6 +307,7 @@ impl Header {
         // stored in binary and the high bit of the first byte is set to 1
         // according to tar's Numeric Extensions.
         if size >= 8589934592 {
+            self.as_old_mut().size = [0; 12];
             self.as_old_mut().size[0] = 0x80;
             // The size field can actually use 95 bits (11 bytes + 7 bits) but
             // since u64 is only 8 bytes (should be enough ?) we're skipping
