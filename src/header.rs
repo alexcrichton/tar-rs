@@ -282,8 +282,8 @@ impl Header {
     ///
     /// May return an error if the field is corrupted.
     pub fn entry_size(&self) -> io::Result<u64> {
-        octal_from(&self.as_old().size).map_err(|err| io::Error::new(
-            err.kind(),
+        num_field_wrapper_from(&self.as_old().size)
+            .map_err(|err| io::Error::new(err.kind(),
             format!( "{} when getting size for {}", err, self.path_lossy()),
         ))
     }
@@ -303,7 +303,7 @@ impl Header {
 
     /// Encodes the `size` argument into the size field of this header.
     pub fn set_size(&mut self, size: u64) {
-        octal_into(&mut self.as_old_mut().size, size)
+        num_field_wrapper_into(&mut self.as_old_mut().size, size);
     }
 
     /// Returns the raw path name stored in this header.
@@ -424,35 +424,35 @@ impl Header {
     /// Returns the value of the owner's user ID field
     ///
     /// May return an error if the field is corrupted.
-    pub fn uid(&self) -> io::Result<u32> {
-        octal_from(&self.as_old().uid).map(|u| u as u32).map_err(|err| io::Error::new(
-            err.kind(),
+    pub fn uid(&self) -> io::Result<u64> {
+        num_field_wrapper_from(&self.as_old().uid).map(|u| u as u64)
+            .map_err(|err| io::Error::new(err.kind(),
             format!( "{} when getting uid for {}", err, self.path_lossy()),
         ))
     }
 
     /// Encodes the `uid` provided into this header.
-    pub fn set_uid(&mut self, uid: u32) {
-        octal_into(&mut self.as_old_mut().uid, uid);
+    pub fn set_uid(&mut self, uid: u64) {
+        num_field_wrapper_into(&mut self.as_old_mut().uid, uid);
     }
 
     /// Returns the value of the group's user ID field
-    pub fn gid(&self) -> io::Result<u32> {
-        octal_from(&self.as_old().gid).map(|u| u as u32).map_err(|err| io::Error::new(
-            err.kind(),
+    pub fn gid(&self) -> io::Result<u64> {
+        num_field_wrapper_from(&self.as_old().gid).map(|u| u as u64)
+            .map_err(|err| io::Error::new(err.kind(),
             format!( "{} when getting gid for {}", err, self.path_lossy()),
         ))
     }
 
     /// Encodes the `gid` provided into this header.
-    pub fn set_gid(&mut self, gid: u32) {
-        octal_into(&mut self.as_old_mut().gid, gid);
+    pub fn set_gid(&mut self, gid: u64) {
+        num_field_wrapper_into(&mut self.as_old_mut().gid, gid);
     }
 
     /// Returns the last modification time in Unix time format
     pub fn mtime(&self) -> io::Result<u64> {
-        octal_from(&self.as_old().mtime).map_err(|err| io::Error::new(
-            err.kind(),
+        num_field_wrapper_from(&self.as_old().mtime)
+            .map_err(|err| io::Error::new(err.kind(),
             format!( "{} when getting mtime for {}", err, self.path_lossy()),
         ))
     }
@@ -462,7 +462,7 @@ impl Header {
     /// Note that this time is typically a number of seconds passed since
     /// January 1, 1970.
     pub fn set_mtime(&mut self, mtime: u64) {
-        octal_into(&mut self.as_old_mut().mtime, mtime);
+        num_field_wrapper_into(&mut self.as_old_mut().mtime, mtime);
     }
 
     /// Return the user name of the owner of this file.
@@ -671,8 +671,8 @@ impl Header {
         match mode {
             HeaderMode::Complete => {
                 self.set_mtime(meta.mtime() as u64);
-                self.set_uid(meta.uid() as u32);
-                self.set_gid(meta.gid() as u32);
+                self.set_uid(meta.uid() as u64);
+                self.set_gid(meta.gid() as u64);
                 self.set_mode(meta.mode() as u32);
             },
             HeaderMode::Deterministic => {
@@ -1093,7 +1093,7 @@ impl GnuHeader {
 
     /// Returns the last modification time in Unix time format
     pub fn atime(&self) -> io::Result<u64> {
-        octal_from(&self.atime).map_err(|err| io::Error::new(
+        num_field_wrapper_from(&self.atime).map_err(|err| io::Error::new(
             err.kind(),
             format!( "{} when getting atime for {}", err, self.fullname_lossy()),
         ))
@@ -1104,12 +1104,12 @@ impl GnuHeader {
     /// Note that this time is typically a number of seconds passed since
     /// January 1, 1970.
     pub fn set_atime(&mut self, atime: u64) {
-        octal_into(&mut self.atime, atime);
+        num_field_wrapper_into(&mut self.atime, atime);
     }
 
     /// Returns the last modification time in Unix time format
     pub fn ctime(&self) -> io::Result<u64> {
-        octal_from(&self.ctime).map_err(|err| io::Error::new(
+        num_field_wrapper_from(&self.ctime).map_err(|err| io::Error::new(
             err.kind(),
             format!( "{} when getting ctime for {}", err, self.fullname_lossy()),
         ))
@@ -1120,7 +1120,7 @@ impl GnuHeader {
     /// Note that this time is typically a number of seconds passed since
     /// January 1, 1970.
     pub fn set_ctime(&mut self, ctime: u64) {
-        octal_into(&mut self.ctime, ctime);
+        num_field_wrapper_into(&mut self.ctime, ctime);
     }
 
     /// Returns the "real size" of the file this header represents.
@@ -1263,30 +1263,17 @@ impl Default for GnuExtSparseHeader {
 }
 
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
-    if slice[0] & 0x80 != 0 {
-        // number is expressed in binary as a GNU numeric extension -
-        // see https://www.freebsd.org/cgi/man.cgi?query=tar&sektion=5&manpath=FreeBSD+8-current
-        // under section "Numeric Extensions"
-        let mut total = (slice[0] ^ 0x80) as u64;
-        let mut index = 1;
-        while index < slice.len() {
-            total <<= 8;
-            total |= slice[index] as u64;
-            index += 1;
-        }
-        Ok(total)
-    } else {
-        let trun = truncate(slice);
-        let num = match str::from_utf8(trun) {
-            Ok(n) => n,
-            Err(_) => return Err(other(
-                &format!("numeric field did not have utf-8 text: {}", String::from_utf8_lossy(trun))
-            )),
-        };
-        match u64::from_str_radix(num.trim(), 8) {
-            Ok(n) => Ok(n),
-            Err(_) => Err(other(&format!("numeric field was not a number: {}", num))),
-        }
+    let trun = truncate(slice);
+    let num = match str::from_utf8(trun) {
+        Ok(n) => n,
+        Err(_) => return Err(other(
+            &format!("numeric field did not have utf-8 text: {}",
+                     String::from_utf8_lossy(trun)))),
+    };
+    match u64::from_str_radix(num.trim(), 8) {
+        Ok(n) => Ok(n),
+        Err(_) => Err(other(&format!("numeric field was not a number: {}",
+                                     num))),
     }
 }
 
@@ -1296,6 +1283,55 @@ fn octal_into<T: fmt::Octal>(dst: &mut [u8], val: T) {
     for (slot, value) in dst.iter_mut().rev().skip(1).zip(value) {
         *slot = value;
     }
+}
+
+// Wrapper to figure out if we should fill the header field using tar's numeric
+// extension (binary) or not (octal).
+fn num_field_wrapper_into(dst: &mut [u8], src: u64) {
+    if src >= 8589934592 || (src >= 2097152 && dst.len() == 8) {
+        numeric_extended_into(dst, src);
+    } else {
+        octal_into(dst, src);
+    }
+}
+
+// Wrapper to figure out if we should read the header field in binary (numeric
+// extension) or octal (standard encoding).
+fn num_field_wrapper_from(src: &[u8]) -> io::Result<u64> {
+    if src[0] & 0x80 != 0 {
+        Ok(numeric_extended_from(src))
+    } else {
+        octal_from(src)
+    }
+}
+
+// When writing numeric fields with is the extended form, the high bit of the
+// first byte is set to 1 and the remainder of the field is treated as binary
+// instead of octal ascii.
+// This handles writing u64 to 8 (uid, gid) or 12 (size, *time) bytes array.
+fn numeric_extended_into(dst: &mut [u8], src: u64) {
+    let len: usize = dst.len();
+    for (slot, val) in dst.iter_mut().zip(
+            repeat(0).take(len - 8) // to zero init extra bytes
+            .chain((0..8).map(|x| ((src.to_be() >> (8 * x)) & 0xff) as u8))) {
+            *slot = val;
+    }
+    dst[0] |= 0x80;
+}
+
+fn numeric_extended_from(src: &[u8]) -> u64 {
+    let mut dst: u64 = 0;
+    let mut b_to_skip = 1;
+    if src.len() == 8 { // read first byte without extension flag bit
+        dst = (src[0] ^ 0x80) as u64;
+    } else { // only read last 8 bytes
+        b_to_skip = src.len() - 8;
+    }
+    for byte in src.iter().skip(b_to_skip) {
+        dst <<= 8;
+        dst |= *byte as u64;
+    }
+    dst
 }
 
 fn truncate(slice: &[u8]) -> &[u8] {
