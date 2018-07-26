@@ -1,11 +1,11 @@
-use std::io;
-use std::path::Path;
-use std::io::prelude::*;
-use std::fs;
 use std::borrow::Cow;
+use std::fs;
+use std::io;
+use std::io::prelude::*;
+use std::path::Path;
 
-use {EntryType, Header, other};
-use header::{bytes2path, HeaderMode, path2bytes};
+use header::{bytes2path, path2bytes, HeaderMode};
+use {other, EntryType, Header};
 
 /// A structure for building archives
 ///
@@ -96,8 +96,7 @@ impl<W: Write> Builder<W> {
     /// ar.append(&header, data).unwrap();
     /// let data = ar.into_inner().unwrap();
     /// ```
-    pub fn append<R: Read>(&mut self, header: &Header, mut data: R)
-                           -> io::Result<()> {
+    pub fn append<R: Read>(&mut self, header: &Header, mut data: R) -> io::Result<()> {
         append(self.inner(), header, &mut data)
     }
 
@@ -141,8 +140,12 @@ impl<W: Write> Builder<W> {
     /// ar.append_data(&mut header, "really/long/path/to/foo", data).unwrap();
     /// let data = ar.into_inner().unwrap();
     /// ```
-    pub fn append_data<P: AsRef<Path>, R: Read>(&mut self, header: &mut Header, path: P, data: R)
-                                                -> io::Result<()> {
+    pub fn append_data<P: AsRef<Path>, R: Read>(
+        &mut self,
+        header: &mut Header,
+        path: P,
+        data: R,
+    ) -> io::Result<()> {
         prepare_header(self.inner(), header, path.as_ref())?;
         header.set_cksum();
         self.append(&header, data)
@@ -204,8 +207,7 @@ impl<W: Write> Builder<W> {
     /// let mut f = File::open("foo/bar/baz.txt").unwrap();
     /// ar.append_file("bar/baz.txt", &mut f).unwrap();
     /// ```
-    pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File)
-                                       -> io::Result<()> {
+    pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File) -> io::Result<()> {
         let mode = self.mode.clone();
         append_file(self.inner(), path.as_ref(), file, mode)
     }
@@ -236,7 +238,9 @@ impl<W: Write> Builder<W> {
     /// ar.append_dir("bardir", ".").unwrap();
     /// ```
     pub fn append_dir<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
-        where P: AsRef<Path>, Q: AsRef<Path>
+    where
+        P: AsRef<Path>,
+        Q: AsRef<Path>,
     {
         let mode = self.mode.clone();
         append_dir(self.inner(), path.as_ref(), src_path.as_ref(), mode)
@@ -265,7 +269,9 @@ impl<W: Write> Builder<W> {
     /// ar.append_dir_all("bardir", ".").unwrap();
     /// ```
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
-        where P: AsRef<Path>, Q: AsRef<Path>
+    where
+        P: AsRef<Path>,
+        Q: AsRef<Path>,
     {
         let mode = self.mode.clone();
         let follow = self.follow;
@@ -281,16 +287,14 @@ impl<W: Write> Builder<W> {
     /// In most situations the `into_inner` method should be preferred.
     pub fn finish(&mut self) -> io::Result<()> {
         if self.finished {
-            return Ok(())
+            return Ok(());
         }
         self.finished = true;
         self.inner().write_all(&[0; 1024])
     }
 }
 
-fn append(mut dst: &mut Write,
-          header: &Header,
-          mut data: &mut Read) -> io::Result<()> {
+fn append(mut dst: &mut Write, header: &Header, mut data: &mut Read) -> io::Result<()> {
     dst.write_all(header.as_bytes())?;
     let len = io::copy(&mut data, &mut dst)?;
 
@@ -306,15 +310,19 @@ fn append(mut dst: &mut Write,
 
 fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> io::Result<()> {
     let stat = if follow {
-        fs::metadata(path).map_err(|err| io::Error::new(
-            err.kind(),
-            format!("{} when getting metadata for {}", err, path.display()),
-        ))?
+        fs::metadata(path).map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!("{} when getting metadata for {}", err, path.display()),
+            )
+        })?
     } else {
-        fs::symlink_metadata(path).map_err(|err| io::Error::new(
-            err.kind(),
-            format!("{} when getting metadata for {}", err, path.display()),
-        ))?
+        fs::symlink_metadata(path).map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!("{} when getting metadata for {}", err, path.display()),
+            )
+        })?
     };
     if stat.is_file() {
         append_fs(dst, path, &stat, &mut fs::File::open(path)?, mode, None)
@@ -328,8 +336,12 @@ fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> 
     }
 }
 
-fn append_file(dst: &mut Write, path: &Path, file: &mut fs::File, mode: HeaderMode)
-                -> io::Result<()> {
+fn append_file(
+    dst: &mut Write,
+    path: &Path,
+    file: &mut fs::File,
+    mode: HeaderMode,
+) -> io::Result<()> {
     let stat = file.metadata()?;
     append_fs(dst, path, &stat, file, mode, None)
 }
@@ -347,7 +359,7 @@ fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Resu
         let data = path2bytes(&path)?;
         let max = header.as_old().name.len();
         if data.len() < max {
-            return Err(e)
+            return Err(e);
         }
         let mut header2 = Header::new_gnu();
         header2.as_gnu_mut().unwrap().name[..13].clone_from_slice(b"././@LongLink");
@@ -368,12 +380,14 @@ fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Resu
     Ok(())
 }
 
-fn append_fs(dst: &mut Write,
-             path: &Path,
-             meta: &fs::Metadata,
-             read: &mut Read,
-             mode: HeaderMode,
-             link_name: Option<&Path>) -> io::Result<()> {
+fn append_fs(
+    dst: &mut Write,
+    path: &Path,
+    meta: &fs::Metadata,
+    read: &mut Read,
+    mode: HeaderMode,
+    link_name: Option<&Path>,
+) -> io::Result<()> {
     let mut header = Header::new_gnu();
 
     prepare_header(dst, &mut header, path)?;
@@ -385,7 +399,13 @@ fn append_fs(dst: &mut Write,
     append(dst, &header, read)
 }
 
-fn append_dir_all(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode, follow: bool) -> io::Result<()> {
+fn append_dir_all(
+    dst: &mut Write,
+    path: &Path,
+    src_path: &Path,
+    mode: HeaderMode,
+    follow: bool,
+) -> io::Result<()> {
     let mut stack = vec![(src_path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());

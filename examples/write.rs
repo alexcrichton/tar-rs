@@ -8,5 +8,6 @@ fn main() {
     let mut a = Builder::new(file);
 
     a.append_path("README.md").unwrap();
-    a.append_file("lib.rs", &mut File::open("src/lib.rs").unwrap()).unwrap();
+    a.append_file("lib.rs", &mut File::open("src/lib.rs").unwrap())
+        .unwrap();
 }

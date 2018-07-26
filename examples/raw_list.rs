@@ -37,11 +37,12 @@ fn main() {
             println!("pax extensions:");
             for e in extensions {
                 let e = e.unwrap();
-                println!("\t{:?} = {:?}",
-                         String::from_utf8_lossy(e.key_bytes()),
-                         String::from_utf8_lossy(e.value_bytes()));
+                println!(
+                    "\t{:?} = {:?}",
+                    String::from_utf8_lossy(e.key_bytes()),
+                    String::from_utf8_lossy(e.value_bytes())
+                );
             }
         }
     }
 }
-

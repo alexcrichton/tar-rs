@@ -7,10 +7,12 @@ use std::io::Read;
 use tempdir::TempDir;
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(v) => v,
-        Err(e) => panic!("{} returned {}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => panic!("{} returned {}", stringify!($e), e),
+        }
+    };
 }
 
 #[test]

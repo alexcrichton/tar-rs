@@ -1,14 +1,14 @@
-use std::cell::{RefCell, Cell};
+use std::cell::{Cell, RefCell};
 use std::cmp;
-use std::io::prelude::*;
 use std::io;
+use std::io::prelude::*;
 use std::marker;
 use std::path::Path;
 
 use entry::{EntryFields, EntryIo};
 use error::TarError;
 use other;
-use {Entry, Header, GnuSparseHeader, GnuExtSparseHeader};
+use {Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
 
 /// A top-level representation of an archive file.
 ///
@@ -63,8 +63,9 @@ impl<R: Read> Archive<R> {
     /// corrupted.
     pub fn entries(&mut self) -> io::Result<Entries<R>> {
         let me: &mut Archive<Read> = self;
-        me._entries().map(|fields| {
-            Entries { fields: fields, _ignored: marker::PhantomData }
+        me._entries().map(|fields| Entries {
+            fields: fields,
+            _ignored: marker::PhantomData,
         })
     }
 
@@ -116,8 +117,10 @@ impl<R: Read> Archive<R> {
 impl<'a> Archive<Read + 'a> {
     fn _entries(&mut self) -> io::Result<EntriesFields> {
         if self.inner.pos.get() != 0 {
-            return Err(other("cannot call entries unless archive is at \
-                              position 0"))
+            return Err(other(
+                "cannot call entries unless archive is at \
+                 position 0",
+            ));
         }
         Ok(EntriesFields {
             archive: self,
@@ -129,9 +132,7 @@ impl<'a> Archive<Read + 'a> {
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
         for entry in self._entries()? {
-            let mut file = entry.map_err(|e| {
-                TarError::new("failed to iterate over archive", e)
-            })?;
+            let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
             file.unpack_in(dst)?;
         }
         Ok(())
@@ -143,7 +144,7 @@ impl<'a> Archive<Read + 'a> {
             let n = cmp::min(amt, buf.len() as u64);
             let n = (&self.inner).read(&mut buf[..n as usize])?;
             if n == 0 {
-                return Err(other("unexpected EOF during skip"))
+                return Err(other("unexpected EOF during skip"));
             }
             amt -= n as u64;
         }
@@ -171,9 +172,9 @@ impl<'a, R: Read> Iterator for Entries<'a, R> {
     type Item = io::Result<Entry<'a, R>>;
 
     fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
-        self.fields.next().map(|result| {
-            result.map(|e| EntryFields::from(e).into_entry())
-        })
+        self.fields
+            .next()
+            .map(|result| result.map(|e| EntryFields::from(e).into_entry()))
     }
 }
 
@@ -198,18 +199,21 @@ impl<'a> EntriesFields<'a> {
             return if header.as_bytes().iter().all(|i| *i == 0) {
                 Ok(None)
             } else {
-                Err(other("found block of 0s not followed by a second \
-                           block of 0s"))
-            }
+                Err(other(
+                    "found block of 0s not followed by a second \
+                     block of 0s",
+                ))
+            };
         }
 
         // Make sure the checksum is ok
-        let sum = header.as_bytes()[..148].iter()
-                        .chain(&header.as_bytes()[156..])
-                        .fold(0, |a, b| a + (*b as u32)) + 8 * 32;
+        let sum = header.as_bytes()[..148]
+            .iter()
+            .chain(&header.as_bytes()[156..])
+            .fold(0, |a, b| a + (*b as u32)) + 8 * 32;
         let cksum = header.cksum()?;
         if sum != cksum {
-            return Err(other("archive header checksum mismatch"))
+            return Err(other("archive header checksum mismatch"));
         }
 
         let file_pos = self.next;
@@ -238,7 +242,7 @@ impl<'a> EntriesFields<'a> {
 
     fn next_entry(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
         if self.raw {
-            return self.next_entry_raw()
+            return self.next_entry_raw();
         }
 
         let mut gnu_longname = None;
@@ -250,40 +254,47 @@ impl<'a> EntriesFields<'a> {
             let entry = match self.next_entry_raw()? {
                 Some(entry) => entry,
                 None if processed > 1 => {
-                    return Err(other("members found describing a future member \
-                                      but no future member found"))
+                    return Err(other(
+                        "members found describing a future member \
+                         but no future member found",
+                    ))
                 }
                 None => return Ok(None),
             };
 
-            if entry.header().as_gnu().is_some() &&
-               entry.header().entry_type().is_gnu_longname() {
+            if entry.header().as_gnu().is_some() && entry.header().entry_type().is_gnu_longname() {
                 if gnu_longname.is_some() {
-                    return Err(other("two long name entries describing \
-                                      the same member"))
+                    return Err(other(
+                        "two long name entries describing \
+                         the same member",
+                    ));
                 }
                 gnu_longname = Some(EntryFields::from(entry).read_all()?);
-                continue
+                continue;
             }
 
-            if entry.header().as_gnu().is_some() &&
-               entry.header().entry_type().is_gnu_longlink() {
+            if entry.header().as_gnu().is_some() && entry.header().entry_type().is_gnu_longlink() {
                 if gnu_longlink.is_some() {
-                    return Err(other("two long name entries describing \
-                                      the same member"))
+                    return Err(other(
+                        "two long name entries describing \
+                         the same member",
+                    ));
                 }
                 gnu_longlink = Some(EntryFields::from(entry).read_all()?);
-                continue
+                continue;
             }
 
-            if entry.header().as_ustar().is_some() &&
-               entry.header().entry_type().is_pax_local_extensions() {
+            if entry.header().as_ustar().is_some()
+                && entry.header().entry_type().is_pax_local_extensions()
+            {
                 if pax_extensions.is_some() {
-                    return Err(other("two pax extensions entries describing \
-                                      the same member"))
+                    return Err(other(
+                        "two pax extensions entries describing \
+                         the same member",
+                    ));
                 }
                 pax_extensions = Some(EntryFields::from(entry).read_all()?);
-                continue
+                continue;
             }
 
             let mut fields = EntryFields::from(entry);
@@ -291,14 +302,13 @@ impl<'a> EntriesFields<'a> {
             fields.long_linkname = gnu_longlink;
             fields.pax_extensions = pax_extensions;
             self.parse_sparse_header(&mut fields)?;
-            return Ok(Some(fields.into_entry()))
+            return Ok(Some(fields.into_entry()));
         }
     }
 
-    fn parse_sparse_header(&mut self,
-                           entry: &mut EntryFields<'a>) -> io::Result<()> {
+    fn parse_sparse_header(&mut self, entry: &mut EntryFields<'a>) -> io::Result<()> {
         if !entry.header.entry_type().is_gnu_sparse() {
-            return Ok(())
+            return Ok(());
         }
         let gnu = match entry.header.as_gnu() {
             Some(gnu) => gnu,
@@ -334,27 +344,33 @@ impl<'a> EntriesFields<'a> {
             let size = entry.size;
             let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
                 if block.is_empty() {
-                    return Ok(())
+                    return Ok(());
                 }
                 let off = block.offset()?;
                 let len = block.length()?;
 
                 if (size - remaining) % 512 != 0 {
-                    return Err(other("previous block in sparse file was not \
-                                      aligned to 512-byte boundary"))
+                    return Err(other(
+                        "previous block in sparse file was not \
+                         aligned to 512-byte boundary",
+                    ));
                 } else if off < cur {
-                    return Err(other("out of order or overlapping sparse \
-                                      blocks"))
+                    return Err(other(
+                        "out of order or overlapping sparse \
+                         blocks",
+                    ));
                 } else if cur < off {
                     let block = io::repeat(0).take(off - cur);
                     data.push(EntryIo::Pad(block));
                 }
-                cur = off.checked_add(len).ok_or_else(|| {
-                    other("more bytes listed in sparse file than u64 can hold")
-                })?;
+                cur = off
+                    .checked_add(len)
+                    .ok_or_else(|| other("more bytes listed in sparse file than u64 can hold"))?;
                 remaining = remaining.checked_sub(len).ok_or_else(|| {
-                    other("sparse file consumed more data than the header \
-                           listed")
+                    other(
+                        "sparse file consumed more data than the header \
+                         listed",
+                    )
                 })?;
                 data.push(EntryIo::Data(reader.take(len)));
                 Ok(())
@@ -375,13 +391,17 @@ impl<'a> EntriesFields<'a> {
             }
         }
         if cur != gnu.real_size()? {
-            return Err(other("mismatch in sparse file chunks and \
-                              size in header"))
+            return Err(other(
+                "mismatch in sparse file chunks and \
+                 size in header",
+            ));
         }
         entry.size = cur;
         if remaining > 0 {
-            return Err(other("mismatch in sparse file chunks and \
-                              entry size in header"))
+            return Err(other(
+                "mismatch in sparse file chunks and \
+                 entry size in header",
+            ));
         }
         Ok(())
     }

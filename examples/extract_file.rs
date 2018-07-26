@@ -6,8 +6,8 @@
 
 extern crate tar;
 
-use std::io::{stdin, stdout, copy};
 use std::env::args_os;
+use std::io::{copy, stdin, stdout};
 use std::path::Path;
 
 use tar::Archive;

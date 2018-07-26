@@ -1,6 +1,6 @@
 use std::io;
-use std::str;
 use std::slice;
+use std::str;
 
 use other;
 
@@ -19,8 +19,12 @@ pub struct PaxExtension<'entry> {
 }
 
 pub fn pax_extensions(a: &[u8]) -> PaxExtensions {
-    fn is_newline(a: &u8) -> bool { *a == b'\n' }
-    PaxExtensions { data: a.split(is_newline) }
+    fn is_newline(a: &u8) -> bool {
+        *a == b'\n'
+    }
+    PaxExtensions {
+        data: a.split(is_newline),
+    }
 }
 
 impl<'entry> Iterator for PaxExtensions<'entry> {
@@ -33,26 +37,30 @@ impl<'entry> Iterator for PaxExtensions<'entry> {
             None => return None,
         };
 
-        Some(line.iter().position(|b| *b == b' ').and_then(|i| {
-            str::from_utf8(&line[..i]).ok().and_then(|len| {
-                len.parse::<usize>().ok().map(|j| (i + 1, j))
-            })
-        }).and_then(|(kvstart, reported_len)| {
-            if line.len() + 1 == reported_len {
-                line[kvstart..].iter().position(|b| *b == b'=').map(|equals| {
-                    (kvstart, equals)
+        Some(
+            line.iter()
+                .position(|b| *b == b' ')
+                .and_then(|i| {
+                    str::from_utf8(&line[..i])
+                        .ok()
+                        .and_then(|len| len.parse::<usize>().ok().map(|j| (i + 1, j)))
                 })
-            } else {
-                None
-            }
-        }).map(|(kvstart, equals)| {
-            PaxExtension {
-                key: &line[kvstart..kvstart + equals],
-                value: &line[kvstart + equals + 1..],
-            }
-        }).ok_or_else(|| {
-            other("malformed pax extension")
-        }))
+                .and_then(|(kvstart, reported_len)| {
+                    if line.len() + 1 == reported_len {
+                        line[kvstart..]
+                            .iter()
+                            .position(|b| *b == b'=')
+                            .map(|equals| (kvstart, equals))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(kvstart, equals)| PaxExtension {
+                    key: &line[kvstart..kvstart + equals],
+                    value: &line[kvstart + equals + 1..],
+                })
+                .ok_or_else(|| other("malformed pax extension")),
+        )
     }
 }
 

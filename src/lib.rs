@@ -21,24 +21,24 @@
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
+extern crate filetime;
 #[cfg(unix)]
 extern crate libc;
-extern crate filetime;
-#[cfg(all(unix, feature = "xattr"))]
-extern crate xattr;
 #[cfg(target_os = "redox")]
 extern crate syscall;
+#[cfg(all(unix, feature = "xattr"))]
+extern crate xattr;
 
 use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};
 
-pub use header::{Header, HeaderMode, OldHeader, UstarHeader, GnuHeader, GnuSparseHeader};
-pub use header::{GnuExtSparseHeader};
-pub use entry_type::EntryType;
-pub use entry::Entry;
 pub use archive::{Archive, Entries};
 pub use builder::Builder;
-pub use pax::{PaxExtensions, PaxExtension};
+pub use entry::Entry;
+pub use entry_type::EntryType;
+pub use header::GnuExtSparseHeader;
+pub use header::{GnuHeader, GnuSparseHeader, Header, HeaderMode, OldHeader, UstarHeader};
+pub use pax::{PaxExtension, PaxExtensions};
 
 mod archive;
 mod builder;
@@ -60,10 +60,14 @@ struct AlignHigher<R: ?Sized>(u64, R);
 
 impl<R: ?Sized> Deref for AlignHigher<R> {
     type Target = R;
-    fn deref(&self) -> &R { &self.1 }
+    fn deref(&self) -> &R {
+        &self.1
+    }
 }
 impl<R: ?Sized> DerefMut for AlignHigher<R> {
-    fn deref_mut(&mut self) -> &mut R { &mut self.1 }
+    fn deref_mut(&mut self) -> &mut R {
+        &mut self.1
+    }
 }
 
 fn other(msg: &str) -> Error {

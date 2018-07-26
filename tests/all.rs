@@ -10,19 +10,23 @@ use std::io::{self, Cursor};
 use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
-use filetime::FileTime;
 use self::tempdir::TempDir;
-use tar::{Archive, Builder, Header, EntryType};
+use filetime::FileTime;
+use tar::{Archive, Builder, EntryType, Header};
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(v) => v,
-        Err(e) => panic!("{} returned {}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => panic!("{} returned {}", stringify!($e), e),
+        }
+    };
 }
 
 macro_rules! tar {
-    ($e:expr) => (&include_bytes!(concat!("archives/", $e))[..])
+    ($e:expr) => {
+        &include_bytes!(concat!("archives/", $e))[..]
+    };
 }
 
 mod header;
@@ -215,7 +219,10 @@ fn no_xattrs() {
     ar.set_unpack_xattrs(false);
     t!(ar.unpack(td.path()));
 
-    assert_eq!(xattr::get(td.path().join("a/b"), "user.pax.flags").unwrap(), None);
+    assert_eq!(
+        xattr::get(td.path().join("a/b"), "user.pax.flags").unwrap(),
+        None
+    );
 }
 
 #[test]
@@ -256,11 +263,19 @@ fn writing_directories_recursively() {
     let base_dir = td.path().join("foobar");
     assert!(fs::metadata(&base_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file1_path = base_dir.join("file1");
-    assert!(fs::metadata(&file1_path).map(|m| m.is_file()).unwrap_or(false));
+    assert!(
+        fs::metadata(&file1_path)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
     let sub_dir = base_dir.join("sub");
     assert!(fs::metadata(&sub_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file2_path = sub_dir.join("file2");
-    assert!(fs::metadata(&file2_path).map(|m| m.is_file()).unwrap_or(false));
+    assert!(
+        fs::metadata(&file2_path)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
 }
 
 #[test]
@@ -283,11 +298,19 @@ fn append_dir_all_blank_dest() {
     let base_dir = td.path();
     assert!(fs::metadata(&base_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file1_path = base_dir.join("file1");
-    assert!(fs::metadata(&file1_path).map(|m| m.is_file()).unwrap_or(false));
+    assert!(
+        fs::metadata(&file1_path)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
     let sub_dir = base_dir.join("sub");
     assert!(fs::metadata(&sub_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file2_path = sub_dir.join("file2");
-    assert!(fs::metadata(&file2_path).map(|m| m.is_file()).unwrap_or(false));
+    assert!(
+        fs::metadata(&file2_path)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
 }
 
 #[test]
@@ -349,8 +372,7 @@ fn extracting_malicious_tarball() {
         let mut a = Builder::new(&mut evil_tar);
         let mut append = |path: &str| {
             let mut header = Header::new_gnu();
-            assert!(header.set_path(path).is_err(),
-                    "was ok: {:?}", path);
+            assert!(header.set_path(path).is_err(), "was ok: {:?}", path);
             {
                 let h = header.as_gnu_mut().unwrap();
                 for (a, b) in h.name.iter_mut().zip(path.as_bytes()) {
@@ -401,20 +423,41 @@ fn extracting_malicious_tarball() {
     // The `tmp` subdirectory should be created and within this
     // subdirectory, there should be files named `abs_evil.txt` through
     // `abs_evil6.txt`.
-    assert!(fs::metadata(td.path().join("tmp")).map(|m| m.is_dir())
-               .unwrap_or(false));
-    assert!(fs::metadata(td.path().join("tmp/abs_evil.txt"))
-               .map(|m| m.is_file()).unwrap_or(false));
-    assert!(fs::metadata(td.path().join("tmp/abs_evil2.txt"))
-               .map(|m| m.is_file()).unwrap_or(false));
-    assert!(fs::metadata(td.path().join("tmp/abs_evil3.txt"))
-               .map(|m| m.is_file()).unwrap_or(false));
-    assert!(fs::metadata(td.path().join("tmp/abs_evil4.txt"))
-               .map(|m| m.is_file()).unwrap_or(false));
-    assert!(fs::metadata(td.path().join("tmp/abs_evil5.txt"))
-               .map(|m| m.is_file()).unwrap_or(false));
-    assert!(fs::metadata(td.path().join("tmp/abs_evil6.txt"))
-               .map(|m| m.is_file()).unwrap_or(false));
+    assert!(
+        fs::metadata(td.path().join("tmp"))
+            .map(|m| m.is_dir())
+            .unwrap_or(false)
+    );
+    assert!(
+        fs::metadata(td.path().join("tmp/abs_evil.txt"))
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
+    assert!(
+        fs::metadata(td.path().join("tmp/abs_evil2.txt"))
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
+    assert!(
+        fs::metadata(td.path().join("tmp/abs_evil3.txt"))
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
+    assert!(
+        fs::metadata(td.path().join("tmp/abs_evil4.txt"))
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
+    assert!(
+        fs::metadata(td.path().join("tmp/abs_evil5.txt"))
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
+    assert!(
+        fs::metadata(td.path().join("tmp/abs_evil6.txt"))
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    );
 }
 
 #[test]
@@ -455,8 +498,7 @@ fn extracting_malformed_tar_null_blocks() {
 }
 
 #[test]
-fn empty_filename()
-{
+fn empty_filename() {
     let td = t!(TempDir::new("tar-rs"));
     let rdr = Cursor::new(tar!("empty_filename.tar"));
     let mut ar = Archive::new(rdr);
@@ -516,8 +558,8 @@ fn backslash_treated_well() {
 #[cfg(unix)]
 #[test]
 fn nul_bytes_in_path() {
-    use std::os::unix::prelude::*;
     use std::ffi::OsStr;
+    use std::os::unix::prelude::*;
 
     let nul_path = OsStr::from_bytes(b"foo\0");
     let td = t!(TempDir::new("tar-rs"));
@@ -531,8 +573,10 @@ fn links() {
     let mut ar = Archive::new(Cursor::new(tar!("link.tar")));
     let mut entries = t!(ar.entries());
     let link = t!(entries.next().unwrap());
-    assert_eq!(t!(link.header().link_name()).as_ref().map(|p| &**p),
-               Some(Path::new("file")));
+    assert_eq!(
+        t!(link.header().link_name()).as_ref().map(|p| &**p),
+        Some(Path::new("file"))
+    );
     let other = t!(entries.next().unwrap());
     assert!(t!(other.header().link_name()).is_none());
 }
@@ -546,8 +590,10 @@ fn unpack_links() {
 
     let md = t!(fs::symlink_metadata(td.path().join("lnk")));
     assert!(md.file_type().is_symlink());
-    assert_eq!(&*t!(fs::read_link(td.path().join("lnk"))),
-               Path::new("file"));
+    assert_eq!(
+        &*t!(fs::read_link(td.path().join("lnk"))),
+        Path::new("file")
+    );
     t!(File::open(td.path().join("lnk")));
 }
 
@@ -678,27 +724,27 @@ fn reading_sparse() {
     assert_eq!(&*a.header().path_bytes(), b"sparse_ext.txt");
     t!(a.read_to_string(&mut s));
     assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x1000..0x1000+5], "text\n");
-    assert!(s[0x1000+5..0x3000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x3000..0x3000+5], "text\n");
-    assert!(s[0x3000+5..0x5000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x5000..0x5000+5], "text\n");
-    assert!(s[0x5000+5..0x7000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x7000..0x7000+5], "text\n");
-    assert!(s[0x7000+5..0x9000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x9000..0x9000+5], "text\n");
-    assert!(s[0x9000+5..0xb000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0xb000..0xb000+5], "text\n");
+    assert_eq!(&s[0x1000..0x1000 + 5], "text\n");
+    assert!(s[0x1000 + 5..0x3000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x3000..0x3000 + 5], "text\n");
+    assert!(s[0x3000 + 5..0x5000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x5000..0x5000 + 5], "text\n");
+    assert!(s[0x5000 + 5..0x7000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x7000..0x7000 + 5], "text\n");
+    assert!(s[0x7000 + 5..0x9000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x9000..0x9000 + 5], "text\n");
+    assert!(s[0x9000 + 5..0xb000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0xb000..0xb000 + 5], "text\n");
 
     let mut a = t!(entries.next().unwrap());
     let mut s = String::new();
     assert_eq!(&*a.header().path_bytes(), b"sparse.txt");
     t!(a.read_to_string(&mut s));
     assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x1000..0x1000+6], "hello\n");
-    assert!(s[0x1000+6..0x2fa0].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x2fa0..0x2fa0+6], "world\n");
-    assert!(s[0x2fa0+6..0x4000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x1000..0x1000 + 6], "hello\n");
+    assert!(s[0x1000 + 6..0x2fa0].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x2fa0..0x2fa0 + 6], "world\n");
+    assert!(s[0x2fa0 + 6..0x4000].chars().all(|x| x == '\u{0}'));
 
     assert!(entries.next().is_none());
 }
@@ -723,25 +769,25 @@ fn extract_sparse() {
     s.truncate(0);
     t!(t!(File::open(td.path().join("sparse_ext.txt"))).read_to_string(&mut s));
     assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x1000..0x1000+5], "text\n");
-    assert!(s[0x1000+5..0x3000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x3000..0x3000+5], "text\n");
-    assert!(s[0x3000+5..0x5000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x5000..0x5000+5], "text\n");
-    assert!(s[0x5000+5..0x7000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x7000..0x7000+5], "text\n");
-    assert!(s[0x7000+5..0x9000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x9000..0x9000+5], "text\n");
-    assert!(s[0x9000+5..0xb000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0xb000..0xb000+5], "text\n");
+    assert_eq!(&s[0x1000..0x1000 + 5], "text\n");
+    assert!(s[0x1000 + 5..0x3000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x3000..0x3000 + 5], "text\n");
+    assert!(s[0x3000 + 5..0x5000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x5000..0x5000 + 5], "text\n");
+    assert!(s[0x5000 + 5..0x7000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x7000..0x7000 + 5], "text\n");
+    assert!(s[0x7000 + 5..0x9000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x9000..0x9000 + 5], "text\n");
+    assert!(s[0x9000 + 5..0xb000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0xb000..0xb000 + 5], "text\n");
 
     s.truncate(0);
     t!(t!(File::open(td.path().join("sparse.txt"))).read_to_string(&mut s));
     assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x1000..0x1000+6], "hello\n");
-    assert!(s[0x1000+6..0x2fa0].chars().all(|x| x == '\u{0}'));
-    assert_eq!(&s[0x2fa0..0x2fa0+6], "world\n");
-    assert!(s[0x2fa0+6..0x4000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x1000..0x1000 + 6], "hello\n");
+    assert!(s[0x1000 + 6..0x2fa0].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x2fa0..0x2fa0 + 6], "world\n");
+    assert!(s[0x2fa0 + 6..0x4000].chars().all(|x| x == '\u{0}'));
 }
 
 #[test]
@@ -789,9 +835,9 @@ fn path_separators() {
 #[test]
 #[cfg(unix)]
 fn append_path_symlink() {
-    use std::os::unix::fs::symlink;
-    use std::env;
     use std::borrow::Cow;
+    use std::env;
+    use std::os::unix::fs::symlink;
 
     let mut ar = Builder::new(Vec::new());
     ar.follow_symlinks(false);
@@ -807,7 +853,10 @@ fn append_path_symlink() {
 
     let entry = t!(entries.next().unwrap());
     assert_eq!(t!(entry.path()), Path::new("test"));
-    assert_eq!(t!(entry.link_name()), Some(Cow::from(Path::new("testdest"))));
+    assert_eq!(
+        t!(entry.link_name()),
+        Some(Cow::from(Path::new("testdest")))
+    );
     assert_eq!(t!(entry.header().size()), 0);
 
     assert!(entries.next().is_none());

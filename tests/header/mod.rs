@@ -5,7 +5,7 @@ use std::{iter, mem, thread, time};
 
 use tempdir::TempDir;
 
-use tar::{Header, HeaderMode, GnuHeader};
+use tar::{GnuHeader, Header, HeaderMode};
 
 #[test]
 fn default_gnu() {
@@ -172,14 +172,14 @@ fn set_metadata_deterministic() {
     let tmppath = td.path().join("tmpfile");
 
     fn mk_header(path: &Path, readonly: bool) -> Result<Header, io::Error> {
-      let mut file = t!(File::create(path));
-      t!(file.write_all(b"c"));
-      let mut perms = t!(file.metadata()).permissions();
-      perms.set_readonly(readonly);
-      t!(fs::set_permissions(path, perms));
-      let mut h = Header::new_ustar();
-      h.set_metadata_in_mode(&t!(path.metadata()), HeaderMode::Deterministic);
-      Ok(h)
+        let mut file = t!(File::create(path));
+        t!(file.write_all(b"c"));
+        let mut perms = t!(file.metadata()).permissions();
+        perms.set_readonly(readonly);
+        t!(fs::set_permissions(path, perms));
+        let mut h = Header::new_ustar();
+        h.set_metadata_in_mode(&t!(path.metadata()), HeaderMode::Deterministic);
+        Ok(h)
     }
 
     // Create "the same" File twice in a row, one second apart, with differing readonly values.
@@ -221,7 +221,9 @@ fn extended_numeric_format() {
     h.uid = [0x80, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78];
     assert_eq!(h.as_header().uid().unwrap(), 0x12345678);
 
-    h.mtime = [0x80, 0, 0, 0, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+    h.mtime = [
+        0x80, 0, 0, 0, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+    ];
     assert_eq!(h.as_header().mtime().unwrap(), 0x0123456789abcdef);
 }
 

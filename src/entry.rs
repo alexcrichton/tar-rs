@@ -8,12 +8,12 @@ use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
-use {Header, Archive, PaxExtensions};
 use archive::ArchiveInner;
 use error::TarError;
 use header::bytes2path;
 use other;
 use pax::pax_extensions;
+use {Archive, Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
 ///
@@ -274,7 +274,7 @@ impl<'a> EntryFields<'a> {
                         .find(|f| f.key_bytes() == b"path")
                         .map(|f| f.value_bytes());
                     if let Some(field) = pax {
-                        return Cow::Borrowed(field)
+                        return Cow::Borrowed(field);
                     }
                 }
                 self.header.path_bytes()
@@ -309,9 +309,10 @@ impl<'a> EntryFields<'a> {
 
     fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions>> {
         if self.pax_extensions.is_none() {
-            if !self.header.entry_type().is_pax_global_extensions() &&
-               !self.header.entry_type().is_pax_local_extensions() {
-                return Ok(None)
+            if !self.header.entry_type().is_pax_global_extensions()
+                && !self.header.entry_type().is_pax_local_extensions()
+            {
+                return Ok(None);
             }
             self.pax_extensions = Some(self.read_all()?);
         }
@@ -335,16 +336,17 @@ impl<'a> EntryFields<'a> {
         let mut file_dst = dst.to_path_buf();
         {
             let path = self.path().map_err(|e| {
-                TarError::new(&format!("invalid path in entry header: {}", self.path_lossy()), e)
+                TarError::new(
+                    &format!("invalid path in entry header: {}", self.path_lossy()),
+                    e,
+                )
             })?;
             for part in path.components() {
                 match part {
                     // Leading '/' characters, root paths, and '.'
                     // components are just ignored and treated as "empty
                     // components"
-                    Component::Prefix(..) |
-                    Component::RootDir |
-                    Component::CurDir => continue,
+                    Component::Prefix(..) | Component::RootDir | Component::CurDir => continue,
 
                     // If any part of the filename is '..', then skip over
                     // unpacking the file to prevent directory traversal
@@ -366,47 +368,47 @@ impl<'a> EntryFields<'a> {
         // Skip entries without a parent (i.e. outside of FS root)
         let parent = match file_dst.parent() {
             Some(p) => p,
-            None    => return Ok(false),
+            None => return Ok(false),
         };
 
         if parent.symlink_metadata().is_err() {
             fs::create_dir_all(&parent).map_err(|e| {
-                TarError::new(&format!("failed to create `{}`",
-                                       parent.display()), e)
+                TarError::new(&format!("failed to create `{}`", parent.display()), e)
             })?;
         }
 
         let canon_target = self.validate_inside_dst(&dst, parent)?;
 
-        self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
-            TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e)
-        })?;
+        self.unpack(Some(&canon_target), &file_dst)
+            .map_err(|e| TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e))?;
 
         Ok(true)
     }
 
     /// Returns access to the header of this entry in the archive.
-    fn unpack(&mut self,
-              target_base: Option<&Path>,
-              dst: &Path) -> io::Result<()> {
+    fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<()> {
         let kind = self.header.entry_type();
         if kind.is_dir() {
             // If the directory already exists just let it slide
             let prev = fs::metadata(&dst);
             if prev.map(|m| m.is_dir()).unwrap_or(false) {
-                return Ok(())
+                return Ok(());
             }
-            return fs::create_dir(&dst).map_err(|err| Error::new(
-                err.kind(),
-                format!("{} when creating dir {}", err, dst.display())
-            ));
+            return fs::create_dir(&dst).map_err(|err| {
+                Error::new(
+                    err.kind(),
+                    format!("{} when creating dir {}", err, dst.display()),
+                )
+            });
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {
                 Some(name) => name,
-                None => return Err(other(&format!(
-                    "hard link listed for {} but no link name found",
-                    String::from_utf8_lossy(self.header.as_bytes())
-                ))),
+                None => {
+                    return Err(other(&format!(
+                        "hard link listed for {} but no link name found",
+                        String::from_utf8_lossy(self.header.as_bytes())
+                    )))
+                }
             };
 
             if src.iter().count() == 0 {
@@ -436,25 +438,29 @@ impl<'a> EntryFields<'a> {
                     }
                     None => src.into_owned(),
                 };
-                fs::hard_link(&link_src, dst).map_err(|err| Error::new(
-                    err.kind(),
-                    format!(
-                        "{} when hard linking {} to {}",
-                        err,
-                        link_src.display(),
-                        dst.display()
+                fs::hard_link(&link_src, dst).map_err(|err| {
+                    Error::new(
+                        err.kind(),
+                        format!(
+                            "{} when hard linking {} to {}",
+                            err,
+                            link_src.display(),
+                            dst.display()
+                        ),
                     )
-                ))
+                })
             } else {
-                symlink(&src, dst).map_err(|err| Error::new(
-                    err.kind(),
-                    format!(
-                        "{} when symlinking {} to {}",
-                        err,
-                        src.display(),
-                        dst.display()
+                symlink(&src, dst).map_err(|err| {
+                    Error::new(
+                        err.kind(),
+                        format!(
+                            "{} when symlinking {} to {}",
+                            err,
+                            src.display(),
+                            dst.display()
+                        ),
                     )
-                ))
+                })
             };
 
             #[cfg(windows)]
@@ -466,11 +472,12 @@ impl<'a> EntryFields<'a> {
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::unix::fs::symlink(src, dst)
             }
-        } else if kind.is_pax_global_extensions() ||
-                  kind.is_pax_local_extensions() ||
-                  kind.is_gnu_longname() ||
-                  kind.is_gnu_longlink() {
-            return Ok(())
+        } else if kind.is_pax_global_extensions()
+            || kind.is_pax_local_extensions()
+            || kind.is_gnu_longname()
+            || kind.is_gnu_longlink()
+        {
+            return Ok(());
         };
 
         // Note the lack of `else` clause above. According to the FreeBSD
@@ -489,7 +496,7 @@ impl<'a> EntryFields<'a> {
             match fs::remove_file(dst) {
                 Ok(()) => {}
                 Err(ref e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e)
+                Err(e) => return Err(e),
             }
             let mut f = fs::File::create(dst)?;
             for io in self.data.drain(..) {
@@ -511,22 +518,33 @@ impl<'a> EntryFields<'a> {
             Ok(())
         })().map_err(|e| {
             let header = self.header.path_bytes();
-            TarError::new(&format!("failed to unpack `{}` into `{}`",
-                                   String::from_utf8_lossy(&header),
-                                   dst.display()), e)
+            TarError::new(
+                &format!(
+                    "failed to unpack `{}` into `{}`",
+                    String::from_utf8_lossy(&header),
+                    dst.display()
+                ),
+                e,
+            )
         })?;
 
         if let Ok(mtime) = self.header.mtime() {
             let mtime = FileTime::from_unix_time(mtime as i64, 0);
             filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
-                TarError::new(&format!("failed to set mtime for `{}`",
-                                       dst.display()), e)
+                TarError::new(&format!("failed to set mtime for `{}`", dst.display()), e)
             })?;
         }
         if let Ok(mode) = self.header.mode() {
             set_perms(dst, mode, self.preserve_permissions).map_err(|e| {
-                TarError::new(&format!("failed to set permissions to {:o} \
-                                        for `{}`", mode, dst.display()), e)
+                TarError::new(
+                    &format!(
+                        "failed to set permissions to {:o} \
+                         for `{}`",
+                        mode,
+                        dst.display()
+                    ),
+                    e,
+                )
             })?;
         }
         if self.unpack_xattrs {
@@ -538,11 +556,7 @@ impl<'a> EntryFields<'a> {
         fn set_perms(dst: &Path, mode: u32, preserve: bool) -> io::Result<()> {
             use std::os::unix::prelude::*;
 
-            let mode = if preserve {
-                mode
-            } else {
-                mode & 0o777
-            };
+            let mode = if preserve { mode } else { mode & 0o777 };
 
             let perm = fs::Permissions::from_mode(mode as _);
             fs::set_permissions(dst, perm)
@@ -556,35 +570,40 @@ impl<'a> EntryFields<'a> {
 
         #[cfg(all(unix, feature = "xattr"))]
         fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
-            use std::os::unix::prelude::*;
             use std::ffi::OsStr;
+            use std::os::unix::prelude::*;
             use xattr;
 
             let exts = match me.pax_extensions() {
                 Ok(Some(e)) => e,
                 _ => return Ok(()),
             };
-            let exts = exts.filter_map(|e| e.ok()).filter_map(|e| {
-                let key = e.key_bytes();
-                let prefix = b"SCHILY.xattr.";
-                if key.starts_with(prefix) {
-                    Some((&key[prefix.len()..], e))
-                } else {
-                    None
-                }
-            }).map(|(key, e)| {
-                (OsStr::from_bytes(key), e.value_bytes())
-            });
+            let exts = exts
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let key = e.key_bytes();
+                    let prefix = b"SCHILY.xattr.";
+                    if key.starts_with(prefix) {
+                        Some((&key[prefix.len()..], e))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(key, e)| (OsStr::from_bytes(key), e.value_bytes()));
 
             for (key, value) in exts {
                 xattr::set(dst, key, value).map_err(|e| {
-                    TarError::new(&format!("failed to set extended \
-                                            attributes to {}. \
-                                            Xattrs: key={:?}, value={:?}.",
-                                           dst.display(),
-                                           key,
-                                           String::from_utf8_lossy(value)),
-                                  e)
+                    TarError::new(
+                        &format!(
+                            "failed to set extended \
+                             attributes to {}. \
+                             Xattrs: key={:?}, value={:?}.",
+                            dst.display(),
+                            key,
+                            String::from_utf8_lossy(value)
+                        ),
+                        e,
+                    )
                 })?;
             }
 
@@ -631,7 +650,9 @@ impl<'a> Read for EntryFields<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         loop {
             match self.data.get_mut(0).map(|io| io.read(into)) {
-                Some(Ok(0)) => { self.data.remove(0); }
+                Some(Ok(0)) => {
+                    self.data.remove(0);
+                }
                 Some(r) => return r,
                 None => return Ok(0),
             }
