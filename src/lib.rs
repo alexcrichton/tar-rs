@@ -30,7 +30,6 @@ extern crate syscall;
 extern crate xattr;
 
 use std::io::{Error, ErrorKind};
-use std::ops::{Deref, DerefMut};
 
 pub use archive::{Archive, Entries};
 pub use builder::Builder;
@@ -47,28 +46,6 @@ mod entry_type;
 mod error;
 mod header;
 mod pax;
-
-// FIXME(rust-lang/rust#26403):
-//      Right now there's a bug when a DST struct's last field has more
-//      alignment than the rest of a structure, causing invalid pointers to be
-//      created when it's casted around at runtime. To work around this we force
-//      our DST struct to instead have a forcibly higher alignment via a
-//      synthesized u64 (hopefully the largest alignment we'll run into in
-//      practice), and this should hopefully ensure that the pointers all work
-//      out.
-struct AlignHigher<R: ?Sized>(u64, R);
-
-impl<R: ?Sized> Deref for AlignHigher<R> {
-    type Target = R;
-    fn deref(&self) -> &R {
-        &self.1
-    }
-}
-impl<R: ?Sized> DerefMut for AlignHigher<R> {
-    fn deref_mut(&mut self) -> &mut R {
-        &mut self.1
-    }
-}
 
 fn other(msg: &str) -> Error {
     Error::new(ErrorKind::Other, msg)

@@ -21,7 +21,7 @@ pub struct ArchiveInner<R: ?Sized> {
     pos: Cell<u64>,
     unpack_xattrs: bool,
     preserve_permissions: bool,
-    obj: RefCell<::AlignHigher<R>>,
+    obj: RefCell<R>,
 }
 
 /// An iterator over the entries of an archive.
@@ -44,7 +44,7 @@ impl<R: Read> Archive<R> {
             inner: ArchiveInner {
                 unpack_xattrs: false,
                 preserve_permissions: false,
-                obj: RefCell::new(::AlignHigher(0, obj)),
+                obj: RefCell::new(obj),
                 pos: Cell::new(0),
             },
         }
@@ -52,7 +52,7 @@ impl<R: Read> Archive<R> {
 
     /// Unwrap this archive, returning the underlying object.
     pub fn into_inner(self) -> R {
-        self.inner.obj.into_inner().1
+        self.inner.obj.into_inner()
     }
 
     /// Construct an iterator over the entries in this archive.
