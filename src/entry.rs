@@ -7,7 +7,6 @@ use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
-use archive::ArchiveInner;
 use error::TarError;
 use header::bytes2path;
 use other;
@@ -19,13 +18,13 @@ use {Header, PaxExtensions};
 /// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader trait. An
 /// entry cannot be rewritten once inserted into an archive.
-pub struct Entry<'a> {
-    fields: EntryFields<'a>,
+pub struct Entry<R> {
+    fields: EntryFields<R>,
 }
 
-// private implementation detail of `Entry`, but concrete (no type parameters)
-// and also all-public to be constructed from other modules.
-pub struct EntryFields<'a> {
+// Private implementation detail of `Entry`.
+// all-public to be constructed from other modules.
+pub struct EntryFields<R> {
     pub long_pathname: Option<Vec<u8>>,
     pub long_linkname: Option<Vec<u8>>,
     pub pax_extensions: Option<Vec<u8>>,
@@ -33,17 +32,17 @@ pub struct EntryFields<'a> {
     pub size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
-    pub data: Vec<EntryIo<'a>>,
+    pub data: Vec<EntryIo<R>>,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
 }
 
-pub enum EntryIo<'a> {
+pub enum EntryIo<R> {
     Pad(io::Take<io::Repeat>),
-    Data(io::Take<&'a ArchiveInner<Read + 'a>>),
+    Data(io::Take<R>),
 }
 
-impl<'a> Entry<'a> {
+impl<R> Entry<R> {
     /// Returns the path name for this entry.
     ///
     /// This method may fail if the pathname is not valid unicode and this is
@@ -96,28 +95,6 @@ impl<'a> Entry<'a> {
         self.fields.link_name_bytes()
     }
 
-    /// Returns an iterator over the pax extensions contained in this entry.
-    ///
-    /// Pax extensions are a form of archive where extra metadata is stored in
-    /// key/value pairs in entries before the entry they're intended to
-    /// describe. For example this can be used to describe long file name or
-    /// other metadata like atime/ctime/mtime in more precision.
-    ///
-    /// The returned iterator will yield key/value pairs for each extension.
-    ///
-    /// `None` will be returned if this entry does not indicate that it itself
-    /// contains extensions, or if there were no previous extensions describing
-    /// it.
-    ///
-    /// Note that global pax extensions are intended to be applied to all
-    /// archive entries.
-    ///
-    /// Also note that this function will read the entire entry if the entry
-    /// itself is a list of extensions.
-    pub fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions>> {
-        self.fields.pax_extensions()
-    }
-
     /// Returns access to the header of this entry in the archive.
     ///
     /// This provides access to the the metadata for this entry in the archive.
@@ -143,6 +120,50 @@ impl<'a> Entry<'a> {
     /// `file_pos` to `file_pos + entry_size` contains the raw file bytes.
     pub fn raw_file_position(&self) -> u64 {
         self.fields.file_pos
+    }
+
+    /// Indicate whether extended file attributes (xattrs on Unix) are preserved
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default and is currently only implemented on
+    /// Unix using xattr support. This may eventually be implemented for
+    /// Windows, however, if other archive implementations are found which do
+    /// this as well.
+    pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
+        self.fields.unpack_xattrs = unpack_xattrs;
+    }
+
+    /// Indicate whether extended permissions (like suid on Unix) are preserved
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default and is currently only implemented on
+    /// Unix.
+    pub fn set_preserve_permissions(&mut self, preserve: bool) {
+        self.fields.preserve_permissions = preserve;
+    }
+}
+
+impl<R: Read> Entry<R> {
+    /// Returns an iterator over the pax extensions contained in this entry.
+    ///
+    /// Pax extensions are a form of archive where extra metadata is stored in
+    /// key/value pairs in entries before the entry they're intended to
+    /// describe. For example this can be used to describe long file name or
+    /// other metadata like atime/ctime/mtime in more precision.
+    ///
+    /// The returned iterator will yield key/value pairs for each extension.
+    ///
+    /// `None` will be returned if this entry does not indicate that it itself
+    /// contains extensions, or if there were no previous extensions describing
+    /// it.
+    ///
+    /// Note that global pax extensions are intended to be applied to all
+    /// archive entries.
+    ///
+    /// Also note that this function will read the entire entry if the entry
+    /// itself is a list of extensions.
+    pub fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions>> {
+        self.fields.pax_extensions()
     }
 
     /// Writes this file to the specified location.
@@ -205,50 +226,23 @@ impl<'a> Entry<'a> {
     pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<bool> {
         self.fields.unpack_in(dst.as_ref())
     }
-
-    /// Indicate whether extended file attributes (xattrs on Unix) are preserved
-    /// when unpacking this entry.
-    ///
-    /// This flag is disabled by default and is currently only implemented on
-    /// Unix using xattr support. This may eventually be implemented for
-    /// Windows, however, if other archive implementations are found which do
-    /// this as well.
-    pub fn set_unpack_xattrs(&mut self, unpack_xattrs: bool) {
-        self.fields.unpack_xattrs = unpack_xattrs;
-    }
-
-    /// Indicate whether extended permissions (like suid on Unix) are preserved
-    /// when unpacking this entry.
-    ///
-    /// This flag is disabled by default and is currently only implemented on
-    /// Unix.
-    pub fn set_preserve_permissions(&mut self, preserve: bool) {
-        self.fields.preserve_permissions = preserve;
-    }
 }
 
-impl<'a> Read for Entry<'a> {
+impl<R: Read> Read for Entry<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         self.fields.read(into)
     }
 }
 
-impl<'a> EntryFields<'a> {
-    pub fn from(entry: Entry<'a>) -> EntryFields<'a> {
+impl<R> EntryFields<R> {
+    pub fn from(entry: Entry<R>) -> EntryFields<R> {
         entry.fields
     }
 
-    pub fn into_entry(self) -> Entry<'a> {
+    pub fn into_entry(self) -> Entry<R> {
         Entry {
             fields: self
         }
-    }
-
-    pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
-        // Preallocate some data but don't let ourselves get too crazy now.
-        let cap = cmp::min(self.size, 128 * 1024);
-        let mut v = Vec::with_capacity(cap as usize);
-        self.read_to_end(&mut v).map(|_| v)
     }
 
     fn path(&self) -> io::Result<Cow<Path>> {
@@ -304,6 +298,43 @@ impl<'a> EntryFields<'a> {
         }
     }
 
+    fn validate_inside_dst(&self, dst: &Path, file_dst: &Path) -> io::Result<PathBuf> {
+        // Abort if target (canonical) parent is outside of `dst`
+        let canon_parent = file_dst.canonicalize().map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, file_dst.display()),
+            )
+        })?;
+        let canon_target = dst.canonicalize().map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, dst.display()),
+            )
+        })?;
+        if !canon_parent.starts_with(&canon_target) {
+            let err = TarError::new(
+                &format!(
+                    "trying to unpack outside of destination path: {}",
+                    canon_target.display()
+                ),
+                // TODO: use ErrorKind::InvalidInput here? (minor breaking change)
+                Error::new(ErrorKind::Other, "Invalid argument"),
+            );
+            return Err(err.into());
+        }
+        Ok(canon_target)
+    }
+}
+
+impl<R: Read> EntryFields<R> {
+    pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
+        // Preallocate some data but don't let ourselves get too crazy now.
+        let cap = cmp::min(self.size, 128 * 1024);
+        let mut v = Vec::with_capacity(cap as usize);
+        self.read_to_end(&mut v).map(|_| v)
+    }
+
     fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions>> {
         if self.pax_extensions.is_none() {
             if !self.header.entry_type().is_pax_global_extensions()
@@ -314,72 +345,6 @@ impl<'a> EntryFields<'a> {
             self.pax_extensions = Some(self.read_all()?);
         }
         Ok(Some(pax_extensions(self.pax_extensions.as_ref().unwrap())))
-    }
-
-    fn unpack_in(&mut self, dst: &Path) -> io::Result<bool> {
-        // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
-        // * Leading '/'s are trimmed. For example, `///test` is treated as
-        //   `test`.
-        // * If the filename contains '..', then the file is skipped when
-        //   extracting the tarball.
-        // * '//' within a filename is effectively skipped. An error is
-        //   logged, but otherwise the effect is as if any two or more
-        //   adjacent '/'s within the filename were consolidated into one
-        //   '/'.
-        //
-        // Most of this is handled by the `path` module of the standard
-        // library, but we specially handle a few cases here as well.
-
-        let mut file_dst = dst.to_path_buf();
-        {
-            let path = self.path().map_err(|e| {
-                TarError::new(
-                    &format!("invalid path in entry header: {}", self.path_lossy()),
-                    e,
-                )
-            })?;
-            for part in path.components() {
-                match part {
-                    // Leading '/' characters, root paths, and '.'
-                    // components are just ignored and treated as "empty
-                    // components"
-                    Component::Prefix(..) | Component::RootDir | Component::CurDir => continue,
-
-                    // If any part of the filename is '..', then skip over
-                    // unpacking the file to prevent directory traversal
-                    // security issues.  See, e.g.: CVE-2001-1267,
-                    // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
-                    Component::ParentDir => return Ok(false),
-
-                    Component::Normal(part) => file_dst.push(part),
-                }
-            }
-        }
-
-        // Skip cases where only slashes or '.' parts were seen, because
-        // this is effectively an empty filename.
-        if *dst == *file_dst {
-            return Ok(true);
-        }
-
-        // Skip entries without a parent (i.e. outside of FS root)
-        let parent = match file_dst.parent() {
-            Some(p) => p,
-            None => return Ok(false),
-        };
-
-        if parent.symlink_metadata().is_err() {
-            fs::create_dir_all(&parent).map_err(|e| {
-                TarError::new(&format!("failed to create `{}`", parent.display()), e)
-            })?;
-        }
-
-        let canon_target = self.validate_inside_dst(&dst, parent)?;
-
-        self.unpack(Some(&canon_target), &file_dst)
-            .map_err(|e| TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e))?;
-
-        Ok(true)
     }
 
     /// Returns access to the header of this entry in the archive.
@@ -609,41 +574,79 @@ impl<'a> EntryFields<'a> {
         // Windows does not completely support posix xattrs
         // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
         #[cfg(any(windows, target_os = "redox", not(feature = "xattr")))]
-        fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
+        fn set_xattrs<A>(_: &mut A, _: &Path) -> io::Result<()> {
             Ok(())
         }
     }
 
-    fn validate_inside_dst(&self, dst: &Path, file_dst: &Path) -> io::Result<PathBuf> {
-        // Abort if target (canonical) parent is outside of `dst`
-        let canon_parent = file_dst.canonicalize().map_err(|err| {
-            Error::new(
-                err.kind(),
-                format!("{} while canonicalizing {}", err, file_dst.display()),
-            )
-        })?;
-        let canon_target = dst.canonicalize().map_err(|err| {
-            Error::new(
-                err.kind(),
-                format!("{} while canonicalizing {}", err, dst.display()),
-            )
-        })?;
-        if !canon_parent.starts_with(&canon_target) {
-            let err = TarError::new(
-                &format!(
-                    "trying to unpack outside of destination path: {}",
-                    canon_target.display()
-                ),
-                // TODO: use ErrorKind::InvalidInput here? (minor breaking change)
-                Error::new(ErrorKind::Other, "Invalid argument"),
-            );
-            return Err(err.into());
+    fn unpack_in(&mut self, dst: &Path) -> io::Result<bool> {
+        // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
+        // * Leading '/'s are trimmed. For example, `///test` is treated as
+        //   `test`.
+        // * If the filename contains '..', then the file is skipped when
+        //   extracting the tarball.
+        // * '//' within a filename is effectively skipped. An error is
+        //   logged, but otherwise the effect is as if any two or more
+        //   adjacent '/'s within the filename were consolidated into one
+        //   '/'.
+        //
+        // Most of this is handled by the `path` module of the standard
+        // library, but we specially handle a few cases here as well.
+
+        let mut file_dst = dst.to_path_buf();
+        {
+            let path = self.path().map_err(|e| {
+                TarError::new(
+                    &format!("invalid path in entry header: {}", self.path_lossy()),
+                    e,
+                )
+            })?;
+            for part in path.components() {
+                match part {
+                    // Leading '/' characters, root paths, and '.'
+                    // components are just ignored and treated as "empty
+                    // components"
+                    Component::Prefix(..) | Component::RootDir | Component::CurDir => continue,
+
+                    // If any part of the filename is '..', then skip over
+                    // unpacking the file to prevent directory traversal
+                    // security issues.  See, e.g.: CVE-2001-1267,
+                    // CVE-2002-0399, CVE-2005-1918, CVE-2007-4131
+                    Component::ParentDir => return Ok(false),
+
+                    Component::Normal(part) => file_dst.push(part),
+                }
+            }
         }
-        Ok(canon_target)
+
+        // Skip cases where only slashes or '.' parts were seen, because
+        // this is effectively an empty filename.
+        if *dst == *file_dst {
+            return Ok(true);
+        }
+
+        // Skip entries without a parent (i.e. outside of FS root)
+        let parent = match file_dst.parent() {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+
+        if parent.symlink_metadata().is_err() {
+            fs::create_dir_all(&parent).map_err(|e| {
+                TarError::new(&format!("failed to create `{}`", parent.display()), e)
+            })?;
+        }
+
+        let canon_target = self.validate_inside_dst(&dst, parent)?;
+
+        self.unpack(Some(&canon_target), &file_dst)
+            .map_err(|e| TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e))?;
+
+        Ok(true)
     }
 }
 
-impl<'a> Read for EntryFields<'a> {
+impl<R: Read> Read for EntryFields<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         loop {
             match self.data.get_mut(0).map(|io| io.read(into)) {
@@ -657,7 +660,7 @@ impl<'a> Read for EntryFields<'a> {
     }
 }
 
-impl<'a> Read for EntryIo<'a> {
+impl<R: Read> Read for EntryIo<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         match *self {
             EntryIo::Pad(ref mut io) => io.read(into),

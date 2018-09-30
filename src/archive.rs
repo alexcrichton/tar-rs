@@ -158,7 +158,7 @@ impl<'a> Entries<'a> {
 }
 
 impl<'a> Entries<'a> {
-    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<'a>>> {
+    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<&'a ArchiveInner<Read + 'a>>>> {
         // Seek to the start of the next header in the archive
         let delta = self.next - self.archive.inner.pos.get();
         self.archive.skip(delta)?;
@@ -219,7 +219,7 @@ impl<'a> Entries<'a> {
         Ok(Some(ret.into_entry()))
     }
 
-    fn next_entry(&mut self) -> io::Result<Option<Entry<'a>>> {
+    fn next_entry(&mut self) -> io::Result<Option<Entry<&'a ArchiveInner<Read + 'a>>>> {
         if self.raw {
             return self.next_entry_raw();
         }
@@ -285,7 +285,7 @@ impl<'a> Entries<'a> {
         }
     }
 
-    fn parse_sparse_header(&mut self, entry: &mut EntryFields<'a>) -> io::Result<()> {
+    fn parse_sparse_header(&mut self, entry: &mut EntryFields<&'a ArchiveInner<Read + 'a>>) -> io::Result<()> {
         if !entry.header.entry_type().is_gnu_sparse() {
             return Ok(());
         }
@@ -387,9 +387,9 @@ impl<'a> Entries<'a> {
 }
 
 impl<'a> Iterator for Entries<'a> {
-    type Item = io::Result<Entry<'a>>;
+    type Item = io::Result<Entry<&'a ArchiveInner<Read + 'a>>>;
 
-    fn next(&mut self) -> Option<io::Result<Entry<'a>>> {
+    fn next(&mut self) -> Option<io::Result<Entry<&'a ArchiveInner<Read + 'a>>>> {
         if self.done {
             None
         } else {
