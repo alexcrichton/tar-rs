@@ -2,7 +2,6 @@ use std::cell::{Cell, RefCell};
 use std::cmp;
 use std::io;
 use std::io::prelude::*;
-use std::marker;
 use std::path::Path;
 
 use entry::{EntryFields, EntryIo};
@@ -25,12 +24,7 @@ pub struct ArchiveInner<R: ?Sized> {
 }
 
 /// An iterator over the entries of an archive.
-pub struct Entries<'a, R: 'a + Read> {
-    fields: EntriesFields<'a>,
-    _ignored: marker::PhantomData<&'a Archive<R>>,
-}
-
-struct EntriesFields<'a> {
+pub struct Entries<'a> {
     archive: &'a Archive<Read + 'a>,
     next: u64,
     done: bool,
@@ -61,12 +55,9 @@ impl<R: Read> Archive<R> {
     /// sequence. If entries are processed out of sequence (from what the
     /// iterator returns), then the contents read for each entry may be
     /// corrupted.
-    pub fn entries(&mut self) -> io::Result<Entries<R>> {
+    pub fn entries(&mut self) -> io::Result<Entries> {
         let me: &mut Archive<Read> = self;
-        me._entries().map(|fields| Entries {
-            fields: fields,
-            _ignored: marker::PhantomData,
-        })
+        me._entries()
     }
 
     /// Unpacks the contents tarball into the specified `dst`.
@@ -115,14 +106,14 @@ impl<R: Read> Archive<R> {
 }
 
 impl<'a> Archive<Read + 'a> {
-    fn _entries(&mut self) -> io::Result<EntriesFields> {
+    fn _entries(&mut self) -> io::Result<Entries> {
         if self.inner.pos.get() != 0 {
             return Err(other(
                 "cannot call entries unless archive is at \
                  position 0",
             ));
         }
-        Ok(EntriesFields {
+        Ok(Entries {
             archive: self,
             done: false,
             next: 0,
@@ -152,34 +143,22 @@ impl<'a> Archive<Read + 'a> {
     }
 }
 
-impl<'a, R: Read> Entries<'a, R> {
+impl<'a> Entries<'a> {
     /// Indicates whether this iterator will return raw entries or not.
     ///
     /// If the raw list of entries are returned, then no preprocessing happens
     /// on account of this library, for example taking into accout GNU long name
     /// or long link archive members. Raw iteration is disabled by default.
-    pub fn raw(self, raw: bool) -> Entries<'a, R> {
+    pub fn raw(self, raw: bool) -> Entries<'a> {
         Entries {
-            fields: EntriesFields {
-                raw: raw,
-                ..self.fields
-            },
-            _ignored: marker::PhantomData,
+            raw: raw,
+            ..self
         }
     }
 }
-impl<'a, R: Read> Iterator for Entries<'a, R> {
-    type Item = io::Result<Entry<'a, R>>;
 
-    fn next(&mut self) -> Option<io::Result<Entry<'a, R>>> {
-        self.fields
-            .next()
-            .map(|result| result.map(|e| EntryFields::from(e).into_entry()))
-    }
-}
-
-impl<'a> EntriesFields<'a> {
-    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
+impl<'a> Entries<'a> {
+    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<'a>>> {
         // Seek to the start of the next header in the archive
         let delta = self.next - self.archive.inner.pos.get();
         self.archive.skip(delta)?;
@@ -240,7 +219,7 @@ impl<'a> EntriesFields<'a> {
         Ok(Some(ret.into_entry()))
     }
 
-    fn next_entry(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
+    fn next_entry(&mut self) -> io::Result<Option<Entry<'a>>> {
         if self.raw {
             return self.next_entry_raw();
         }
@@ -407,10 +386,10 @@ impl<'a> EntriesFields<'a> {
     }
 }
 
-impl<'a> Iterator for EntriesFields<'a> {
-    type Item = io::Result<Entry<'a, io::Empty>>;
+impl<'a> Iterator for Entries<'a> {
+    type Item = io::Result<Entry<'a>>;
 
-    fn next(&mut self) -> Option<io::Result<Entry<'a, io::Empty>>> {
+    fn next(&mut self) -> Option<io::Result<Entry<'a>>> {
         if self.done {
             None
         } else {

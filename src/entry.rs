@@ -3,7 +3,6 @@ use std::cmp;
 use std::fs;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
-use std::marker;
 use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
@@ -13,16 +12,15 @@ use error::TarError;
 use header::bytes2path;
 use other;
 use pax::pax_extensions;
-use {Archive, Header, PaxExtensions};
+use {Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
 ///
 /// This structure is a window into a portion of a borrowed archive which can
 /// be inspected. It acts as a file handle by implementing the Reader trait. An
 /// entry cannot be rewritten once inserted into an archive.
-pub struct Entry<'a, R: 'a + Read> {
+pub struct Entry<'a> {
     fields: EntryFields<'a>,
-    _ignored: marker::PhantomData<&'a Archive<R>>,
 }
 
 // private implementation detail of `Entry`, but concrete (no type parameters)
@@ -45,7 +43,7 @@ pub enum EntryIo<'a> {
     Data(io::Take<&'a ArchiveInner<Read + 'a>>),
 }
 
-impl<'a, R: Read> Entry<'a, R> {
+impl<'a> Entry<'a> {
     /// Returns the path name for this entry.
     ///
     /// This method may fail if the pathname is not valid unicode and this is
@@ -229,21 +227,20 @@ impl<'a, R: Read> Entry<'a, R> {
     }
 }
 
-impl<'a, R: Read> Read for Entry<'a, R> {
+impl<'a> Read for Entry<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         self.fields.read(into)
     }
 }
 
 impl<'a> EntryFields<'a> {
-    pub fn from<R: Read>(entry: Entry<R>) -> EntryFields {
+    pub fn from(entry: Entry<'a>) -> EntryFields<'a> {
         entry.fields
     }
 
-    pub fn into_entry<R: Read>(self) -> Entry<'a, R> {
+    pub fn into_entry(self) -> Entry<'a> {
         Entry {
-            fields: self,
-            _ignored: marker::PhantomData,
+            fields: self
         }
     }
 
