@@ -4,7 +4,7 @@ use std::io;
 use std::io::prelude::*;
 use std::path::Path;
 
-use entry::{EntryFields, EntryIo};
+use entry::{EntryFields, EntryIo, EntryBlockIo, ExactTake};
 use error::TarError;
 use other;
 use {Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
@@ -158,7 +158,7 @@ impl<'a> Entries<'a> {
 }
 
 impl<'a> Entries<'a> {
-    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<&'a ArchiveInner<Read + 'a>>>> {
+    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<EntryBlockIo<'a>>>> {
         // Seek to the start of the next header in the archive
         let delta = self.next - self.archive.inner.pos.get();
         self.archive.skip(delta)?;
@@ -202,7 +202,7 @@ impl<'a> Entries<'a> {
             size: size,
             header_pos: header_pos,
             file_pos: file_pos,
-            data: vec![EntryIo::Data((&self.archive.inner).take(size))],
+            data: EntryBlockIo::new(vec![EntryIo::Data(ExactTake::new((&self.archive.inner).take(size)))]),
             header: header,
             long_pathname: None,
             long_linkname: None,
@@ -219,7 +219,7 @@ impl<'a> Entries<'a> {
         Ok(Some(ret.into_entry()))
     }
 
-    fn next_entry(&mut self) -> io::Result<Option<Entry<&'a ArchiveInner<Read + 'a>>>> {
+    fn next_entry(&mut self) -> io::Result<Option<Entry<EntryBlockIo<'a>>>> {
         if self.raw {
             return self.next_entry_raw();
         }
@@ -285,7 +285,7 @@ impl<'a> Entries<'a> {
         }
     }
 
-    fn parse_sparse_header(&mut self, entry: &mut EntryFields<&'a ArchiveInner<Read + 'a>>) -> io::Result<()> {
+    fn parse_sparse_header(&mut self, entry: &mut EntryFields<EntryBlockIo<'a>>) -> io::Result<()> {
         if !entry.header.entry_type().is_gnu_sparse() {
             return Ok(());
         }
@@ -313,7 +313,7 @@ impl<'a> Entries<'a> {
         // the same as the current offset (described by the list of blocks) as
         // well as the amount of data read equals the size of the entry
         // (`Header::entry_size`).
-        entry.data.truncate(0);
+        entry.data.blocks.truncate(0);
 
         let mut cur = 0;
         let mut remaining = entry.size;
@@ -340,7 +340,7 @@ impl<'a> Entries<'a> {
                     ));
                 } else if cur < off {
                     let block = io::repeat(0).take(off - cur);
-                    data.push(EntryIo::Pad(block));
+                    data.blocks.push(EntryIo::Pad(block));
                 }
                 cur = off
                     .checked_add(len)
@@ -351,7 +351,7 @@ impl<'a> Entries<'a> {
                          listed",
                     )
                 })?;
-                data.push(EntryIo::Data(reader.take(len)));
+                data.blocks.push(EntryIo::Data(ExactTake::new(reader.take(len))));
                 Ok(())
             };
             for block in gnu.sparse.iter() {
@@ -387,9 +387,9 @@ impl<'a> Entries<'a> {
 }
 
 impl<'a> Iterator for Entries<'a> {
-    type Item = io::Result<Entry<&'a ArchiveInner<Read + 'a>>>;
+    type Item = io::Result<Entry<EntryBlockIo<'a>>>;
 
-    fn next(&mut self) -> Option<io::Result<Entry<&'a ArchiveInner<Read + 'a>>>> {
+    fn next(&mut self) -> Option<io::Result<Entry<EntryBlockIo<'a>>>> {
         if self.done {
             None
         } else {

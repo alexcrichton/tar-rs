@@ -2,11 +2,12 @@ use std::borrow::Cow;
 use std::cmp;
 use std::fs;
 use std::io::prelude::*;
-use std::io::{self, Error, ErrorKind, SeekFrom};
+use std::io::{self, Error, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
+use archive::ArchiveInner;
 use error::TarError;
 use header::bytes2path;
 use other;
@@ -32,14 +33,22 @@ pub struct EntryFields<R> {
     pub size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
-    pub data: Vec<EntryIo<R>>,
+    pub data: R,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
 }
 
-pub enum EntryIo<R> {
+pub struct EntryBlockIo<'a> {
+    pub blocks: Vec<EntryIo<'a>>
+}
+
+pub enum EntryIo<'a> {
     Pad(io::Take<io::Repeat>),
-    Data(io::Take<R>),
+    Data(ExactTake<&'a ArchiveInner<Read + 'a>>),
+}
+
+pub struct ExactTake<R> {
+    inner: io::Take<R>
 }
 
 impl<R> Entry<R> {
@@ -225,6 +234,34 @@ impl<R: Read> Entry<R> {
     /// ```
     pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<bool> {
         self.fields.unpack_in(dst.as_ref())
+    }
+}
+
+impl<R> ExactTake<R> {
+    pub fn new(inner: io::Take<R>) -> ExactTake<R> {
+        ExactTake {
+            inner
+        }
+    }
+}
+
+impl<'a> EntryBlockIo<'a> {
+    pub fn new(blocks: Vec<EntryIo<'a>>) -> EntryBlockIo<'a> {
+        EntryBlockIo {
+            blocks
+        }
+    }
+}
+
+impl<R: Read> Read for ExactTake<R> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        let amount_read = self.inner.read(into)?;
+        if amount_read == 0 && self.inner.limit() != 0 {
+            Err(Error::new(ErrorKind::UnexpectedEof,
+                           "failed to fill whole buffer"))
+        } else {
+            Ok(amount_read)
+        }
     }
 }
 
@@ -461,21 +498,9 @@ impl<R: Read> EntryFields<R> {
                 Err(e) => return Err(e),
             }
             let mut f = fs::File::create(dst)?;
-            for io in self.data.drain(..) {
-                match io {
-                    EntryIo::Data(mut d) => {
-                        let expected = d.limit();
-                        if io::copy(&mut d, &mut f)? != expected {
-                            return Err(other("failed to write entire file"));
-                        }
-                    }
-                    EntryIo::Pad(d) => {
-                        // TODO: checked cast to i64
-                        let to = SeekFrom::Current(d.limit() as i64);
-                        let size = f.seek(to)?;
-                        f.set_len(size)?;
-                    }
-                }
+            let amount_read = io::copy(&mut self.data, &mut f)?;
+            if amount_read != self.size {
+                return Err(other("failed to write entire file"));
             }
             Ok(())
         })().map_err(|e| {
@@ -648,10 +673,16 @@ impl<R: Read> EntryFields<R> {
 
 impl<R: Read> Read for EntryFields<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        self.data.read(into)
+    }
+}
+
+impl<'a> Read for EntryBlockIo<'a> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         loop {
-            match self.data.get_mut(0).map(|io| io.read(into)) {
+            match self.blocks.get_mut(0).map(|io| io.read(into)) {
                 Some(Ok(0)) => {
-                    self.data.remove(0);
+                    self.blocks.remove(0);
                 }
                 Some(r) => return r,
                 None => return Ok(0),
@@ -660,7 +691,7 @@ impl<R: Read> Read for EntryFields<R> {
     }
 }
 
-impl<R: Read> Read for EntryIo<R> {
+impl<'a> Read for EntryIo<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         match *self {
             EntryIo::Pad(ref mut io) => io.read(into),
