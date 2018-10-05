@@ -596,7 +596,7 @@ impl<R: Read> EntryFields<R> {
         }
 
         #[cfg(all(unix, feature = "xattr"))]
-        fn set_xattrs<T>(me: &mut EntryFields<T>, dst: &Path) -> io::Result<()> {
+        fn set_xattrs<T: Read>(me: &mut EntryFields<T>, dst: &Path) -> io::Result<()> {
             use std::ffi::OsStr;
             use std::os::unix::prelude::*;
             use xattr;
