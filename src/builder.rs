@@ -258,7 +258,7 @@ impl<W: Write> Builder<W> {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use std::fs;
     /// use tar::Builder;
     ///

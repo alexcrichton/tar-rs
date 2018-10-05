@@ -236,7 +236,7 @@ impl<R: Read> Entry<R> {
         self.fields.unpack_in(dst.as_ref())
     }
 
-    /// Reads the file's data into memory, making an Entry independent of the Archive's reader.
+    /// Reads the file's data into memory, making an Entry independent of the Archive's reader and it's lifetime.
     ///
     /// This allows out of order proccessing of entries, unlike the entries returned from `Archive::entries`.
     /// Strict Entries also implement `Send` - allowing concurrent processing of tar Entries.
@@ -247,13 +247,14 @@ impl<R: Read> Entry<R> {
     /// use std::fs::File;
     /// use tar::Archive;
     ///
-    /// let mut ar = Archive::new(File::open("foo.tar")?);
-    /// let mut entries = ar.entries()?;
+    /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
+    /// let mut entries = ar.entries().unwrap();
     ///
-    /// let entry1 = entries.next()??.force()?;
-    /// let entry2 = entries.next()??.force()?;
-    /// entry2.unpack_in("target")?;
-    /// entry1.unpack_in("target")?;
+    /// let mut entry1 = entries.next().unwrap().unwrap().force().unwrap();
+    /// let mut entry2 = entries.next().unwrap().unwrap().force().unwrap();
+    /// entry2.unpack_in("target").unwrap();
+    /// entry1.unpack_in("target").unwrap();
+    ///
     /// ```
     pub fn force(mut self) -> io::Result<Entry<Cursor<Vec<u8>>>> {
         let entry_data: Vec<u8> = self.fields.read_all()?;
@@ -595,7 +596,7 @@ impl<R: Read> EntryFields<R> {
         }
 
         #[cfg(all(unix, feature = "xattr"))]
-        fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
+        fn set_xattrs<T>(me: &mut EntryFields<T>, dst: &Path) -> io::Result<()> {
             use std::ffi::OsStr;
             use std::os::unix::prelude::*;
             use xattr;

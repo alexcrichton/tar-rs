@@ -27,6 +27,10 @@ pub struct ArchiveInner<R: ?Sized> {
 
 /// An iterator over the entries of an archive.
 pub struct Entries<'a> {
+    fields: EntriesFields<'a>
+}
+
+struct EntriesFields<'a> {
     archive: &'a Archive<Read + 'a>,
     next: u64,
     done: bool,
@@ -59,12 +63,14 @@ impl<R: Read> Archive<R> {
     /// corrupted.
     pub fn entries(&mut self) -> io::Result<Entries> {
         let me: &mut Archive<Read> = self;
-        me._entries()
+        me._entries().map(|fields| Entries {
+            fields: fields
+        })
     }
 
     /// Construct a strict iterator over the entries in this archive.
     ///
-    /// Entries can be stored and processed out of order, in contrast to `Archive::entries`.
+    /// Entries can be stored, outlive the `Archive` and be processed out of order, in contrast to `Archive::entries`.
     /// Note that each strict entry stores the file's data in memory.
     pub fn strict_entries<'a>(&'a mut self) -> io::Result< impl Iterator<Item=io::Result<Entry<Cursor<Vec<u8>>>>> + 'a > {
         Ok(self.entries()?.map(|e| e?.force()))
@@ -116,14 +122,14 @@ impl<R: Read> Archive<R> {
 }
 
 impl<'a> Archive<Read + 'a> {
-    fn _entries(&mut self) -> io::Result<Entries> {
+    fn _entries(&mut self) -> io::Result<EntriesFields> {
         if self.inner.pos.get() != 0 {
             return Err(other(
                 "cannot call entries unless archive is at \
                  position 0",
             ));
         }
-        Ok(Entries {
+        Ok(EntriesFields {
             archive: self,
             done: false,
             next: 0,
@@ -161,13 +167,22 @@ impl<'a> Entries<'a> {
     /// or long link archive members. Raw iteration is disabled by default.
     pub fn raw(self, raw: bool) -> Entries<'a> {
         Entries {
-            raw: raw,
-            ..self
+            fields: EntriesFields {
+                raw: raw,
+                ..self.fields
+            }
         }
     }
 }
 
-impl<'a> Entries<'a> {
+impl<'a> Iterator for Entries<'a> {
+    type Item = io::Result<Entry<EntryBlockIo<'a>>>;
+    fn next(&mut self) -> Option<io::Result<Entry<EntryBlockIo<'a>>>> {
+        self.fields.next()
+    }
+}
+
+impl<'a> EntriesFields<'a> {
     fn next_entry_raw(&mut self) -> io::Result<Option<Entry<EntryBlockIo<'a>>>> {
         // Seek to the start of the next header in the archive
         let delta = self.next - self.archive.inner.pos.get();
@@ -396,7 +411,7 @@ impl<'a> Entries<'a> {
     }
 }
 
-impl<'a> Iterator for Entries<'a> {
+impl<'a> Iterator for EntriesFields<'a> {
     type Item = io::Result<Entry<EntryBlockIo<'a>>>;
 
     fn next(&mut self) -> Option<io::Result<Entry<EntryBlockIo<'a>>>> {
