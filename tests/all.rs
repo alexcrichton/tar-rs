@@ -175,6 +175,57 @@ fn reading_entries() {
     assert!(entries.next().is_none());
 }
 
+#[test]
+fn read_forced_entries() {
+    let (mut a, mut b) = {
+        let rdr = Cursor::new(tar!("reading_files.tar"));
+        let mut ar = Archive::new(rdr);
+        let mut entries = t!(ar.entries());
+        let a = t!(entries.next().unwrap().unwrap().force());
+        let b = t!(entries.next().unwrap().unwrap().force());
+        assert!(entries.next().is_none());
+        (a, b)
+    };
+
+    let mut s = String::new();
+
+    // Read `b` before `a`.
+    assert_eq!(&*b.header().path_bytes(), b"b");
+    t!(b.read_to_string(&mut s));
+    assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
+    assert_eq!(&*a.header().path_bytes(), b"a");
+
+    s.truncate(0);
+    t!(a.read_to_string(&mut s));
+    assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\na\n");
+    s.truncate(0);
+    t!(a.read_to_string(&mut s));
+    assert_eq!(s, "");
+}
+
+#[test]
+fn read_strict_entries_iterator() {
+    let entries_vec: Vec<_> = {
+        let rdr = Cursor::new(tar!("reading_files.tar"));
+        let mut ar = Archive::new(rdr);
+        let mut entries = t!(ar.strict_entries());
+        entries.collect()
+    };
+
+    // Read in reverse order.
+    let reversed_contents: Vec<String> = entries_vec.into_iter().rev().map(|entry_opt| {
+        let mut entry = t!(entry_opt);
+        let mut s = String::new();
+        t!(entry.read_to_string(&mut s));
+        s
+    }).collect();
+
+    let expected_content1 = String::from("b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
+    let expected_content2 = String::from("a\na\na\na\na\na\na\na\na\na\na\n");
+
+    assert_eq!(reversed_contents, vec![expected_content1, expected_content2]);
+}
+
 fn check_dirtree(td: &TempDir) {
     let dir_a = td.path().join("a");
     let dir_b = td.path().join("a/b");

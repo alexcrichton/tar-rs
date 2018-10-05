@@ -1,8 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::cmp;
 use std::io;
+use std::io::Cursor;
 use std::io::prelude::*;
 use std::path::Path;
+use std::iter::Iterator;
 
 use entry::{EntryFields, EntryIo, EntryBlockIo, ExactTake};
 use error::TarError;
@@ -58,6 +60,14 @@ impl<R: Read> Archive<R> {
     pub fn entries(&mut self) -> io::Result<Entries> {
         let me: &mut Archive<Read> = self;
         me._entries()
+    }
+
+    /// Construct a strict iterator over the entries in this archive.
+    ///
+    /// Entries can be stored and processed out of order, in contrast to `Archive::entries`.
+    /// Note that each strict entry stores the file's data in memory.
+    pub fn strict_entries<'a>(&'a mut self) -> io::Result< impl Iterator<Item=io::Result<Entry<Cursor<Vec<u8>>>>> + 'a > {
+        Ok(self.entries()?.map(|e| e?.force()))
     }
 
     /// Unpacks the contents tarball into the specified `dst`.
