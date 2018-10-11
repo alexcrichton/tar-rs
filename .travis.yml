@@ -1,5 +1,8 @@
 language: rust
-sudo: false
+
+os:
+  - linux
+  - windows
 
 matrix:
   include:
