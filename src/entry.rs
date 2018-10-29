@@ -38,6 +38,7 @@ pub struct EntryFields<'a> {
     pub data: Vec<EntryIo<'a>>,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
+    pub preserve_mtime: bool,
 }
 
 pub enum EntryIo<'a> {
@@ -226,6 +227,14 @@ impl<'a, R: Read> Entry<'a, R> {
     /// Unix.
     pub fn set_preserve_permissions(&mut self, preserve: bool) {
         self.fields.preserve_permissions = preserve;
+    }
+
+    /// Indicate whether access time information is preserved when unpacking
+    /// this entry.
+    ///
+    /// This flag is enabled by default.
+    pub fn set_preserve_mtime(&mut self, preserve: bool) {
+        self.fields.preserve_mtime = preserve;
     }
 }
 
@@ -528,11 +537,13 @@ impl<'a> EntryFields<'a> {
             )
         })?;
 
-        if let Ok(mtime) = self.header.mtime() {
-            let mtime = FileTime::from_unix_time(mtime as i64, 0);
-            filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
-                TarError::new(&format!("failed to set mtime for `{}`", dst.display()), e)
-            })?;
+        if self.preserve_mtime {
+            if let Ok(mtime) = self.header.mtime() {
+                let mtime = FileTime::from_unix_time(mtime as i64, 0);
+                filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
+                    TarError::new(&format!("failed to set mtime for `{}`", dst.display()), e)
+                })?;
+            }
         }
         if let Ok(mode) = self.header.mode() {
             set_perms(dst, mode, self.preserve_permissions).map_err(|e| {

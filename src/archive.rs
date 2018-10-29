@@ -21,6 +21,7 @@ pub struct ArchiveInner<R: ?Sized> {
     pos: Cell<u64>,
     unpack_xattrs: bool,
     preserve_permissions: bool,
+    preserve_mtime: bool,
     obj: RefCell<R>,
 }
 
@@ -44,6 +45,7 @@ impl<R: Read> Archive<R> {
             inner: ArchiveInner {
                 unpack_xattrs: false,
                 preserve_permissions: false,
+                preserve_mtime: true,
                 obj: RefCell::new(obj),
                 pos: Cell::new(0),
             },
@@ -111,6 +113,14 @@ impl<R: Read> Archive<R> {
     /// Unix.
     pub fn set_preserve_permissions(&mut self, preserve: bool) {
         self.inner.preserve_permissions = preserve;
+    }
+
+    /// Indicate whether access time information is preserved when unpacking
+    /// this entry.
+    ///
+    /// This flag is enabled by default.
+    pub fn set_preserve_mtime(&mut self, preserve: bool) {
+        self.inner.preserve_mtime = preserve;
     }
 }
 
@@ -230,6 +240,7 @@ impl<'a> EntriesFields<'a> {
             pax_extensions: None,
             unpack_xattrs: self.archive.inner.unpack_xattrs,
             preserve_permissions: self.archive.inner.preserve_permissions,
+            preserve_mtime: self.archive.inner.preserve_mtime,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
