@@ -204,7 +204,11 @@ impl<'a> EntriesFields<'a> {
         // the checksum), so if it's all zero it must be the first of the two
         // end blocks
         if header.as_bytes().iter().all(|i| *i == 0) {
-            read_all(&mut &self.archive.inner, header.as_mut_bytes())?;
+            // NB: last header appears to be optional.
+            if !read_all_or_nothing(&mut &self.archive.inner, header.as_mut_bytes())? {
+                return Ok(None);
+            }
+
             self.next += 512;
             return if header.as_bytes().iter().all(|i| *i == 0) {
                 Ok(None)
@@ -450,12 +454,30 @@ impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
 }
 
 fn read_all<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<()> {
+    if !read_all_or_nothing(r, buf)? {
+        return Err(other("failed to read entire block"));
+    }
+
+    Ok(())
+}
+
+/// Try to fill the buffer from the reader.
+///
+/// If the reader reaches its end before filling the buffer at all, returns `false`.
+/// Otherwise returns `true`.
+fn read_all_or_nothing<R: Read>(r: &mut R, buf: &mut [u8]) -> io::Result<bool> {
     let mut read = 0;
     while read < buf.len() {
         match r.read(&mut buf[read..])? {
-            0 => return Err(other("failed to read entire block")),
+            0 => {
+                if read == 0 {
+                    return Ok(false);
+                }
+
+                return Err(other("failed to read block"));
+            }
             n => read += n,
         }
     }
-    Ok(())
+    Ok(true)
 }

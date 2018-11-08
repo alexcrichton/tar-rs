@@ -59,6 +59,33 @@ fn header_impls() {
 }
 
 #[test]
+fn simple_missing_last_header() {
+    let mut ar = Archive::new(Cursor::new(tar!("simple_missing_last_header.tar")));
+    for entry in t!(ar.entries()) {
+        t!(entry);
+    }
+    let mut ar = Archive::new(Cursor::new(tar!("simple_missing_last_header.tar")));
+    for entry in t!(ar.entries()) {
+        t!(entry);
+    }
+}
+
+#[test]
+fn header_impls_missing_last_header() {
+    let mut ar = Archive::new(Cursor::new(tar!("simple_missing_last_header.tar")));
+    let hn = Header::new_old();
+    let hnb = hn.as_bytes();
+    for file in t!(ar.entries()) {
+        let file = t!(file);
+        let h1 = file.header();
+        let h1b = h1.as_bytes();
+        let h2 = h1.clone();
+        let h2b = h2.as_bytes();
+        assert!(h1b[..] == h2b[..] && h2b[..] != hnb[..])
+    }
+}
+
+#[test]
 fn reading_files() {
     let rdr = Cursor::new(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
