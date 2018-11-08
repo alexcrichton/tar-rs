@@ -383,6 +383,32 @@ fn extracting_duplicate_dirs() {
 }
 
 #[test]
+fn unpack_old_style_bsd_dir() {
+    let td = t!(TempDir::new("tar-rs"));
+
+    let mut ar = Builder::new(Vec::new());
+
+    let mut header = Header::new_old();
+    header.set_entry_type(EntryType::Regular);
+    t!(header.set_path("testdir/"));
+    header.set_size(0);
+    header.set_cksum();
+    t!(ar.append(&header, &mut io::empty()));
+
+    // Extracting
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    t!(ar.unpack(td.path()));
+
+    // Iterating
+    let rdr = Cursor::new(ar.into_inner().into_inner());
+    let mut ar = Archive::new(rdr);
+    assert!(t!(ar.entries()).all(|fr| fr.is_ok()));
+
+    assert!(td.path().join("testdir").is_dir());
+}
+
+#[test]
 fn handling_incorrect_file_size() {
     let td = t!(TempDir::new("tar-rs"));
 
