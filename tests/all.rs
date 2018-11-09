@@ -31,18 +31,6 @@ macro_rules! tar {
 
 mod header;
 
-#[test]
-fn simple() {
-    let mut ar = Archive::new(Cursor::new(tar!("simple.tar")));
-    for entry in t!(ar.entries()) {
-        t!(entry);
-    }
-    let mut ar = Archive::new(Cursor::new(tar!("simple.tar")));
-    for entry in t!(ar.entries()) {
-        t!(entry);
-    }
-}
-
 /// test that we can concatenate the simple.tar archive and extract the same entries twice when we
 /// use the ignore_zeros option.
 #[test]
@@ -99,18 +87,6 @@ fn header_impls() {
         let h2 = h1.clone();
         let h2b = h2.as_bytes();
         assert!(h1b[..] == h2b[..] && h2b[..] != hnb[..])
-    }
-}
-
-#[test]
-fn simple_missing_last_header() {
-    let mut ar = Archive::new(Cursor::new(tar!("simple_missing_last_header.tar")));
-    for entry in t!(ar.entries()) {
-        t!(entry);
-    }
-    let mut ar = Archive::new(Cursor::new(tar!("simple_missing_last_header.tar")));
-    for entry in t!(ar.entries()) {
-        t!(entry);
     }
 }
 
