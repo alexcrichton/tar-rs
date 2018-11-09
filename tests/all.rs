@@ -31,21 +31,68 @@ macro_rules! tar {
 
 mod header;
 
+/// test that we can concatenate the simple.tar archive and extract the same entries twice when we
+/// use the ignore_zeros option.
 #[test]
-fn simple() {
-    let mut ar = Archive::new(Cursor::new(tar!("simple.tar")));
-    for entry in t!(ar.entries()) {
-        t!(entry);
-    }
-    let mut ar = Archive::new(Cursor::new(tar!("simple.tar")));
-    for entry in t!(ar.entries()) {
-        t!(entry);
+fn simple_concat() {
+    let bytes = tar!("simple.tar");
+    let mut archive_bytes = Vec::new();
+    archive_bytes.extend(bytes);
+
+    let original_names: Vec<String> = decode_names(&mut Archive::new(Cursor::new(&archive_bytes)));
+    let expected: Vec<&str> = original_names.iter().map(|n| n.as_str()).collect();
+
+    // concat two archives (with null in-between);
+    archive_bytes.extend(bytes);
+
+    // test now that when we read the archive, it stops processing at the first zero header.
+    let actual = decode_names(&mut Archive::new(Cursor::new(&archive_bytes)));
+    assert_eq!(expected, actual);
+
+    // extend expected by itself.
+    let expected: Vec<&str> = {
+        let mut o = Vec::new();
+        o.extend(&expected);
+        o.extend(&expected);
+        o
+    };
+
+    let mut ar = Archive::new(Cursor::new(&archive_bytes));
+    ar.set_ignore_zeros(true);
+
+    let actual = decode_names(&mut ar);
+    assert_eq!(expected, actual);
+
+    fn decode_names<R>(ar: &mut Archive<R>) -> Vec<String> where R: Read {
+        let mut names = Vec::new();
+
+        for entry in t!(ar.entries()) {
+            let e = t!(entry);
+            names.push(t!(::std::str::from_utf8(&e.path_bytes())).to_string());
+        }
+
+        names
     }
 }
 
 #[test]
 fn header_impls() {
     let mut ar = Archive::new(Cursor::new(tar!("simple.tar")));
+    let hn = Header::new_old();
+    let hnb = hn.as_bytes();
+    for file in t!(ar.entries()) {
+        let file = t!(file);
+        let h1 = file.header();
+        let h1b = h1.as_bytes();
+        let h2 = h1.clone();
+        let h2b = h2.as_bytes();
+        assert!(h1b[..] == h2b[..] && h2b[..] != hnb[..])
+    }
+}
+
+#[test]
+fn header_impls_missing_last_header() {
+    let mut ar = Archive::new(Cursor::new(tar!("simple_missing_last_header.tar")));
     let hn = Header::new_old();
     let hnb = hn.as_bytes();
     for file in t!(ar.entries()) {
@@ -494,7 +541,7 @@ fn extracting_malformed_tar_null_blocks() {
 
     let data = t!(ar.into_inner());
     let mut ar = Archive::new(&data[..]);
-    assert!(ar.unpack(td.path()).is_err());
+    assert!(ar.unpack(td.path()).is_ok());
 }
 
 #[test]
@@ -502,7 +549,7 @@ fn empty_filename() {
     let td = t!(TempDir::new("tar-rs"));
     let rdr = Cursor::new(tar!("empty_filename.tar"));
     let mut ar = Archive::new(rdr);
-    assert!(ar.unpack(td.path()).is_err());
+    assert!(ar.unpack(td.path()).is_ok());
 }
 
 #[test]
