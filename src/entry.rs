@@ -394,21 +394,27 @@ impl<'a> EntryFields<'a> {
         Ok(true)
     }
 
+    /// Unpack as destination directory `dst`.
+    fn unpack_dir(&mut self, dst: &Path) -> io::Result<()> {
+        // If the directory already exists just let it slide
+        let prev = fs::metadata(dst);
+        if prev.map(|m| m.is_dir()).unwrap_or(false) {
+            return Ok(());
+        }
+        return fs::create_dir(dst).map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} when creating dir {}", err, dst.display()),
+            )
+        });
+    }
+
     /// Returns access to the header of this entry in the archive.
     fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<()> {
         let kind = self.header.entry_type();
+
         if kind.is_dir() {
-            // If the directory already exists just let it slide
-            let prev = fs::metadata(&dst);
-            if prev.map(|m| m.is_dir()).unwrap_or(false) {
-                return Ok(());
-            }
-            return fs::create_dir(&dst).map_err(|err| {
-                Error::new(
-                    err.kind(),
-                    format!("{} when creating dir {}", err, dst.display()),
-                )
-            });
+            return self.unpack_dir(dst);
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {
                 Some(name) => name,
@@ -488,6 +494,15 @@ impl<'a> EntryFields<'a> {
         {
             return Ok(());
         };
+
+        // Old BSD-tar compatibility.
+        // Names that have a trailing slash should be treated as a directory.
+        // Only applies to old headers.
+        if self.header.as_ustar().is_none()
+            && self.header.path_bytes().ends_with(b"/")
+        {
+            return self.unpack_dir(dst);
+        }
 
         // Note the lack of `else` clause above. According to the FreeBSD
         // documentation:
