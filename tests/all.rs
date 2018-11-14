@@ -934,3 +934,36 @@ fn append_path_symlink() {
 
     assert!(entries.next().is_none());
 }
+
+#[test]
+fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
+    let td = t!(TempDir::new("tar-rs"));
+
+    let mut ar = Builder::new(Vec::new());
+
+    let mut h = Header::new_gnu();
+    t!(h.set_path("././@LongLink"));
+    h.set_size(4);
+    h.set_entry_type(EntryType::new(b'L'));
+    h.set_cksum();
+    t!(ar.append(&h, "foo\0".as_bytes()));
+
+    let mut header = Header::new_gnu();
+    header.set_entry_type(EntryType::Regular);
+    t!(header.set_path("testdir/"));
+    header.set_size(0);
+    header.set_cksum();
+    t!(ar.append(&header, &mut io::empty()));
+
+    // Extracting
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    t!(ar.unpack(td.path()));
+
+    // Iterating
+    let rdr = Cursor::new(ar.into_inner().into_inner());
+    let mut ar = Archive::new(rdr);
+    assert!(t!(ar.entries()).all(|fr| fr.is_ok()));
+
+    assert!(td.path().join("foo").is_file());
+}

@@ -499,7 +499,7 @@ impl<'a> EntryFields<'a> {
         // Names that have a trailing slash should be treated as a directory.
         // Only applies to old headers.
         if self.header.as_ustar().is_none()
-            && self.header.path_bytes().ends_with(b"/")
+            && self.path_bytes().ends_with(b"/")
         {
             return self.unpack_dir(dst);
         }
