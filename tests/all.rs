@@ -151,6 +151,34 @@ fn writing_files() {
 }
 
 #[test]
+fn test_flush_inner() {
+    let td = t!(TempDir::new("tar-rs"));
+    let path = td.path().join("test");
+    t!(t!(File::create(&path)).write_all(b"test"));
+    let ar_path = td.path().join("test.tar");
+    {
+        let ar_file = t!(File::create(&ar_path));
+        let buf_writer = std::io::BufWriter::new(ar_file);
+        let mut ar = Builder::new(buf_writer);
+        t!(ar.append_file("test", &mut t!(File::open(&path))));
+        t!(ar.flush_inner());
+        std::mem::forget(ar);
+    }
+
+    let mut ar = Archive::new(t!(File::open(ar_path)));
+    let mut entries = t!(ar.entries());
+    let mut f = t!(entries.next().unwrap());
+
+    assert_eq!(t!(f.path()), Path::new("test"));
+    assert_eq!(f.header().size().unwrap(), 4);
+    let mut s = String::new();
+    t!(f.read_to_string(&mut s));
+    assert_eq!(s, "test");
+
+    assert!(entries.next().is_none());
+}
+
+#[test]
 fn large_filename() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempDir::new("tar-rs"));

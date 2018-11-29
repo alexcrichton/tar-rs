@@ -60,6 +60,16 @@ impl<W: Write> Builder<W> {
         Ok(self.obj.take().unwrap())
     }
 
+    /// Gets shared reference to the underlying object.
+    pub fn inner_ref(&self) -> &W {
+        self.obj.as_ref().unwrap()
+    }
+
+    /// Flushes the underlying object.
+    pub fn flush_inner(&mut self) -> io::Result<()> {
+        self.obj.as_mut().unwrap().flush()
+    }
+
     /// Adds a new entry to this archive.
     ///
     /// This function will append the header specified, followed by contents of
