@@ -31,10 +31,6 @@ impl<W: Write> Builder<W> {
         }
     }
 
-    fn inner(&mut self) -> &mut W {
-        self.obj.as_mut().unwrap()
-    }
-
     /// Changes the HeaderMode that will be used when reading fs Metadata for
     /// methods that implicitly read metadata for an input Path. Notably, this
     /// does _not_ apply to `append(Header)`.
@@ -46,6 +42,21 @@ impl<W: Write> Builder<W> {
     /// than adding a symlink to the archive. Defaults to true.
     pub fn follow_symlinks(&mut self, follow: bool) {
         self.follow = follow;
+    }
+
+    /// Gets shared reference to the underlying object.
+    pub fn get_ref(&self) -> &W {
+        self.obj.as_ref().unwrap()
+    }
+
+    /// Gets mutable reference to the underlying object.
+    ///
+    /// Note that care must be taken while writing to the underlying
+    /// object. But, e.g. `get_mut().flush()` is clamed to be safe and
+    /// useful in the situations when one needs to be ensured that
+    /// tar entry was flushed to the disk.
+    pub fn get_mut(&mut self) -> &mut W {
+        self.obj.as_mut().unwrap()
     }
 
     /// Unwrap this archive, returning the underlying object.
@@ -97,7 +108,7 @@ impl<W: Write> Builder<W> {
     /// let data = ar.into_inner().unwrap();
     /// ```
     pub fn append<R: Read>(&mut self, header: &Header, mut data: R) -> io::Result<()> {
-        append(self.inner(), header, &mut data)
+        append(self.get_mut(), header, &mut data)
     }
 
     /// Adds a new entry to this archive with the specified path.
@@ -146,7 +157,7 @@ impl<W: Write> Builder<W> {
         path: P,
         data: R,
     ) -> io::Result<()> {
-        prepare_header(self.inner(), header, path.as_ref())?;
+        prepare_header(self.get_mut(), header, path.as_ref())?;
         header.set_cksum();
         self.append(&header, data)
     }
@@ -178,7 +189,7 @@ impl<W: Write> Builder<W> {
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_path(self.inner(), path.as_ref(), mode, follow)
+        append_path(self.get_mut(), path.as_ref(), mode, follow)
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -209,7 +220,7 @@ impl<W: Write> Builder<W> {
     /// ```
     pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File) -> io::Result<()> {
         let mode = self.mode.clone();
-        append_file(self.inner(), path.as_ref(), file, mode)
+        append_file(self.get_mut(), path.as_ref(), file, mode)
     }
 
     /// Adds a directory to this archive with the given path as the name of the
@@ -243,7 +254,7 @@ impl<W: Write> Builder<W> {
         Q: AsRef<Path>,
     {
         let mode = self.mode.clone();
-        append_dir(self.inner(), path.as_ref(), src_path.as_ref(), mode)
+        append_dir(self.get_mut(), path.as_ref(), src_path.as_ref(), mode)
     }
 
     /// Adds a directory and all of its contents (recursively) to this archive
@@ -275,7 +286,7 @@ impl<W: Write> Builder<W> {
     {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_dir_all(self.inner(), path.as_ref(), src_path.as_ref(), mode, follow)
+        append_dir_all(self.get_mut(), path.as_ref(), src_path.as_ref(), mode, follow)
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -290,7 +301,7 @@ impl<W: Write> Builder<W> {
             return Ok(());
         }
         self.finished = true;
-        self.inner().write_all(&[0; 1024])
+        self.get_mut().write_all(&[0; 1024])
     }
 }
 
