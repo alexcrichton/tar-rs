@@ -29,6 +29,16 @@ macro_rules! tar {
     };
 }
 
+fn tar_file_path(name: &str) -> PathBuf {
+    let mut buf = PathBuf::new();
+    buf.push(file!());
+    buf.pop();
+    buf.push("archives/");
+    buf.push(name);
+
+    buf
+}
+
 mod header;
 
 /// test that we can concatenate the simple.tar archive and extract the same entries twice when we
@@ -358,6 +368,48 @@ fn append_dir_all_blank_dest() {
             .map(|m| m.is_file())
             .unwrap_or(false)
     );
+}
+
+#[test]
+fn append_existing_archive() {
+    let td = t!(TempDir::new("tar-rs"));
+
+    let input_path = tar_file_path("simple.tar");
+    assert_eq!(input_path.exists(), true);
+    let mut input = Archive::new(File::open(input_path).unwrap());
+
+    let output_path = td.path().join("existing-archive-output.tar");
+    let mut output = Builder::new(File::create(&output_path).unwrap());
+    output.append_archive(&mut input).unwrap();
+    output.finish().unwrap();
+
+    let mut buffer = vec![];
+    let mut output_file = File::open(&output_path).unwrap();
+    output_file.read_to_end(&mut buffer).unwrap();
+
+    assert_eq!(tar!("simple.tar"), &buffer[..]);
+}
+
+#[test]
+fn append_entry_from_existing_archive() {
+    let td = t!(TempDir::new("tar-rs"));
+
+    let input_path = tar_file_path("single.tar");
+    assert_eq!(input_path.exists(), true);
+
+    let mut input = Archive::new(File::open(input_path).unwrap());
+    let mut entry = input.entries().unwrap().next().unwrap().unwrap();
+
+    let output_path = td.path().join("existing-entry-output.tar");
+    let mut output = Builder::new(File::create(&output_path).unwrap());
+    output.append_entry(&mut entry).unwrap();
+    output.finish().unwrap();
+
+    let mut buffer = vec![];
+    let mut output_file = File::open(&output_path).unwrap();
+    output_file.read_to_end(&mut buffer).unwrap();
+
+    assert_eq!(tar!("single.tar"), &buffer[..]);
 }
 
 #[test]

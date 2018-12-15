@@ -5,7 +5,7 @@ use std::io::prelude::*;
 use std::path::Path;
 
 use header::{bytes2path, path2bytes, HeaderMode};
-use {other, EntryType, Header};
+use {other, Archive, Entry, EntryType, Header};
 
 /// A structure for building archives
 ///
@@ -109,6 +109,73 @@ impl<W: Write> Builder<W> {
     /// ```
     pub fn append<R: Read>(&mut self, header: &Header, mut data: R) -> io::Result<()> {
         append(self.get_mut(), header, &mut data)
+    }
+
+    /// Appends the contents of an existing archive to this archive.
+    ///
+    /// This function will iterate through the entries of the supplied archive,
+    /// appending them one by one to the target.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when either reading or writing.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tar::{Archive, Builder};
+    ///
+    /// let mut input = Archive::new(File::open("/path/to/existing.tar").unwrap());
+    ///
+    /// let mut output_file = File::create("/path/to/target.tar").unwrap();
+    /// let mut output = Builder::new(output_file);
+    ///
+    /// output.append_archive(&mut input).unwrap();
+    /// output.finish().unwrap();
+    /// ```
+    pub fn append_archive<R: Read>(&mut self, archive: &mut Archive<R>) -> io::Result<()> {
+        let entries = archive.entries()?;
+
+        for entry in entries {
+            let file_entry = entry?;
+            let header = file_entry.header().clone();
+            self.append(&header, file_entry)?;
+        }
+
+        Ok(())
+    }
+
+    /// Appends an entry from an existing archive to this archive.
+    ///
+    /// This function will append an existing `Entry` to the builder target.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when either reading or writing.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tar::{Archive, Builder, Entry};
+    ///
+    /// let mut input = Archive::new(File::open("/path/to/existing.tar").unwrap());
+    /// let mut entry = input.entries().unwrap().next().unwrap().unwrap();
+    ///
+    /// let mut output_file = File::create("/path/to/target.tar").unwrap();
+    /// let mut output = Builder::new(output_file);
+    ///
+    /// output.append_entry(&mut entry).unwrap();
+    /// output.finish().unwrap();
+    /// ```
+    pub fn append_entry<R: Read>(&mut self, entry: &mut Entry<R>) -> io::Result<()> {
+        let header = entry.header().clone();
+        self.append(&header, entry)?;
+
+        Ok(())
     }
 
     /// Adds a new entry to this archive with the specified path.
