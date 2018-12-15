@@ -1,2 +1,7 @@
 /target
 /Cargo.lock
+
+#Intellij Rust IDE
+.idea
+*.iml
+*.ipr
