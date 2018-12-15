@@ -4,6 +4,7 @@ extern crate tempfile;
 #[cfg(all(unix, feature = "xattr"))]
 extern crate xattr;
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{self, Cursor};
@@ -480,6 +481,83 @@ fn append_dir_all_blank_dest() {
     assert!(fs::metadata(&file2_path)
         .map(|m| m.is_file())
         .unwrap_or(false));
+}
+
+#[test]
+fn append_existing_archive() {
+    let td = t!(TempDir::new());
+
+    let mut inputs = HashMap::new();
+    inputs.insert("simple.tar", tar!("simple.tar"));
+    inputs.insert("gnu-longname.tar", tar!("gnu-longname.tar"));
+    inputs.insert("pax2.tar", tar!("pax2.tar"));
+    inputs.insert("pax3.tar", tar!("pax3.tar"));
+
+    inputs.iter().for_each(|(input_filename, data)| {
+        let mut input = Archive::new(Cursor::new(data));
+
+        let (output_path, output_file) =
+            create_test_file(&td, "test-append_existing_archive", input_filename);
+
+        let mut builder = Builder::new(&output_file);
+        builder.append_archive(&mut input).unwrap();
+        builder.finish().unwrap();
+
+        let mut expected_archive = Archive::new(Cursor::new(data));
+        let mut actual_archive = find_archive(&output_path);
+
+        let expected_entries = expected_archive
+            .entries()
+            .unwrap()
+            .map(|entry| entry.unwrap());
+        let actual_entries = actual_archive
+            .entries()
+            .unwrap()
+            .map(|entry| entry.unwrap());
+
+        let entries = expected_entries.zip(actual_entries);
+        entries.for_each(|(expected, actual)| {
+            assert_eq!(expected.path().unwrap(), actual.path().unwrap());
+            assert_eq!(
+                expected.header().as_bytes().to_vec(),
+                actual.header().as_bytes().to_vec()
+            );
+        });
+    });
+}
+
+#[test]
+fn append_entry_from_existing_archive() {
+    let td = t!(TempDir::new());
+
+    let mut inputs = HashMap::new();
+    inputs.insert("simple.tar", tar!("simple.tar"));
+    inputs.insert("gnu-longname.tar", tar!("gnu-longname.tar"));
+    inputs.insert("pax2.tar", tar!("pax2.tar"));
+    inputs.insert("pax3.tar", tar!("pax3.tar"));
+
+    inputs.iter().for_each(|(input_filename, data)| {
+        let mut input = Archive::new(Cursor::new(data));
+        let input_entry = input.entries().unwrap().next().unwrap().unwrap();
+
+        let (output_path, output_file) = create_test_file(
+            &td,
+            "test-append_entry_from_existing_archive",
+            input_filename,
+        );
+
+        let mut builder = Builder::new(&output_file);
+        builder.append_entry(input_entry).unwrap();
+        builder.finish().unwrap();
+
+        assert_eq!(&output_path.exists(), &true);
+
+        let mut expected_archive = Archive::new(Cursor::new(data));
+        let expected = find_first_entry_from_archive(&mut expected_archive);
+
+        let actual = find_first_entry_from_path(&output_path);
+        assert_eq!(expected, actual);
+    });
 }
 
 #[test]
@@ -1438,4 +1516,31 @@ fn ownership_preserving() {
         // without root permissions
         assert!(ar.unpack(td.path()).is_err());
     }
+}
+
+fn create_test_file(temp: &TempDir, path: &str, scenario: &str) -> (PathBuf, File) {
+    let mut result = path.to_owned();
+    result.push_str(scenario);
+    let result_path = temp.path().join(result);
+    let result_file = File::create(&result_path).unwrap();
+
+    (result_path, result_file)
+}
+
+fn find_archive(path: &Path) -> Archive<File> {
+    assert_eq!(path.exists(), true, "expecting path {:?}", path);
+    let file = File::open(path).unwrap();
+
+    Archive::new(file)
+}
+
+fn find_first_entry_from_archive<R: Read>(archive: &mut Archive<R>) -> PathBuf {
+    let mut entries = archive.entries().unwrap().map(|entry| entry.unwrap());
+    entries.next().unwrap().path().unwrap().into_owned()
+}
+
+fn find_first_entry_from_path(path: &Path) -> PathBuf {
+    let file = File::open(path).expect(path.to_str().unwrap());
+    let mut archive = Archive::new(&file);
+    find_first_entry_from_archive(&mut archive)
 }
