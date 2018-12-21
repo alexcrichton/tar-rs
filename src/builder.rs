@@ -136,7 +136,7 @@ impl<W: Write> Builder<W> {
     /// output.finish().unwrap();
     /// ```
     pub fn append_archive<R: Read>(&mut self, archive: &mut Archive<R>) -> io::Result<()> {
-        let entries = archive.entries()?;
+        let entries = archive.entries()?.raw(true);
 
         for entry in entries {
             let file_entry = entry?;
