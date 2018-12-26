@@ -4,6 +4,7 @@ extern crate tempdir;
 #[cfg(all(unix, feature = "xattr"))]
 extern crate xattr;
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{self, Cursor};
@@ -27,16 +28,6 @@ macro_rules! tar {
     ($e:expr) => {
         &include_bytes!(concat!("archives/", $e))[..]
     };
-}
-
-fn tar_file_path(name: &str) -> PathBuf {
-    let mut buf = PathBuf::new();
-    buf.push(file!());
-    buf.pop();
-    buf.push("archives/");
-    buf.push(name);
-
-    buf
 }
 
 mod header;
@@ -374,10 +365,14 @@ fn append_dir_all_blank_dest() {
 fn append_existing_archive() {
     let td = t!(TempDir::new("tar-rs"));
 
-    let inputs = ["simple.tar", "gnu-longname.tar", "pax2.tar", "pax3.tar"];
-    inputs.iter().for_each(|input_filename| {
-        let input_path = tar_file_path(input_filename);
-        let mut input = find_archive(&input_path);
+    let mut inputs = HashMap::new();
+    inputs.insert("simple.tar", tar!("simple.tar"));
+    inputs.insert("gnu-longname.tar", tar!("gnu-longname.tar"));
+    inputs.insert("pax2.tar", tar!("pax2.tar"));
+    inputs.insert("pax3.tar", tar!("pax3.tar"));
+
+    inputs.iter().for_each(|(input_filename, data)| {
+        let mut input = Archive::new(Cursor::new(data));
 
         let (output_path, output_file) = create_test_file(&td, "test-append_existing_archive", input_filename);
 
@@ -385,7 +380,7 @@ fn append_existing_archive() {
         builder.append_archive(&mut input).unwrap();
         builder.finish().unwrap();
 
-        let mut expected_archive = find_archive(&input_path);
+        let mut expected_archive = Archive::new(Cursor::new(data));
         let mut actual_archive = find_archive(&output_path);
 
         let expected_entries = expected_archive.entries().unwrap().map(|entry| { entry.unwrap() });
@@ -399,32 +394,18 @@ fn append_existing_archive() {
     });
 }
 
-fn create_test_file(temp: &TempDir, path: &str, scenario: &str) -> (PathBuf, File) {
-    let mut result = path.to_owned();
-    result.push_str(scenario);
-    let result_path = temp.path().join(result);
-    let result_file = File::create(&result_path).unwrap();
-
-    (result_path, result_file)
-}
-
-fn find_archive(path: &Path) -> Archive<File> {
-    assert_eq!(path.exists(), true, "expecting path {:?}", path);
-    let file = File::open(path).unwrap();
-
-    Archive::new(file)
-}
-
 #[test]
 fn append_entry_from_existing_archive() {
     let td = t!(TempDir::new("tar-rs"));
 
-    let inputs = ["simple.tar", "gnu-longname.tar", "pax2.tar", "pax3.tar"];
-    inputs.iter().for_each(|input_filename| {
-        let input_path = tar_file_path(input_filename);
-        assert_eq!(&input_path.exists(), &true);
+    let mut inputs = HashMap::new();
+    inputs.insert("simple.tar", tar!("simple.tar"));
+    inputs.insert("gnu-longname.tar", tar!("gnu-longname.tar"));
+    inputs.insert("pax2.tar", tar!("pax2.tar"));
+    inputs.insert("pax3.tar", tar!("pax3.tar"));
 
-        let mut input = find_archive(&input_path);
+    inputs.iter().for_each(|(input_filename, data)| {
+        let mut input = Archive::new(Cursor::new(data));
         let input_entry = input.entries().unwrap().next().unwrap().unwrap();
 
         let (output_path, output_file) = create_test_file(&td, "test-append_entry_from_existing_archive", input_filename);
@@ -435,17 +416,12 @@ fn append_entry_from_existing_archive() {
 
         assert_eq!(&output_path.exists(), &true);
 
-        let expected = find_path_of_first_entry(&input_path);
-        let actual = find_path_of_first_entry(&output_path);
+        let mut expected_archive = Archive::new(Cursor::new(data));
+        let expected = find_first_entry_from_archive(&mut expected_archive);
+
+        let actual = find_first_entry_from_path(&output_path);
         assert_eq!(expected, actual);
     });
-}
-
-fn find_path_of_first_entry(path: &Path) -> PathBuf {
-    let file = File::open(path).expect(path.to_str().unwrap());
-    let mut archive = Archive::new(&file);
-    let mut entries = archive.entries().unwrap().map(|entry| { entry.unwrap() });
-    entries.next().unwrap().path().unwrap().into_owned()
 }
 
 #[test]
@@ -1054,4 +1030,31 @@ fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
     assert!(t!(ar.entries()).all(|fr| fr.is_ok()));
 
     assert!(td.path().join("foo").is_file());
+}
+
+fn create_test_file(temp: &TempDir, path: &str, scenario: &str) -> (PathBuf, File) {
+    let mut result = path.to_owned();
+    result.push_str(scenario);
+    let result_path = temp.path().join(result);
+    let result_file = File::create(&result_path).unwrap();
+
+    (result_path, result_file)
+}
+
+fn find_archive(path: &Path) -> Archive<File> {
+    assert_eq!(path.exists(), true, "expecting path {:?}", path);
+    let file = File::open(path).unwrap();
+
+    Archive::new(file)
+}
+
+fn find_first_entry_from_archive<R: Read>(archive: &mut Archive<R>) -> PathBuf {
+    let mut entries = archive.entries().unwrap().map(|entry| { entry.unwrap() });
+    entries.next().unwrap().path().unwrap().into_owned()
+}
+
+fn find_first_entry_from_path(path: &Path) -> PathBuf {
+    let file = File::open(path).expect(path.to_str().unwrap());
+    let mut archive = Archive::new(&file);
+    find_first_entry_from_archive(&mut archive)
 }
