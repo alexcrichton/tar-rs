@@ -677,7 +677,17 @@ impl Header {
     /// this header.
     pub fn set_cksum(&mut self) {
         let cksum = self.calculate_cksum();
-        octal_into(&mut self.as_old_mut().cksum, cksum);
+
+        let dst = &mut self.as_old_mut().cksum;
+        let o = format!("{:o}", cksum);
+
+        dst[6] = 0;
+        dst[7] = 32;
+
+        let value = o.bytes().rev().chain(repeat(b'0'));
+        for (slot, value) in dst.iter_mut().rev().skip(2).zip(value) {
+            *slot = value;
+        }
     }
 
     fn calculate_cksum(&self) -> u32 {

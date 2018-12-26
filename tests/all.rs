@@ -374,42 +374,78 @@ fn append_dir_all_blank_dest() {
 fn append_existing_archive() {
     let td = t!(TempDir::new("tar-rs"));
 
-    let input_path = tar_file_path("simple.tar");
-    assert_eq!(input_path.exists(), true);
-    let mut input = Archive::new(File::open(input_path).unwrap());
+    let inputs = ["simple.tar", "gnu-longname.tar", "pax2.tar", "pax3.tar"];
+    inputs.iter().for_each(|input_filename| {
+        let input_path = tar_file_path(input_filename);
+        let mut input = find_archive(&input_path);
 
-    let output_path = td.path().join("existing-archive-output.tar");
-    let mut output = Builder::new(File::create(&output_path).unwrap());
-    output.append_archive(&mut input).unwrap();
-    output.finish().unwrap();
+        let (output_path, output_file) = create_test_file(&td, "test-append_existing_archive", input_filename);
 
-    let mut buffer = vec![];
-    let mut output_file = File::open(&output_path).unwrap();
-    output_file.read_to_end(&mut buffer).unwrap();
+        let mut builder = Builder::new(&output_file);
+        builder.append_archive(&mut input).unwrap();
+        builder.finish().unwrap();
 
-    assert_eq!(tar!("simple.tar"), &buffer[..]);
+        let mut expected_archive = find_archive(&input_path);
+        let mut actual_archive = find_archive(&output_path);
+
+        let expected_entries = expected_archive.entries().unwrap().map(|entry| { entry.unwrap() });
+        let actual_entries = actual_archive.entries().unwrap().map(|entry| { entry.unwrap() });
+
+        let entries = expected_entries.zip(actual_entries);
+        entries.for_each(|(expected, actual)| {
+            assert_eq!(expected.path().unwrap(), actual.path().unwrap());
+            assert_eq!(expected.header().as_bytes().to_vec(), actual.header().as_bytes().to_vec());
+        });
+    });
+}
+
+fn create_test_file(temp: &TempDir, path: &str, scenario: &str) -> (PathBuf, File) {
+    let mut result = path.to_owned();
+    result.push_str(scenario);
+    let result_path = temp.path().join(result);
+    let result_file = File::create(&result_path).unwrap();
+
+    (result_path, result_file)
+}
+
+fn find_archive(path: &Path) -> Archive<File> {
+    assert_eq!(path.exists(), true, "expecting path {:?}", path);
+    let file = File::open(path).unwrap();
+
+    Archive::new(file)
 }
 
 #[test]
 fn append_entry_from_existing_archive() {
     let td = t!(TempDir::new("tar-rs"));
 
-    let input_path = tar_file_path("single.tar");
-    assert_eq!(input_path.exists(), true);
+    let inputs = ["simple.tar", "gnu-longname.tar", "pax2.tar", "pax3.tar"];
+    inputs.iter().for_each(|input_filename| {
+        let input_path = tar_file_path(input_filename);
+        assert_eq!(&input_path.exists(), &true);
 
-    let mut input = Archive::new(File::open(input_path).unwrap());
-    let mut entry = input.entries().unwrap().next().unwrap().unwrap();
+        let mut input = find_archive(&input_path);
+        let input_entry = input.entries().unwrap().next().unwrap().unwrap();
 
-    let output_path = td.path().join("existing-entry-output.tar");
-    let mut output = Builder::new(File::create(&output_path).unwrap());
-    output.append_entry(&mut entry).unwrap();
-    output.finish().unwrap();
+        let (output_path, output_file) = create_test_file(&td, "test-append_entry_from_existing_archive", input_filename);
 
-    let mut buffer = vec![];
-    let mut output_file = File::open(&output_path).unwrap();
-    output_file.read_to_end(&mut buffer).unwrap();
+        let mut builder = Builder::new(&output_file);
+        builder.append_entry(input_entry).unwrap();
+        builder.finish().unwrap();
 
-    assert_eq!(tar!("single.tar"), &buffer[..]);
+        assert_eq!(&output_path.exists(), &true);
+
+        let expected = find_path_of_first_entry(&input_path);
+        let actual = find_path_of_first_entry(&output_path);
+        assert_eq!(expected, actual);
+    });
+}
+
+fn find_path_of_first_entry(path: &Path) -> PathBuf {
+    let file = File::open(path).expect(path.to_str().unwrap());
+    let mut archive = Archive::new(&file);
+    let mut entries = archive.entries().unwrap().map(|entry| { entry.unwrap() });
+    entries.next().unwrap().path().unwrap().into_owned()
 }
 
 #[test]

@@ -139,9 +139,7 @@ impl<W: Write> Builder<W> {
         let entries = archive.entries()?.raw(true);
 
         for entry in entries {
-            let file_entry = entry?;
-            let header = file_entry.header().clone();
-            self.append(&header, file_entry)?;
+            self.append_entry(entry?)?;
         }
 
         Ok(())
@@ -168,12 +166,13 @@ impl<W: Write> Builder<W> {
     /// let mut output_file = File::create("/path/to/target.tar").unwrap();
     /// let mut output = Builder::new(output_file);
     ///
-    /// output.append_entry(&mut entry).unwrap();
+    /// output.append_entry(entry).unwrap();
     /// output.finish().unwrap();
     /// ```
-    pub fn append_entry<R: Read>(&mut self, entry: &mut Entry<R>) -> io::Result<()> {
-        let header = entry.header().clone();
-        self.append(&header, entry)?;
+    pub fn append_entry<R: Read>(&mut self, entry: Entry<R>) -> io::Result<()> {
+        let mut header = entry.header().clone();
+        let path = entry.path()?.into_owned();
+        self.append_data(&mut header, path, entry)?;
 
         Ok(())
     }
