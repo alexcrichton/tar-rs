@@ -671,6 +671,13 @@ fn unpack_links() {
 }
 
 #[test]
+fn null_date() {
+    let mut ar = Archive::new(tar!("null-date.tar"));
+    let mut entries = t!(ar.entries());
+    assert_eq!(0, t!(entries.nth(3).unwrap()).header().mtime().unwrap());
+}
+
+#[test]
 fn pax_simple() {
     let mut ar = Archive::new(tar!("pax.tar"));
     let mut entries = t!(ar.entries());
