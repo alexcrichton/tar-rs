@@ -1371,6 +1371,9 @@ impl Default for GnuExtSparseHeader {
 
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
     let trun = truncate(slice);
+    if trun.is_empty() {
+        return Ok(0);
+    }
     let num = match str::from_utf8(trun) {
         Ok(n) => n,
         Err(_) => {
@@ -1382,7 +1385,7 @@ fn octal_from(slice: &[u8]) -> io::Result<u64> {
     };
     match u64::from_str_radix(num.trim(), 8) {
         Ok(n) => Ok(n),
-        Err(_) => Err(other(&format!("numeric field was not a number: {}", num))),
+        Err(_) => Err(other(&format!("numeric field was not a number: {:?}", num))),
     }
 }
 

@@ -671,6 +671,33 @@ fn unpack_links() {
 }
 
 #[test]
+fn make_null_date() {
+    let mut buf = Vec::new();
+    {
+        let mut ar = Builder::new(&mut buf);
+        let mut header = Header::new_ustar();
+        header.set_path("foo").unwrap();
+        header.set_size(5);
+        header.set_cksum();
+        ar.append(&header, Cursor::new(b"hello")).unwrap();
+        ar.finish().unwrap();
+    }
+
+    {
+        let mut ar = Archive::new(Cursor::new(buf));
+        let mut entries = t!(ar.entries());
+        assert_eq!(0, t!(entries.next().unwrap()).header().mtime().unwrap());
+    }
+}
+
+#[test]
+fn null_date() {
+    let mut ar = Archive::new(tar!("null_date.tar"));
+    let mut entries = t!(ar.entries());
+    assert_eq!(0, t!(entries.nth(3).unwrap()).header().mtime().unwrap());
+}
+
+#[test]
 fn pax_simple() {
     let mut ar = Archive::new(tar!("pax.tar"));
     let mut entries = t!(ar.entries());
