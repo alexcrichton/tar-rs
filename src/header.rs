@@ -485,12 +485,14 @@ impl Header {
 
     /// Returns the last modification time in Unix time format
     pub fn mtime(&self) -> io::Result<u64> {
-        num_field_wrapper_from(&self.as_old().mtime).map_err(|err| {
-            io::Error::new(
+        match num_field_wrapper_from(&self.as_old().mtime) {
+            Ok(time) => Ok(time),
+            Err(ref err) if io::ErrorKind::NotFound == err.kind() => Ok(0),
+            Err(err) => Err(io::Error::new(
                 err.kind(),
                 format!("{} when getting mtime for {}", err, self.path_lossy()),
-            )
-        })
+            )),
+        }
     }
 
     /// Encodes the `mtime` provided into this header.
@@ -1372,7 +1374,7 @@ impl Default for GnuExtSparseHeader {
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
     let trun = truncate(slice);
     if trun.is_empty() {
-        return Ok(0);
+        return Err(io::ErrorKind::NotFound.into());
     }
     let num = match str::from_utf8(trun) {
         Ok(n) => n,
