@@ -401,12 +401,12 @@ impl<'a> EntryFields<'a> {
         if prev.map(|m| m.is_dir()).unwrap_or(false) {
             return Ok(());
         }
-        return fs::create_dir(dst).map_err(|err| {
+        fs::create_dir(dst).map_err(|err| {
             Error::new(
                 err.kind(),
                 format!("{} when creating dir {}", err, dst.display()),
             )
-        });
+        })
     }
 
     /// Returns access to the header of this entry in the archive.
@@ -414,7 +414,9 @@ impl<'a> EntryFields<'a> {
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
-            return self.unpack_dir(dst);
+            return self.unpack_dir(dst)
+                .and_then(|_| self.header.mode())
+                .and_then(|mode| set_perms(dst, mode, self.preserve_permissions));
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {
                 Some(name) => name,
@@ -422,7 +424,7 @@ impl<'a> EntryFields<'a> {
                     return Err(other(&format!(
                         "hard link listed for {} but no link name found",
                         String::from_utf8_lossy(self.header.as_bytes())
-                    )))
+                    )));
                 }
             };
 
@@ -498,9 +500,7 @@ impl<'a> EntryFields<'a> {
         // Old BSD-tar compatibility.
         // Names that have a trailing slash should be treated as a directory.
         // Only applies to old headers.
-        if self.header.as_ustar().is_none()
-            && self.path_bytes().ends_with(b"/")
-        {
+        if self.header.as_ustar().is_none() && self.path_bytes().ends_with(b"/") {
             return self.unpack_dir(dst);
         }
 
@@ -540,7 +540,8 @@ impl<'a> EntryFields<'a> {
                 }
             }
             Ok(())
-        })().map_err(|e| {
+        })()
+        .map_err(|e| {
             let header = self.header.path_bytes();
             TarError::new(
                 &format!(
