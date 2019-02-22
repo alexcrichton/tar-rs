@@ -155,6 +155,32 @@ fn relative_link_deref_error() {
 }
 
 #[test]
+#[cfg(unix)]
+fn directory_maintains_permissions() {
+    use ::std::os::unix::fs::PermissionsExt;
+
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Directory);
+    t!(header.set_path("foo"));
+    header.set_mode(0o777);
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+
+    let td = t!(TempDir::new("tar"));
+    t!(ar.unpack(td.path()));
+    let f = t!(File::open(td.path().join("foo")));
+    let md = t!(f.metadata());
+    assert!(md.is_dir());
+    assert_eq!(md.permissions().mode(), 0o40777);
+}
+
+#[test]
 fn modify_link_just_created() {
     let mut ar = tar::Builder::new(Vec::new());
 
