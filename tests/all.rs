@@ -916,9 +916,18 @@ fn append_path_symlink() {
     ar.follow_symlinks(false);
     let td = t!(TempDir::new("tar-rs"));
 
+    let long_linkname = repeat("abcd").take(30).collect::<String>();
+    let long_pathname = repeat("dcba").take(30).collect::<String>();
     t!(env::set_current_dir(td.path()));
+    // "short" path name / short link name
     t!(symlink("testdest", "test"));
     t!(ar.append_path("test"));
+    // short path name / long link name
+    t!(symlink(&long_linkname, "test2"));
+    t!(ar.append_path("test2"));
+    // long path name / long link name
+    t!(symlink(&long_linkname, &long_pathname));
+    t!(ar.append_path(&long_pathname));
 
     let rd = Cursor::new(t!(ar.into_inner()));
     let mut ar = Archive::new(rd);
@@ -929,6 +938,22 @@ fn append_path_symlink() {
     assert_eq!(
         t!(entry.link_name()),
         Some(Cow::from(Path::new("testdest")))
+    );
+    assert_eq!(t!(entry.header().size()), 0);
+
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(t!(entry.path()), Path::new("test2"));
+    assert_eq!(
+        t!(entry.link_name()),
+        Some(Cow::from(Path::new(&long_linkname)))
+    );
+    assert_eq!(t!(entry.header().size()), 0);
+
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(t!(entry.path()), Path::new(&long_pathname));
+    assert_eq!(
+        t!(entry.link_name()),
+        Some(Cow::from(Path::new(&long_linkname)))
     );
     assert_eq!(t!(entry.header().size()), 0);
 

@@ -157,7 +157,7 @@ impl<W: Write> Builder<W> {
         path: P,
         data: R,
     ) -> io::Result<()> {
-        prepare_header(self.get_mut(), header, path.as_ref())?;
+        prepare_header_path(self.get_mut(), header, path.as_ref())?;
         header.set_cksum();
         self.append(&header, data)
     }
@@ -362,26 +362,37 @@ fn append_dir(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode) -
     append_fs(dst, path, &stat, &mut io::empty(), mode, None)
 }
 
-fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Result<()> {
+fn prepare_header(size: u64, entry_type: u8) -> Header {
+    let mut header = Header::new_gnu();
+    let name = b"././@LongLink";
+    header.as_gnu_mut().unwrap().name[..name.len()].clone_from_slice(&name[..]);
+    header.set_mode(0o644);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    // + 1 to be compliant with GNU tar
+    header.set_size(size + 1);
+    header.set_entry_type(EntryType::new(entry_type));
+    header.set_cksum();
+    header
+}
+
+fn prepare_header_path(dst: &mut Write, header: &mut Header, path: &Path) -> io::Result<()> {
     // Try to encode the path directly in the header, but if it ends up not
-    // working (e.g. it's too long) then use the GNU-specific long name
-    // extension by emitting an entry which indicates that it's the filename
+    // working (probably because it's too long) then try to use the GNU-specific
+    // long name extension by emitting an entry which indicates that it's the
+    // filename.
     if let Err(e) = header.set_path(path) {
         let data = path2bytes(&path)?;
         let max = header.as_old().name.len();
+        //  Since e isn't specific enough to let us know the path is indeed too
+        //  long, verify it first before using the extension.
         if data.len() < max {
             return Err(e);
         }
-        let mut header2 = Header::new_gnu();
-        header2.as_gnu_mut().unwrap().name[..13].clone_from_slice(b"././@LongLink");
-        header2.set_mode(0o644);
-        header2.set_uid(0);
-        header2.set_gid(0);
-        header2.set_mtime(0);
-        header2.set_size((data.len() + 1) as u64);
-        header2.set_entry_type(EntryType::new(b'L'));
-        header2.set_cksum();
-        let mut data2 = data.chain(io::repeat(0).take(0));
+        let mut header2 = prepare_header(data.len() as u64, b'L');
+        // null-terminated string
+        let mut data2 = data.chain(io::repeat(0).take(1));
         append(dst, &header2, &mut data2)?;
         // Truncate the path to store in the header we're about to emit to
         // ensure we've got something at least mentioned.
@@ -390,6 +401,21 @@ fn prepare_header(dst: &mut Write, header: &mut Header, path: &Path) -> io::Resu
     }
     Ok(())
 }
+
+fn prepare_header_link(dst: &mut Write, header: &mut Header, link_name: &Path) -> io::Result<()> {
+    // Same as previous function but for linkname
+    if let Err(e) = header.set_link_name(&link_name) {
+        let data = path2bytes(&link_name)?;
+        if data.len() < header.as_old().linkname.len() {
+            return Err(e);
+        }
+        let mut header2 = prepare_header(data.len() as u64, b'K');
+        let mut data2 = data.chain(io::repeat(0).take(1));
+        append(dst, &header2, &mut data2)?;
+    }
+    Ok(())
+}
+
 
 fn append_fs(
     dst: &mut Write,
@@ -401,10 +427,10 @@ fn append_fs(
 ) -> io::Result<()> {
     let mut header = Header::new_gnu();
 
-    prepare_header(dst, &mut header, path)?;
+    prepare_header_path(dst, &mut header, path)?;
     header.set_metadata_in_mode(meta, mode);
     if let Some(link_name) = link_name {
-        header.set_link_name(link_name)?;
+        prepare_header_link(dst, &mut header, link_name)?;
     }
     header.set_cksum();
     append(dst, &header, read)
