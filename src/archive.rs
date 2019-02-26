@@ -12,7 +12,7 @@ use {Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
 
 /// A top-level representation of an archive file.
 ///
-/// This archive can have an entry added to it and it can be iterated over.
+/// The entries of this archive can be iterated over.
 pub struct Archive<R: ?Sized + Read> {
     inner: ArchiveInner<R>,
 }
