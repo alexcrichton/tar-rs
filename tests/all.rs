@@ -992,3 +992,24 @@ fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
 
     assert!(td.path().join("foo").is_file());
 }
+
+#[test]
+fn insert_local_file_different_name() {
+    let mut ar = Builder::new(Vec::new());
+    let td = t!(TempDir::new("tar-rs"));
+    let path = td.path().join("directory");
+    t!(fs::create_dir(&path));
+    ar.append_path_with_name(&path, "archive/dir").unwrap();
+    let path = td.path().join("file");
+    t!(t!(File::create(&path)).write_all(b"test"));
+    ar.append_path_with_name(&path, "archive/dir/f").unwrap();
+
+    let rd = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rd);
+    let mut entries = t!(ar.entries());
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(t!(entry.path()), Path::new("archive/dir"));
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(t!(entry.path()), Path::new("archive/dir/f"));
+    assert!(entries.next().is_none());
+}
