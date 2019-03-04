@@ -189,7 +189,43 @@ impl<W: Write> Builder<W> {
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_path(self.get_mut(), path.as_ref(), mode, follow)
+        append_path_with_name(self.get_mut(), path.as_ref(), None, mode, follow)
+    }
+
+    /// Adds a file on the local filesystem to this archive under another name.
+    ///
+    /// This function will open the file specified by `path` and insert the file
+    /// into the archive as `name` with appropriate metadata set, returning any
+    /// I/O error which occurs while writing. The path name for the file inside
+    /// of this archive will be `name` and `path` is required to be a relative
+    /// path.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all files have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tar::Builder;
+    ///
+    /// let mut ar = Builder::new(Vec::new());
+    ///
+    /// // Insert the local file "foo/bar.txt" in the archive but with the name
+    /// // "bar/foo.txt".
+    /// ar.append_path_with_name("foo/bar.txt", "bar/foo.txt").unwrap();
+    /// ```
+    pub fn append_path_with_name<P: AsRef<Path>, N: AsRef<Path>>(
+        &mut self,
+        path: P,
+        name: N,
+    ) -> io::Result<()> {
+        let mode = self.mode.clone();
+        let follow = self.follow;
+        append_path_with_name(self.get_mut(), path.as_ref(), Some(name.as_ref()), mode, follow)
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -319,7 +355,13 @@ fn append(mut dst: &mut Write, header: &Header, mut data: &mut Read) -> io::Resu
     Ok(())
 }
 
-fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> io::Result<()> {
+fn append_path_with_name(
+    dst: &mut Write,
+    path: &Path,
+    name: Option<&Path>,
+    mode: HeaderMode,
+    follow: bool
+) -> io::Result<()> {
     let stat = if follow {
         fs::metadata(path).map_err(|err| {
             io::Error::new(
@@ -335,13 +377,14 @@ fn append_path(dst: &mut Write, path: &Path, mode: HeaderMode, follow: bool) -> 
             )
         })?
     };
+    let ar_name = name.unwrap_or(path);
     if stat.is_file() {
-        append_fs(dst, path, &stat, &mut fs::File::open(path)?, mode, None)
+        append_fs(dst, ar_name, &stat, &mut fs::File::open(path)?, mode, None)
     } else if stat.is_dir() {
-        append_fs(dst, path, &stat, &mut io::empty(), mode, None)
+        append_fs(dst, ar_name, &stat, &mut io::empty(), mode, None)
     } else if stat.file_type().is_symlink() {
         let link_name = fs::read_link(path)?;
-        append_fs(dst, path, &stat, &mut io::empty(), mode, Some(&link_name))
+        append_fs(dst, ar_name, &stat, &mut io::empty(), mode, Some(&link_name))
     } else {
         Err(other(&format!("{} has unknown file type", path.display())))
     }
