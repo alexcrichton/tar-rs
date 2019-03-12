@@ -1026,6 +1026,8 @@ fn tar_directory_containing_symlink_to_directory() {
     let mut ar = Builder::new(tar_file);
     t!(symlink(dummy_src.path().display().to_string(), &dummy_dst));
 
+    assert!(dummy_dst.read_link().is_ok());
+    assert!(dummy_dst.read_link().unwrap().is_dir());
     ar.append_dir_all("symlinks", td2.path()).unwrap();
-    assert!(ar.finish().is_ok());
+    ar.finish().unwrap();
 }
