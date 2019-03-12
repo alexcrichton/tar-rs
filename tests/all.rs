@@ -1013,3 +1013,19 @@ fn insert_local_file_different_name() {
     assert_eq!(t!(entry.path()), Path::new("archive/dir/f"));
     assert!(entries.next().is_none());
 }
+
+#[test]
+fn tar_directory_containing_symlink_to_directory() {
+    use std::os::unix::fs::symlink;
+
+    let td = t!(TempDir::new("tar-rs"));
+    let td2 = t!(TempDir::new("symlinks"));
+    let dummy_src = t!(TempDir::new("dummy_src"));
+    let dummy_dst = td2.path().join("dummy_dst");
+    let tar_file = File::create(td.path().join("symlink.tar")).unwrap();
+    let mut ar = Builder::new(tar_file);
+    t!(symlink(dummy_src.path().display().to_string(), &dummy_dst));
+
+    ar.append_dir_all("symlinks", td2.path()).unwrap();
+    assert!(ar.finish().is_ok());
+}
