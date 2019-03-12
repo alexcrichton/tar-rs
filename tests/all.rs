@@ -1015,6 +1015,7 @@ fn insert_local_file_different_name() {
 }
 
 #[test]
+#[cfg(unix)]
 fn tar_directory_containing_symlink_to_directory() {
     use std::os::unix::fs::symlink;
 
