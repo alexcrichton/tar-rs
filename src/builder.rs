@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::fs;
 use std::io;
 use std::io::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use header::{bytes2path, path2bytes, HeaderMode};
 use {other, EntryType, Header};
@@ -489,39 +489,23 @@ fn append_dir_all(
     let mut stack = vec![(src_path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());
-        if is_dir {
-            browse_dir(&src, &dest, dst, mode, &mut stack)?;
+        if is_dir || is_symlink && follow && src.is_dir() {
+            for entry in fs::read_dir(&src)? {
+                let entry = entry?;
+                let file_type = entry.file_type()?;
+                stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
+            }
+            if dest != Path::new("") {
+                append_dir(dst, &dest, &src, mode)?;
+            }
         } else if !follow && is_symlink {
             let stat = fs::symlink_metadata(&src)?;
             let link_name = fs::read_link(&src)?;
             append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name))?;
         } else {
-            if src.is_file() {
-                append_file(dst, &dest, &mut fs::File::open(src)?, mode)?;
-            } else {
-                browse_dir(&src, &dest, dst, mode, &mut stack)?;
-            }
+            append_file(dst, &dest, &mut fs::File::open(src)?, mode)?;
         }
     }
-    Ok(())
-}
-
-fn browse_dir(
-    src: &Path,
-    dest: &Path,
-    dst: &mut Write,
-    mode: HeaderMode,
-    stack: &mut Vec<(PathBuf, bool, bool)>,
-) -> io::Result<()> {
-    for entry in fs::read_dir(&src)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
-    }
-    if dest != Path::new("") {
-        append_dir(dst, &dest, &src, mode)?;
-    }
-
     Ok(())
 }
 
