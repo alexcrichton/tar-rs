@@ -1020,15 +1020,13 @@ fn tar_directory_containing_symlink_to_directory() {
     use std::os::unix::fs::symlink;
 
     let td = t!(TempDir::new("tar-rs"));
-    let td2 = t!(TempDir::new("symlinks"));
     let dummy_src = t!(TempDir::new("dummy_src"));
-    let dummy_dst = td2.path().join("dummy_dst");
-    let tar_file = File::create(td.path().join("symlink.tar")).unwrap();
-    let mut ar = Builder::new(tar_file);
+    let dummy_dst = td.path().join("dummy_dst");
+    let mut ar = Builder::new(Vec::new());
     t!(symlink(dummy_src.path().display().to_string(), &dummy_dst));
 
     assert!(dummy_dst.read_link().is_ok());
     assert!(dummy_dst.read_link().unwrap().is_dir());
-    ar.append_dir_all("symlinks", td2.path()).unwrap();
+    ar.append_dir_all("symlinks", td.path()).unwrap();
     ar.finish().unwrap();
 }
