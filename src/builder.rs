@@ -489,7 +489,8 @@ fn append_dir_all(
     let mut stack = vec![(src_path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());
-        if is_dir {
+        // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
+        if is_dir || (is_symlink && follow && src.is_dir()) {
             for entry in fs::read_dir(&src)? {
                 let entry = entry?;
                 let file_type = entry.file_type()?;
