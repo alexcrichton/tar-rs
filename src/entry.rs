@@ -8,12 +8,12 @@ use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
-use archive::ArchiveInner;
-use error::TarError;
-use header::bytes2path;
-use other;
-use pax::pax_extensions;
-use {Archive, Header, PaxExtensions};
+use crate::archive::ArchiveInner;
+use crate::error::TarError;
+use crate::header::bytes2path;
+use crate::other;
+use crate::pax::pax_extensions;
+use crate::{Archive, Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
 ///
@@ -590,7 +590,7 @@ impl<'a> EntryFields<'a> {
         }
         #[cfg(windows)]
         fn set_perms(dst: &Path, mode: u32, _preserve: bool) -> io::Result<()> {
-            let mut perm = try!(fs::metadata(dst)).permissions();
+            let mut perm = r#try!(fs::metadata(dst)).permissions();
             perm.set_readonly(mode & 0o200 != 0o200);
             fs::set_permissions(dst, perm)
         }

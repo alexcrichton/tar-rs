@@ -2,7 +2,7 @@ use std::io;
 use std::slice;
 use std::str;
 
-use other;
+use crate::other;
 
 /// An iterator over the pax extensions in an archive entry.
 ///

@@ -4,8 +4,8 @@ use std::io;
 use std::io::prelude::*;
 use std::path::Path;
 
-use header::{bytes2path, path2bytes, HeaderMode};
-use {other, EntryType, Header};
+use crate::header::{bytes2path, path2bytes, HeaderMode};
+use crate::{other, EntryType, Header};
 
 /// A structure for building archives
 ///
@@ -433,7 +433,7 @@ fn prepare_header_path(dst: &mut Write, header: &mut Header, path: &Path) -> io:
         if data.len() < max {
             return Err(e);
         }
-        let mut header2 = prepare_header(data.len() as u64, b'L');
+        let header2 = prepare_header(data.len() as u64, b'L');
         // null-terminated string
         let mut data2 = data.chain(io::repeat(0).take(1));
         append(dst, &header2, &mut data2)?;
@@ -452,7 +452,7 @@ fn prepare_header_link(dst: &mut Write, header: &mut Header, link_name: &Path) -
         if data.len() < header.as_old().linkname.len() {
             return Err(e);
         }
-        let mut header2 = prepare_header(data.len() as u64, b'K');
+        let header2 = prepare_header(data.len() as u64, b'K');
         let mut data2 = data.chain(io::repeat(0).take(1));
         append(dst, &header2, &mut data2)?;
     }

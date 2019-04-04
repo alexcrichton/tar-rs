@@ -8,6 +8,7 @@ documentation = "https://docs.rs/tar"
 license = "MIT/Apache-2.0"
 keywords = ["tar", "tarfile", "encoding"]
 readme = "README.md"
+edition = "2018"
 
 description = """
 A Rust implementation of a TAR file reader and writer. This library does not

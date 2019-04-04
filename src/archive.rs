@@ -5,10 +5,10 @@ use std::io::prelude::*;
 use std::marker;
 use std::path::Path;
 
-use entry::{EntryFields, EntryIo};
-use error::TarError;
-use other;
-use {Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
+use crate::entry::{EntryFields, EntryIo};
+use crate::error::TarError;
+use crate::other;
+use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
 
 /// A top-level representation of an archive file.
 ///

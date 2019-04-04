@@ -31,13 +31,13 @@ extern crate xattr;
 
 use std::io::{Error, ErrorKind};
 
-pub use archive::{Archive, Entries};
-pub use builder::Builder;
-pub use entry::Entry;
-pub use entry_type::EntryType;
-pub use header::GnuExtSparseHeader;
-pub use header::{GnuHeader, GnuSparseHeader, Header, HeaderMode, OldHeader, UstarHeader};
-pub use pax::{PaxExtension, PaxExtensions};
+pub use crate::archive::{Archive, Entries};
+pub use crate::builder::Builder;
+pub use crate::entry::Entry;
+pub use crate::entry_type::EntryType;
+pub use crate::header::GnuExtSparseHeader;
+pub use crate::header::{GnuHeader, GnuSparseHeader, Header, HeaderMode, OldHeader, UstarHeader};
+pub use crate::pax::{PaxExtension, PaxExtensions};
 
 mod archive;
 mod builder;
