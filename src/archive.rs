@@ -233,7 +233,8 @@ impl<'a> EntriesFields<'a> {
         let sum = header.as_bytes()[..148]
             .iter()
             .chain(&header.as_bytes()[156..])
-            .fold(0, |a, b| a + (*b as u32)) + 8 * 32;
+            .fold(0, |a, b| a + (*b as u32))
+            + 8 * 32;
         let cksum = header.cksum()?;
         if sum != cksum {
             return Err(other("archive header checksum mismatch"));
@@ -281,7 +282,7 @@ impl<'a> EntriesFields<'a> {
                     return Err(other(
                         "members found describing a future member \
                          but no future member found",
-                    ))
+                    ));
                 }
                 None => return Ok(None),
             };

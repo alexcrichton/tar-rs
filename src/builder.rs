@@ -225,7 +225,13 @@ impl<W: Write> Builder<W> {
     ) -> io::Result<()> {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_path_with_name(self.get_mut(), path.as_ref(), Some(name.as_ref()), mode, follow)
+        append_path_with_name(
+            self.get_mut(),
+            path.as_ref(),
+            Some(name.as_ref()),
+            mode,
+            follow,
+        )
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -322,7 +328,13 @@ impl<W: Write> Builder<W> {
     {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_dir_all(self.get_mut(), path.as_ref(), src_path.as_ref(), mode, follow)
+        append_dir_all(
+            self.get_mut(),
+            path.as_ref(),
+            src_path.as_ref(),
+            mode,
+            follow,
+        )
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -360,7 +372,7 @@ fn append_path_with_name(
     path: &Path,
     name: Option<&Path>,
     mode: HeaderMode,
-    follow: bool
+    follow: bool,
 ) -> io::Result<()> {
     let stat = if follow {
         fs::metadata(path).map_err(|err| {
@@ -384,7 +396,14 @@ fn append_path_with_name(
         append_fs(dst, ar_name, &stat, &mut io::empty(), mode, None)
     } else if stat.file_type().is_symlink() {
         let link_name = fs::read_link(path)?;
-        append_fs(dst, ar_name, &stat, &mut io::empty(), mode, Some(&link_name))
+        append_fs(
+            dst,
+            ar_name,
+            &stat,
+            &mut io::empty(),
+            mode,
+            Some(&link_name),
+        )
     } else {
         Err(other(&format!("{} has unknown file type", path.display())))
     }
@@ -458,7 +477,6 @@ fn prepare_header_link(dst: &mut Write, header: &mut Header, link_name: &Path) -
     }
     Ok(())
 }
-
 
 fn append_fs(
     dst: &mut Write,

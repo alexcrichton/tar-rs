@@ -977,7 +977,7 @@ impl UstarHeader {
                         return Err(other(&format!(
                             "path cannot be split to be inserted into archive: {}",
                             path.display()
-                        )))
+                        )));
                     }
                 }
                 prefixlen = path2bytes(prefix)?.len();
@@ -1376,7 +1376,7 @@ fn octal_from(slice: &[u8]) -> io::Result<u64> {
             return Err(other(&format!(
                 "numeric field did not have utf-8 text: {}",
                 String::from_utf8_lossy(trun)
-            )))
+            )));
         }
     };
     match u64::from_str_radix(num.trim(), 8) {
@@ -1420,7 +1420,8 @@ fn num_field_wrapper_from(src: &[u8]) -> io::Result<u64> {
 fn numeric_extended_into(dst: &mut [u8], src: u64) {
     let len: usize = dst.len();
     for (slot, val) in dst.iter_mut().zip(
-        repeat(0).take(len - 8) // to zero init extra bytes
+        repeat(0)
+            .take(len - 8) // to zero init extra bytes
             .chain((0..8).rev().map(|x| ((src >> (8 * x)) & 0xff) as u8)),
     ) {
         *slot = val;
@@ -1482,10 +1483,10 @@ fn copy_path_into(mut slot: &mut [u8], path: &Path, is_link_name: bool) -> io::R
         let bytes = path2bytes(Path::new(component.as_os_str()))?;
         match (component, is_link_name) {
             (Component::Prefix(..), false) | (Component::RootDir, false) => {
-                return Err(other("paths in archives must be relative"))
+                return Err(other("paths in archives must be relative"));
             }
             (Component::ParentDir, false) => {
-                return Err(other("paths in archives must not have `..`"))
+                return Err(other("paths in archives must not have `..`"));
             }
             // Allow "./" as the path
             (Component::CurDir, false) if path.components().count() == 1 => {}
@@ -1571,7 +1572,8 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
             Ok(Cow::Borrowed(Path::new(s)))
         }
         Cow::Owned(bytes) => {
-            let s = r#try!(String::from_utf8(bytes).map_err(|uerr| not_unicode(&uerr.into_bytes())));
+            let s =
+                r#try!(String::from_utf8(bytes).map_err(|uerr| not_unicode(&uerr.into_bytes())));
             Ok(Cow::Owned(PathBuf::from(s)))
         }
     };

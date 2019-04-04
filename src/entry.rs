@@ -414,7 +414,8 @@ impl<'a> EntryFields<'a> {
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
-            return self.unpack_dir(dst)
+            return self
+                .unpack_dir(dst)
                 .and_then(|_| self.header.mode())
                 .and_then(|mode| set_perms(dst, mode, self.preserve_permissions));
         } else if kind.is_hard_link() || kind.is_symlink() {

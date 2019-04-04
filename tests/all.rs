@@ -63,7 +63,10 @@ fn simple_concat() {
     let actual = decode_names(&mut ar);
     assert_eq!(expected, actual);
 
-    fn decode_names<R>(ar: &mut Archive<R>) -> Vec<String> where R: Read {
+    fn decode_names<R>(ar: &mut Archive<R>) -> Vec<String>
+    where
+        R: Read,
+    {
         let mut names = Vec::new();
 
         for entry in t!(ar.entries()) {
@@ -310,19 +313,15 @@ fn writing_directories_recursively() {
     let base_dir = td.path().join("foobar");
     assert!(fs::metadata(&base_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file1_path = base_dir.join("file1");
-    assert!(
-        fs::metadata(&file1_path)
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
+    assert!(fs::metadata(&file1_path)
+        .map(|m| m.is_file())
+        .unwrap_or(false));
     let sub_dir = base_dir.join("sub");
     assert!(fs::metadata(&sub_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file2_path = sub_dir.join("file2");
-    assert!(
-        fs::metadata(&file2_path)
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
+    assert!(fs::metadata(&file2_path)
+        .map(|m| m.is_file())
+        .unwrap_or(false));
 }
 
 #[test]
@@ -345,19 +344,15 @@ fn append_dir_all_blank_dest() {
     let base_dir = td.path();
     assert!(fs::metadata(&base_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file1_path = base_dir.join("file1");
-    assert!(
-        fs::metadata(&file1_path)
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
+    assert!(fs::metadata(&file1_path)
+        .map(|m| m.is_file())
+        .unwrap_or(false));
     let sub_dir = base_dir.join("sub");
     assert!(fs::metadata(&sub_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file2_path = sub_dir.join("file2");
-    assert!(
-        fs::metadata(&file2_path)
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
+    assert!(fs::metadata(&file2_path)
+        .map(|m| m.is_file())
+        .unwrap_or(false));
 }
 
 #[test]
@@ -496,41 +491,27 @@ fn extracting_malicious_tarball() {
     // The `tmp` subdirectory should be created and within this
     // subdirectory, there should be files named `abs_evil.txt` through
     // `abs_evil6.txt`.
-    assert!(
-        fs::metadata(td.path().join("tmp"))
-            .map(|m| m.is_dir())
-            .unwrap_or(false)
-    );
-    assert!(
-        fs::metadata(td.path().join("tmp/abs_evil.txt"))
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
-    assert!(
-        fs::metadata(td.path().join("tmp/abs_evil2.txt"))
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
-    assert!(
-        fs::metadata(td.path().join("tmp/abs_evil3.txt"))
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
-    assert!(
-        fs::metadata(td.path().join("tmp/abs_evil4.txt"))
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
-    assert!(
-        fs::metadata(td.path().join("tmp/abs_evil5.txt"))
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
-    assert!(
-        fs::metadata(td.path().join("tmp/abs_evil6.txt"))
-            .map(|m| m.is_file())
-            .unwrap_or(false)
-    );
+    assert!(fs::metadata(td.path().join("tmp"))
+        .map(|m| m.is_dir())
+        .unwrap_or(false));
+    assert!(fs::metadata(td.path().join("tmp/abs_evil.txt"))
+        .map(|m| m.is_file())
+        .unwrap_or(false));
+    assert!(fs::metadata(td.path().join("tmp/abs_evil2.txt"))
+        .map(|m| m.is_file())
+        .unwrap_or(false));
+    assert!(fs::metadata(td.path().join("tmp/abs_evil3.txt"))
+        .map(|m| m.is_file())
+        .unwrap_or(false));
+    assert!(fs::metadata(td.path().join("tmp/abs_evil4.txt"))
+        .map(|m| m.is_file())
+        .unwrap_or(false));
+    assert!(fs::metadata(td.path().join("tmp/abs_evil5.txt"))
+        .map(|m| m.is_file())
+        .unwrap_or(false));
+    assert!(fs::metadata(td.path().join("tmp/abs_evil6.txt"))
+        .map(|m| m.is_file())
+        .unwrap_or(false));
 }
 
 #[test]
