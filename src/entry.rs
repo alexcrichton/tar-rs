@@ -599,7 +599,6 @@ impl<'a> EntryFields<'a> {
         fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
             use std::ffi::OsStr;
             use std::os::unix::prelude::*;
-            use xattr;
 
             let exts = match me.pax_extensions() {
                 Ok(Some(e)) => e,

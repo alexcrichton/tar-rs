@@ -750,7 +750,6 @@ impl Header {
 
         #[cfg(not(target_os = "redox"))]
         fn entry_type(mode: u32) -> EntryType {
-            use libc;
             match mode as libc::mode_t & libc::S_IFMT {
                 libc::S_IFREG => EntryType::file(),
                 libc::S_IFLNK => EntryType::symlink(),
