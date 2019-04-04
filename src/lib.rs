@@ -21,14 +21,6 @@
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
-extern crate filetime;
-#[cfg(unix)]
-extern crate libc;
-#[cfg(target_os = "redox")]
-extern crate syscall;
-#[cfg(all(unix, feature = "xattr"))]
-extern crate xattr;
-
 use std::io::{Error, ErrorKind};
 
 pub use crate::archive::{Archive, Entries};
