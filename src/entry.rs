@@ -481,6 +481,12 @@ impl<'a> EntryFields<'a> {
                 })
             };
 
+            #[cfg(target_arch = "wasm32")]
+            #[allow(unused_variables)]
+            fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
+                unimplemented!();
+            }
+
             #[cfg(windows)]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::windows::fs::symlink_file(src, dst)
@@ -596,6 +602,12 @@ impl<'a> EntryFields<'a> {
             fs::set_permissions(dst, perm)
         }
 
+        #[cfg(target_arch = "wasm32")]
+        #[allow(unused_variables)]
+        fn set_perms(dst: &Path, mode: u32, _preserve: bool) -> io::Result<()> {
+            unimplemented!()
+        }
+
         #[cfg(all(unix, feature = "xattr"))]
         fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
             use std::ffi::OsStr;
@@ -638,7 +650,12 @@ impl<'a> EntryFields<'a> {
         }
         // Windows does not completely support posix xattrs
         // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
-        #[cfg(any(windows, target_os = "redox", not(feature = "xattr")))]
+        #[cfg(any(
+            windows,
+            target_os = "redox",
+            not(feature = "xattr"),
+            target_arch = "wasm32"
+        ))]
         fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
             Ok(())
         }
