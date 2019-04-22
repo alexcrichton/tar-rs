@@ -484,7 +484,7 @@ impl<'a> EntryFields<'a> {
             #[cfg(target_arch = "wasm32")]
             #[allow(unused_variables)]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
-                unimplemented!();
+                Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
             }
 
             #[cfg(windows)]
@@ -605,7 +605,7 @@ impl<'a> EntryFields<'a> {
         #[cfg(target_arch = "wasm32")]
         #[allow(unused_variables)]
         fn set_perms(dst: &Path, mode: u32, _preserve: bool) -> io::Result<()> {
-            unimplemented!()
+            Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
         }
 
         #[cfg(all(unix, feature = "xattr"))]
