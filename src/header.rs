@@ -711,6 +711,12 @@ impl Header {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    #[allow(unused_variables)]
+    fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
+        unimplemented!();
+    }
+
     #[cfg(any(unix, target_os = "redox"))]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         match mode {
@@ -1523,6 +1529,11 @@ fn copy_path_into(mut slot: &mut [u8], path: &Path, is_link_name: bool) -> io::R
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn ends_with_slash(p: &Path) -> bool {
+    p.to_string_lossy().ends_with('/')
+}
+
 #[cfg(windows)]
 fn ends_with_slash(p: &Path) -> bool {
     let last = p.as_os_str().encode_wide().last();
@@ -1534,7 +1545,7 @@ fn ends_with_slash(p: &Path) -> bool {
     p.as_os_str().as_bytes().ends_with(&[b'/'])
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_arch = "wasm32"))]
 pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     p.as_os_str()
         .to_str()
@@ -1595,4 +1606,21 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
         Cow::Borrowed(bytes) => Cow::Borrowed({ Path::new(OsStr::from_bytes(bytes)) }),
         Cow::Owned(bytes) => Cow::Owned({ PathBuf::from(OsString::from_vec(bytes)) }),
     })
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
+    Ok(match bytes {
+        Cow::Borrowed(bytes) => {
+            Cow::Borrowed({ Path::new(str::from_utf8(bytes).map_err(invalid_utf8)?) })
+        }
+        Cow::Owned(bytes) => {
+            Cow::Owned({ PathBuf::from(String::from_utf8(bytes).map_err(invalid_utf8)?) })
+        }
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn invalid_utf8<T>(_: T) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "Invalid utf8")
 }
