@@ -1,6 +1,6 @@
 [package]
 name = "tar"
-version = "0.4.24"
+version = "0.4.25"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 homepage = "https://github.com/alexcrichton/tar-rs"
 repository = "https://github.com/alexcrichton/tar-rs"
@@ -9,6 +9,7 @@ license = "MIT/Apache-2.0"
 keywords = ["tar", "tarfile", "encoding"]
 readme = "README.md"
 edition = "2018"
+exclude = ["tests/archives/*"]
 
 description = """
 A Rust implementation of a TAR file reader and writer. This library does not
