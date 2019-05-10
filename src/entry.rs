@@ -397,15 +397,17 @@ impl<'a> EntryFields<'a> {
     /// Unpack as destination directory `dst`.
     fn unpack_dir(&mut self, dst: &Path) -> io::Result<()> {
         // If the directory already exists just let it slide
-        let prev = fs::metadata(dst);
-        if prev.map(|m| m.is_dir()).unwrap_or(false) {
-            return Ok(());
-        }
-        fs::create_dir(dst).map_err(|err| {
-            Error::new(
+        fs::create_dir(dst).or_else(|err| {
+            if err.kind() == ErrorKind::AlreadyExists {
+                let prev = fs::metadata(dst);
+                if prev.map(|m| m.is_dir()).unwrap_or(false) {
+                    return Ok(());
+                }
+            }
+            Err(Error::new(
                 err.kind(),
                 format!("{} when creating dir {}", err, dst.display()),
-            )
+            ))
         })
     }
 
