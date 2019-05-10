@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::cmp;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
@@ -397,15 +398,17 @@ impl<'a> EntryFields<'a> {
     /// Unpack as destination directory `dst`.
     fn unpack_dir(&mut self, dst: &Path) -> io::Result<()> {
         // If the directory already exists just let it slide
-        let prev = fs::metadata(dst);
-        if prev.map(|m| m.is_dir()).unwrap_or(false) {
-            return Ok(());
-        }
-        fs::create_dir(dst).map_err(|err| {
-            Error::new(
+        fs::create_dir(dst).or_else(|err| {
+            if err.kind() == ErrorKind::AlreadyExists {
+                let prev = fs::metadata(dst);
+                if prev.map(|m| m.is_dir()).unwrap_or(false) {
+                    return Ok(());
+                }
+            }
+            Err(Error::new(
                 err.kind(),
                 format!("{} when creating dir {}", err, dst.display()),
-            )
+            ))
         })
     }
 
@@ -520,16 +523,23 @@ impl<'a> EntryFields<'a> {
         // As a result if we don't recognize the kind we just write out the file
         // as we would normally.
 
-        // Remove an existing file, if any, to avoid writing through
-        // symlinks/hardlinks to weird locations. The tar archive says this is a
-        // regular file, so let's make it a regular file.
+        // Ensure we write a new file rather than overwriting in-place which
+        // is attackable; if an existing file is found unlink it.
+        fn open(dst: &Path) -> io::Result<std::fs::File> {
+            OpenOptions::new().write(true).create_new(true).open(dst)
+        };
         (|| -> io::Result<()> {
-            match fs::remove_file(dst) {
-                Ok(()) => {}
-                Err(ref e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e),
-            }
-            let mut f = fs::File::create(dst)?;
+            let mut f = open(dst).or_else(|err| {
+                if err.kind() != ErrorKind::AlreadyExists {
+                    Err(err)
+                } else {
+                    match fs::remove_file(dst) {
+                        Ok(()) => open(dst),
+                        Err(ref e) if e.kind() == io::ErrorKind::NotFound => open(dst),
+                        Err(e) => Err(e),
+                    }
+                }
+            })?;
             for io in self.data.drain(..) {
                 match io {
                     EntryIo::Data(mut d) => {
