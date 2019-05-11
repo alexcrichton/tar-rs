@@ -420,7 +420,7 @@ impl<'a> EntryFields<'a> {
             return self
                 .unpack_dir(dst)
                 .and_then(|_| self.header.mode())
-                .and_then(|mode| set_perms(dst, mode, self.preserve_permissions));
+                .and_then(|mode| set_perms(dst, None, mode, self.preserve_permissions));
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {
                 Some(name) => name,
@@ -528,7 +528,7 @@ impl<'a> EntryFields<'a> {
         fn open(dst: &Path) -> io::Result<std::fs::File> {
             OpenOptions::new().write(true).create_new(true).open(dst)
         };
-        (|| -> io::Result<()> {
+        let mut f = (|| -> io::Result<std::fs::File> {
             let mut f = open(dst).or_else(|err| {
                 if err.kind() != ErrorKind::AlreadyExists {
                     Err(err)
@@ -556,7 +556,7 @@ impl<'a> EntryFields<'a> {
                     }
                 }
             }
-            Ok(())
+            Ok(f)
         })()
         .map_err(|e| {
             let header = self.header.path_bytes();
@@ -579,7 +579,7 @@ impl<'a> EntryFields<'a> {
             }
         }
         if let Ok(mode) = self.header.mode() {
-            set_perms(dst, mode, self.preserve_permissions).map_err(|e| {
+            set_perms(dst, Some(&mut f), mode, self.preserve_permissions).map_err(|e| {
                 TarError::new(
                     &format!(
                         "failed to set permissions to {:o} \
@@ -597,24 +597,51 @@ impl<'a> EntryFields<'a> {
         return Ok(());
 
         #[cfg(any(unix, target_os = "redox"))]
-        fn set_perms(dst: &Path, mode: u32, preserve: bool) -> io::Result<()> {
+        fn set_perms(
+            dst: &Path,
+            f: Option<&mut std::fs::File>,
+            mode: u32,
+            preserve: bool,
+        ) -> io::Result<()> {
             use std::os::unix::prelude::*;
 
             let mode = if preserve { mode } else { mode & 0o777 };
-
             let perm = fs::Permissions::from_mode(mode as _);
-            fs::set_permissions(dst, perm)
+            match f {
+                Some(f) => f.set_permissions(perm),
+                None => fs::set_permissions(dst, perm),
+            }
         }
+
         #[cfg(windows)]
-        fn set_perms(dst: &Path, mode: u32, _preserve: bool) -> io::Result<()> {
-            let mut perm = r#try!(fs::metadata(dst)).permissions();
-            perm.set_readonly(mode & 0o200 != 0o200);
-            fs::set_permissions(dst, perm)
+        fn set_perms(
+            dst: &Path,
+            f: Option<&mut std::fs::File>,
+            mode: u32,
+            _preserve: bool,
+        ) -> io::Result<()> {
+            match f {
+                Some(f) => {
+                    let mut perm = f.metadata()?.permissions();
+                    perm.set_readonly(mode & 0o200 != 0o200);
+                    f.set_permissions(perm)
+                }
+                None => {
+                    let mut perm = fs::metadata(dst)?.permissions();
+                    perm.set_readonly(mode & 0o200 != 0o200);
+                    fs::set_permissions(dst, perm)
+                }
+            }
         }
 
         #[cfg(target_arch = "wasm32")]
         #[allow(unused_variables)]
-        fn set_perms(dst: &Path, mode: u32, _preserve: bool) -> io::Result<()> {
+        fn set_perms(
+            dst: &Path,
+            f: Option<&mut std::fs::File>,
+            mode: u32,
+            _preserve: bool,
+        ) -> io::Result<()> {
             Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
         }
 
