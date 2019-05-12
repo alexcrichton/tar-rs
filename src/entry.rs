@@ -525,17 +525,32 @@ impl<'a> EntryFields<'a> {
 
         // Ensure we write a new file rather than overwriting in-place which
         // is attackable; if an existing file is found unlink it.
-        fn open(dst: &Path) -> io::Result<std::fs::File> {
-            OpenOptions::new().write(true).create_new(true).open(dst)
+        let mode = self.header.mode().ok();
+        #[allow(unused_variables)]
+        fn open(dst: &Path, mode: Option<u32>) -> io::Result<std::fs::File> {
+            let mut options = OpenOptions::new();
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                use winapi::um::winnt;
+
+                // On windows create the file with the desired attributes rather
+                // than setting them in a separate syscall.
+                if !user_can_write(mode) {
+                    // File is requested to be readonly
+                    options.custom_flags(winnt::FILE_ATTRIBUTE_READONLY);
+                }
+            }
+            options.write(true).create_new(true).open(dst)
         };
         let mut f = (|| -> io::Result<std::fs::File> {
-            let mut f = open(dst).or_else(|err| {
+            let mut f = open(dst, mode).or_else(|err| {
                 if err.kind() != ErrorKind::AlreadyExists {
                     Err(err)
                 } else {
                     match fs::remove_file(dst) {
-                        Ok(()) => open(dst),
-                        Err(ref e) if e.kind() == io::ErrorKind::NotFound => open(dst),
+                        Ok(()) => open(dst, mode),
+                        Err(ref e) if e.kind() == io::ErrorKind::NotFound => open(dst, mode),
                         Err(e) => Err(e),
                     }
                 }
@@ -578,7 +593,7 @@ impl<'a> EntryFields<'a> {
                 })?;
             }
         }
-        if let Ok(mode) = self.header.mode() {
+        if let Some(mode) = mode {
             set_perms(dst, Some(&mut f), mode, self.preserve_permissions).map_err(|e| {
                 TarError::new(
                     &format!(
@@ -621,17 +636,22 @@ impl<'a> EntryFields<'a> {
             _preserve: bool,
         ) -> io::Result<()> {
             match f {
-                Some(f) => {
-                    let mut perm = f.metadata()?.permissions();
-                    perm.set_readonly(mode & 0o200 != 0o200);
-                    f.set_permissions(perm)
+                Some(_f) => {
+                    // Set at file creation
+                    Ok(())
                 }
                 None => {
                     let mut perm = fs::metadata(dst)?.permissions();
-                    perm.set_readonly(mode & 0o200 != 0o200);
+                    perm.set_readonly(!user_can_write(Some(mode)));
                     fs::set_permissions(dst, perm)
                 }
             }
+        }
+        #[cfg(windows)]
+        fn user_can_write(mode: Option<u32>) -> bool {
+            mode.as_ref()
+                .map(|mode| mode & 0o200 == 0o200)
+                .unwrap_or(false)
         }
 
         #[cfg(target_arch = "wasm32")]

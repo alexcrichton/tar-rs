@@ -9,6 +9,7 @@ use std::io::prelude::*;
 use std::io::{self, Cursor};
 use std::iter::repeat;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use self::tempdir::TempDir;
 use filetime::FileTime;
@@ -842,6 +843,48 @@ fn extract_sparse() {
     assert!(s[0x1000 + 6..0x2fa0].chars().all(|x| x == '\u{0}'));
     assert_eq!(&s[0x2fa0..0x2fa0 + 6], "world\n");
     assert!(s[0x2fa0 + 6..0x4000].chars().all(|x| x == '\u{0}'));
+}
+
+#[test]
+fn extracting_readonly_file_with_mtime() -> io::Result<()> {
+    let td = t!(TempDir::new("tar-rs"));
+
+    let mut tar = Vec::new();
+
+    {
+        let mut a = Builder::new(&mut tar);
+        let path = "file.txt";
+
+        let mut header = Header::new_gnu();
+        header.set_path(path)?;
+        {
+            let h = header.as_gnu_mut().unwrap();
+            for (a, b) in h.name.iter_mut().zip(path.as_bytes()) {
+                *a = *b;
+            }
+        }
+        header.set_size(1);
+        header.set_mtime(2);
+        header.set_mode(0o400);
+        header.set_cksum();
+        t!(a.append(&header, io::repeat(1).take(1)));
+    }
+
+    let mut ar = Archive::new(&tar[..]);
+    ar.unpack(td.path())?;
+
+    let path = td.path().join("file.txt");
+    let m = fs::metadata(&path)?;
+    assert_eq!(
+        Duration::from_secs(2),
+        m.modified()?
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+    );
+    assert!(m.permissions().readonly());
+    assert_eq!(1, fs::read(&path)?[0]);
+
+    Ok(())
 }
 
 #[test]

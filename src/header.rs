@@ -781,6 +781,7 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
+        use winapi::um::winnt::FILE_ATTRIBUTE_READONLY;
         // There's no concept of a file mode on windows, so do a best approximation here.
         match mode {
             HeaderMode::Complete => {
@@ -793,7 +794,6 @@ impl Header {
                 let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
                 self.set_mtime(mtime);
                 let fs_mode = {
-                    const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
                     let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
                     match (meta.is_dir(), readonly != 0) {
                         (true, false) => 0o755,
