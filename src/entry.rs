@@ -47,6 +47,18 @@ pub enum EntryIo<'a> {
     Data(io::Take<&'a ArchiveInner<Read + 'a>>),
 }
 
+/// When unpacking items the unpacked thing is returned to allow custom
+/// additional handling by users. Today the File is returned, in future
+/// the enum may be extended with kinds for links, directories etc.
+#[derive(Debug)]
+pub enum Unpacked {
+    /// A file was unpacked.
+    File(std::fs::File),
+    /// A directory, hardlink, symlink, or other node was unpacked.
+    #[doc(hidden)]
+    __Nonexhaustive,
+}
+
 impl<'a, R: Read> Entry<'a, R> {
     /// Returns the path name for this entry.
     ///
@@ -178,7 +190,7 @@ impl<'a, R: Read> Entry<'a, R> {
     ///     file.unpack(format!("file-{}", i)).unwrap();
     /// }
     /// ```
-    pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
+    pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<Unpacked> {
         self.fields.unpack(None, dst.as_ref())
     }
 
@@ -413,14 +425,15 @@ impl<'a> EntryFields<'a> {
     }
 
     /// Returns access to the header of this entry in the archive.
-    fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<()> {
+    fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<Unpacked> {
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
-            return self
-                .unpack_dir(dst)
-                .and_then(|_| self.header.mode())
-                .and_then(|mode| set_perms(dst, None, mode, self.preserve_permissions));
+            self.unpack_dir(dst)?;
+            if let Ok(mode) = self.header.mode() {
+                set_perms(dst, None, mode, self.preserve_permissions)?;
+            }
+            return Ok(Unpacked::__Nonexhaustive);
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {
                 Some(name) => name,
@@ -439,7 +452,7 @@ impl<'a> EntryFields<'a> {
                 )));
             }
 
-            return if kind.is_hard_link() {
+            if kind.is_hard_link() {
                 let link_src = match target_base {
                     // If we're unpacking within a directory then ensure that
                     // the destination of this hard link is both present and
@@ -469,7 +482,7 @@ impl<'a> EntryFields<'a> {
                             dst.display()
                         ),
                     )
-                })
+                })?;
             } else {
                 symlink(&src, dst).map_err(|err| {
                     Error::new(
@@ -481,8 +494,9 @@ impl<'a> EntryFields<'a> {
                             dst.display()
                         ),
                     )
-                })
+                })?;
             };
+            return Ok(Unpacked::__Nonexhaustive);
 
             #[cfg(target_arch = "wasm32")]
             #[allow(unused_variables)]
@@ -504,14 +518,18 @@ impl<'a> EntryFields<'a> {
             || kind.is_gnu_longname()
             || kind.is_gnu_longlink()
         {
-            return Ok(());
+            return Ok(Unpacked::__Nonexhaustive);
         };
 
         // Old BSD-tar compatibility.
         // Names that have a trailing slash should be treated as a directory.
         // Only applies to old headers.
         if self.header.as_ustar().is_none() && self.path_bytes().ends_with(b"/") {
-            return self.unpack_dir(dst);
+            self.unpack_dir(dst)?;
+            if let Ok(mode) = self.header.mode() {
+                set_perms(dst, None, mode, self.preserve_permissions)?;
+            }
+            return Ok(Unpacked::__Nonexhaustive);
         }
 
         // Note the lack of `else` clause above. According to the FreeBSD
@@ -579,7 +597,20 @@ impl<'a> EntryFields<'a> {
             }
         }
         if let Ok(mode) = self.header.mode() {
-            set_perms(dst, Some(&mut f), mode, self.preserve_permissions).map_err(|e| {
+            set_perms(dst, Some(&mut f), mode, self.preserve_permissions)?;
+        }
+        if self.unpack_xattrs {
+            set_xattrs(self, dst)?;
+        }
+        return Ok(Unpacked::File(f));
+
+        fn set_perms(
+            dst: &Path,
+            f: Option<&mut std::fs::File>,
+            mode: u32,
+            preserve: bool,
+        ) -> Result<(), TarError> {
+            _set_perms(dst, f, mode, preserve).map_err(|e| {
                 TarError::new(
                     &format!(
                         "failed to set permissions to {:o} \
@@ -589,15 +620,11 @@ impl<'a> EntryFields<'a> {
                     ),
                     e,
                 )
-            })?;
+            })
         }
-        if self.unpack_xattrs {
-            set_xattrs(self, dst)?;
-        }
-        return Ok(());
 
         #[cfg(any(unix, target_os = "redox"))]
-        fn set_perms(
+        fn _set_perms(
             dst: &Path,
             f: Option<&mut std::fs::File>,
             mode: u32,
@@ -614,7 +641,7 @@ impl<'a> EntryFields<'a> {
         }
 
         #[cfg(windows)]
-        fn set_perms(
+        fn _set_perms(
             dst: &Path,
             f: Option<&mut std::fs::File>,
             mode: u32,
@@ -636,7 +663,7 @@ impl<'a> EntryFields<'a> {
 
         #[cfg(target_arch = "wasm32")]
         #[allow(unused_variables)]
-        fn set_perms(
+        fn _set_perms(
             dst: &Path,
             f: Option<&mut std::fs::File>,
             mode: u32,
