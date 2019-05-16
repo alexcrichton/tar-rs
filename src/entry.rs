@@ -573,7 +573,7 @@ impl<'a> EntryFields<'a> {
         if self.preserve_mtime {
             if let Ok(mtime) = self.header.mtime() {
                 let mtime = FileTime::from_unix_time(mtime as i64, 0);
-                filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
+                filetime::set_file_handle_times(&f, Some(mtime), Some(mtime)).map_err(|e| {
                     TarError::new(&format!("failed to set mtime for `{}`", dst.display()), e)
                 })?;
             }
