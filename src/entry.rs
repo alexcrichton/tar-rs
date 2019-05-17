@@ -620,15 +620,18 @@ impl<'a> EntryFields<'a> {
             mode: u32,
             _preserve: bool,
         ) -> io::Result<()> {
+            if mode & 0o200 == 0o200 {
+                return Ok(());
+            }
             match f {
                 Some(f) => {
                     let mut perm = f.metadata()?.permissions();
-                    perm.set_readonly(mode & 0o200 != 0o200);
+                    perm.set_readonly(true);
                     f.set_permissions(perm)
                 }
                 None => {
                     let mut perm = fs::metadata(dst)?.permissions();
-                    perm.set_readonly(mode & 0o200 != 0o200);
+                    perm.set_readonly(true);
                     fs::set_permissions(dst, perm)
                 }
             }
