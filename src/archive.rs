@@ -22,6 +22,7 @@ pub struct ArchiveInner<R: ?Sized> {
     unpack_xattrs: bool,
     preserve_permissions: bool,
     preserve_mtime: bool,
+    ignore_permissions: bool,
     ignore_zeros: bool,
     obj: RefCell<R>,
 }
@@ -47,6 +48,7 @@ impl<R: Read> Archive<R> {
                 unpack_xattrs: false,
                 preserve_permissions: false,
                 preserve_mtime: true,
+                ignore_permissions: false,
                 ignore_zeros: false,
                 obj: RefCell::new(obj),
                 pos: Cell::new(0),
@@ -123,6 +125,15 @@ impl<R: Read> Archive<R> {
     /// This flag is enabled by default.
     pub fn set_preserve_mtime(&mut self, preserve: bool) {
         self.inner.preserve_mtime = preserve;
+    }
+
+    /// Indicate whether any permissions (like exec/readonly/suid on Unix) are set
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default. When enabled all files will be unpacked
+    /// and the final chmod after extracting content entirely skipped.
+    pub fn set_ignore_permissions(&mut self, ignore: bool) {
+        self.inner.ignore_permissions = ignore;
     }
 
     /// Ignore zeroed headers, which would otherwise indicate to the archive that it has no more
@@ -255,6 +266,7 @@ impl<'a> EntriesFields<'a> {
             unpack_xattrs: self.archive.inner.unpack_xattrs,
             preserve_permissions: self.archive.inner.preserve_permissions,
             preserve_mtime: self.archive.inner.preserve_mtime,
+            ignore_permissions: self.archive.inner.ignore_permissions,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of

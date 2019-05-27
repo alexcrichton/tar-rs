@@ -845,6 +845,43 @@ fn extract_sparse() {
 }
 
 #[test]
+fn extracting_readonly_file_ignore_permissions() -> io::Result<()> {
+    let td = t!(TempDir::new("tar-rs"));
+
+    let mut tar = Vec::new();
+
+    {
+        let mut a = Builder::new(&mut tar);
+        let path = "file.txt";
+
+        let mut header = Header::new_gnu();
+        header.set_path(path)?;
+        {
+            let h = header.as_gnu_mut().unwrap();
+            for (a, b) in h.name.iter_mut().zip(path.as_bytes()) {
+                *a = *b;
+            }
+        }
+        header.set_size(1);
+        header.set_mtime(2);
+        header.set_mode(0o400);
+        header.set_cksum();
+        t!(a.append(&header, io::repeat(1).take(1)));
+    }
+
+    let mut ar = Archive::new(&tar[..]);
+    ar.set_ignore_permissions(true);
+    ar.unpack(td.path())?;
+
+    let path = td.path().join("file.txt");
+    let m = fs::metadata(&path)?;
+    assert!(!m.permissions().readonly());
+    assert_eq!(1, fs::read(&path)?[0]);
+
+    Ok(())
+}
+
+#[test]
 fn path_separators() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempDir::new("tar-rs"));
