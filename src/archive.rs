@@ -267,6 +267,7 @@ impl<'a> EntriesFields<'a> {
             preserve_permissions: self.archive.inner.preserve_permissions,
             preserve_mtime: self.archive.inner.preserve_mtime,
             ignore_permissions: self.archive.inner.ignore_permissions,
+            mode: None,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
