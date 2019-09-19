@@ -181,6 +181,7 @@ fn directory_maintains_permissions() {
 }
 
 #[test]
+#[cfg(not(windows))] // dangling symlinks have weird permissions
 fn modify_link_just_created() {
     let mut ar = tar::Builder::new(Vec::new());
 
