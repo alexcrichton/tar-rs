@@ -419,7 +419,12 @@ fn append_file(
     append_fs(dst, path, &stat, file, mode, None)
 }
 
-fn append_dir(dst: &mut dyn Write, path: &Path, src_path: &Path, mode: HeaderMode) -> io::Result<()> {
+fn append_dir(
+    dst: &mut dyn Write,
+    path: &Path,
+    src_path: &Path,
+    mode: HeaderMode,
+) -> io::Result<()> {
     let stat = fs::metadata(src_path)?;
     append_fs(dst, path, &stat, &mut io::empty(), mode, None)
 }
@@ -464,7 +469,11 @@ fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) ->
     Ok(())
 }
 
-fn prepare_header_link(dst: &mut dyn Write, header: &mut Header, link_name: &Path) -> io::Result<()> {
+fn prepare_header_link(
+    dst: &mut dyn Write,
+    header: &mut Header,
+    link_name: &Path,
+) -> io::Result<()> {
     // Same as previous function but for linkname
     if let Err(e) = header.set_link_name(&link_name) {
         let data = path2bytes(&link_name)?;
