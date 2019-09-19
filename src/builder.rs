@@ -353,7 +353,7 @@ impl<W: Write> Builder<W> {
     }
 }
 
-fn append(mut dst: &mut Write, header: &Header, mut data: &mut Read) -> io::Result<()> {
+fn append(mut dst: &mut dyn Write, header: &Header, mut data: &mut dyn Read) -> io::Result<()> {
     dst.write_all(header.as_bytes())?;
     let len = io::copy(&mut data, &mut dst)?;
 
@@ -368,7 +368,7 @@ fn append(mut dst: &mut Write, header: &Header, mut data: &mut Read) -> io::Resu
 }
 
 fn append_path_with_name(
-    dst: &mut Write,
+    dst: &mut dyn Write,
     path: &Path,
     name: Option<&Path>,
     mode: HeaderMode,
@@ -410,7 +410,7 @@ fn append_path_with_name(
 }
 
 fn append_file(
-    dst: &mut Write,
+    dst: &mut dyn Write,
     path: &Path,
     file: &mut fs::File,
     mode: HeaderMode,
@@ -419,7 +419,7 @@ fn append_file(
     append_fs(dst, path, &stat, file, mode, None)
 }
 
-fn append_dir(dst: &mut Write, path: &Path, src_path: &Path, mode: HeaderMode) -> io::Result<()> {
+fn append_dir(dst: &mut dyn Write, path: &Path, src_path: &Path, mode: HeaderMode) -> io::Result<()> {
     let stat = fs::metadata(src_path)?;
     append_fs(dst, path, &stat, &mut io::empty(), mode, None)
 }
@@ -439,7 +439,7 @@ fn prepare_header(size: u64, entry_type: u8) -> Header {
     header
 }
 
-fn prepare_header_path(dst: &mut Write, header: &mut Header, path: &Path) -> io::Result<()> {
+fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) -> io::Result<()> {
     // Try to encode the path directly in the header, but if it ends up not
     // working (probably because it's too long) then try to use the GNU-specific
     // long name extension by emitting an entry which indicates that it's the
@@ -464,7 +464,7 @@ fn prepare_header_path(dst: &mut Write, header: &mut Header, path: &Path) -> io:
     Ok(())
 }
 
-fn prepare_header_link(dst: &mut Write, header: &mut Header, link_name: &Path) -> io::Result<()> {
+fn prepare_header_link(dst: &mut dyn Write, header: &mut Header, link_name: &Path) -> io::Result<()> {
     // Same as previous function but for linkname
     if let Err(e) = header.set_link_name(&link_name) {
         let data = path2bytes(&link_name)?;
@@ -479,10 +479,10 @@ fn prepare_header_link(dst: &mut Write, header: &mut Header, link_name: &Path) -
 }
 
 fn append_fs(
-    dst: &mut Write,
+    dst: &mut dyn Write,
     path: &Path,
     meta: &fs::Metadata,
-    read: &mut Read,
+    read: &mut dyn Read,
     mode: HeaderMode,
     link_name: Option<&Path>,
 ) -> io::Result<()> {
@@ -498,7 +498,7 @@ fn append_fs(
 }
 
 fn append_dir_all(
-    dst: &mut Write,
+    dst: &mut dyn Write,
     path: &Path,
     src_path: &Path,
     mode: HeaderMode,

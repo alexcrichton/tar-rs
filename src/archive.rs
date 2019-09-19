@@ -33,7 +33,7 @@ pub struct Entries<'a, R: 'a + Read> {
 }
 
 struct EntriesFields<'a> {
-    archive: &'a Archive<Read + 'a>,
+    archive: &'a Archive<dyn Read + 'a>,
     next: u64,
     done: bool,
     raw: bool,
@@ -66,7 +66,7 @@ impl<R: Read> Archive<R> {
     /// iterator returns), then the contents read for each entry may be
     /// corrupted.
     pub fn entries(&mut self) -> io::Result<Entries<R>> {
-        let me: &mut Archive<Read> = self;
+        let me: &mut Archive<dyn Read> = self;
         me._entries().map(|fields| Entries {
             fields: fields,
             _ignored: marker::PhantomData,
@@ -93,7 +93,7 @@ impl<R: Read> Archive<R> {
     /// ar.unpack("foo").unwrap();
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        let me: &mut Archive<Read> = self;
+        let me: &mut Archive<dyn Read> = self;
         me._unpack(dst.as_ref())
     }
 
@@ -134,7 +134,7 @@ impl<R: Read> Archive<R> {
     }
 }
 
-impl<'a> Archive<Read + 'a> {
+impl<'a> Archive<dyn Read + 'a> {
     fn _entries(&mut self) -> io::Result<EntriesFields> {
         if self.inner.pos.get() != 0 {
             return Err(other(
