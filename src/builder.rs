@@ -52,7 +52,7 @@ impl<W: Write> Builder<W> {
     /// Gets mutable reference to the underlying object.
     ///
     /// Note that care must be taken while writing to the underlying
-    /// object. But, e.g. `get_mut().flush()` is clamed to be safe and
+    /// object. But, e.g. `get_mut().flush()` is claimed to be safe and
     /// useful in the situations when one needs to be ensured that
     /// tar entry was flushed to the disk.
     pub fn get_mut(&mut self) -> &mut W {

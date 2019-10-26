@@ -136,7 +136,7 @@ impl<'a, R: Read> Entry<'a, R> {
 
     /// Returns access to the header of this entry in the archive.
     ///
-    /// This provides access to the the metadata for this entry in the archive.
+    /// This provides access to the metadata for this entry in the archive.
     pub fn header(&self) -> &Header {
         &self.fields.header
     }

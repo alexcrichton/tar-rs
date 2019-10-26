@@ -1305,7 +1305,7 @@ impl GnuSparseHeader {
         octal_from(&self.offset).map_err(|err| {
             io::Error::new(
                 err.kind(),
-                format!("{} when getting offset from sparce header", err),
+                format!("{} when getting offset from sparse header", err),
             )
         })
     }
