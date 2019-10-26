@@ -62,7 +62,7 @@ pub enum Unpacked {
 impl<'a, R: Read> Entry<'a, R> {
     /// Returns the path name for this entry.
     ///
-    /// This method may fail if the pathname is not valid unicode and this is
+    /// This method may fail if the pathname is not valid Unicode and this is
     /// called on a Windows platform.
     ///
     /// Note that this function will convert any `\` characters to directory
@@ -88,7 +88,7 @@ impl<'a, R: Read> Entry<'a, R> {
 
     /// Returns the link name for this entry, if any is found.
     ///
-    /// This method may fail if the pathname is not valid unicode and this is
+    /// This method may fail if the pathname is not valid Unicode and this is
     /// called on a Windows platform. `Ok(None)` being returned, however,
     /// indicates that the link name was not present.
     ///

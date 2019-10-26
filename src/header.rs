@@ -328,7 +328,7 @@ impl Header {
 
     /// Returns the raw path name stored in this header.
     ///
-    /// This method may fail if the pathname is not valid unicode and this is
+    /// This method may fail if the pathname is not valid Unicode and this is
     /// called on a Windows platform.
     ///
     /// Note that this function will convert any `\` characters to directory
@@ -362,7 +362,7 @@ impl Header {
     ///
     /// This function will set the pathname listed in this header, encoding it
     /// in the appropriate format. May fail if the path is too long or if the
-    /// path specified is not unicode and this is a Windows platform.
+    /// path specified is not Unicode and this is a Windows platform.
     pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
         self._set_path(p.as_ref())
     }
@@ -381,7 +381,7 @@ impl Header {
 
     /// Returns the link name stored in this header, if any is found.
     ///
-    /// This method may fail if the pathname is not valid unicode and this is
+    /// This method may fail if the pathname is not valid Unicode and this is
     /// called on a Windows platform. `Ok(None)` being returned, however,
     /// indicates that the link name was not present.
     ///
@@ -414,7 +414,7 @@ impl Header {
     ///
     /// This function will set the linkname listed in this header, encoding it
     /// in the appropriate format. May fail if the link name is too long or if
-    /// the path specified is not unicode and this is a Windows platform.
+    /// the path specified is not Unicode and this is a Windows platform.
     pub fn set_link_name<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
         self._set_link_name(p.as_ref())
     }
@@ -781,7 +781,7 @@ impl Header {
 
     #[cfg(windows)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        // There's no concept of a file mode on windows, so do a best approximation here.
+        // There's no concept of a file mode on Windows, so do a best approximation here.
         match mode {
             HeaderMode::Complete => {
                 self.set_uid(0);
@@ -1550,7 +1550,7 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     p.as_os_str()
         .to_str()
         .map(|s| s.as_bytes())
-        .ok_or_else(|| other(&format!("path {} was not valid unicode", p.display())))
+        .ok_or_else(|| other(&format!("path {} was not valid Unicode", p.display())))
         .map(|bytes| {
             if bytes.contains(&b'\\') {
                 // Normalize to Unix-style path separators
@@ -1574,7 +1574,7 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
 }
 
 #[cfg(windows)]
-/// On windows we cannot accept non-unicode bytes because it
+/// On windows we cannot accept non-Unicode bytes because it
 /// is impossible to convert it to UTF-16.
 pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     return match bytes {
@@ -1591,7 +1591,7 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
 
     fn not_unicode(v: &[u8]) -> io::Error {
         other(&format!(
-            "only unicode paths are supported on windows: {}",
+            "only Unicode paths are supported on Windows: {}",
             String::from_utf8_lossy(v)
         ))
     }
@@ -1622,5 +1622,5 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
 
 #[cfg(target_arch = "wasm32")]
 fn invalid_utf8<T>(_: T) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, "Invalid utf8")
+    io::Error::new(io::ErrorKind::InvalidData, "Invalid utf-8")
 }
