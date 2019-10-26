@@ -197,8 +197,7 @@ impl<W: Write> Builder<W> {
     /// This function will open the file specified by `path` and insert the file
     /// into the archive as `name` with appropriate metadata set, returning any
     /// I/O error which occurs while writing. The path name for the file inside
-    /// of this archive will be `name` and `path` is required to be a relative
-    /// path.
+    /// of this archive will be `name` is required to be a relative path.
     ///
     /// Note that this will not attempt to seek the archive to a valid position,
     /// so if the archive is in the middle of a read or some other similar
