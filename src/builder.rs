@@ -111,12 +111,12 @@ impl<W: Write> Builder<W> {
         append(self.get_mut(), header, &mut data)
     }
 
-    /// Adds a new entry to this archive with the specified path.
+    /// Adds a new entry to this archive with the specified name.
     ///
-    /// This function will set the specified path in the given header, which may
+    /// This function will set the specified name in the given header, which may
     /// require appending a GNU long-name extension entry to the archive first.
     /// The checksum for the header will be automatically updated via the
-    /// `set_cksum` method after setting the path. No other metadata in the
+    /// `set_cksum` method after setting the name. No other metadata in the
     /// header will be modified.
     ///
     /// Then it will append the header, followed by contents of the stream
@@ -151,13 +151,13 @@ impl<W: Write> Builder<W> {
     /// ar.append_data(&mut header, "really/long/path/to/foo", data).unwrap();
     /// let data = ar.into_inner().unwrap();
     /// ```
-    pub fn append_data<P: AsRef<Path>, R: Read>(
+    pub fn append_data<N: AsRef<Path>, R: Read>(
         &mut self,
         header: &mut Header,
-        path: P,
+        name: N,
         data: R,
     ) -> io::Result<()> {
-        prepare_header_path(self.get_mut(), header, path.as_ref())?;
+        prepare_header_path(self.get_mut(), header, name.as_ref())?;
         header.set_cksum();
         self.append(&header, data)
     }
@@ -233,11 +233,10 @@ impl<W: Write> Builder<W> {
         )
     }
 
-    /// Adds a file to this archive with the given path as the name of the file
-    /// in the archive.
+    /// Adds a file to this archive with the given name in the archive.
     ///
     /// This will use the metadata of `file` to populate a `Header`, and it will
-    /// then append the file to the archive with the name `path`.
+    /// then append the file to the archive with the name `name`.
     ///
     /// Note that this will not attempt to seek the archive to a valid position,
     /// so if the archive is in the middle of a read or some other similar
@@ -259,16 +258,15 @@ impl<W: Write> Builder<W> {
     /// let mut f = File::open("foo/bar/baz.txt").unwrap();
     /// ar.append_file("bar/baz.txt", &mut f).unwrap();
     /// ```
-    pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File) -> io::Result<()> {
+    pub fn append_file<N: AsRef<Path>>(&mut self, name: N, file: &mut fs::File) -> io::Result<()> {
         let mode = self.mode.clone();
-        append_file(self.get_mut(), path.as_ref(), file, mode)
+        append_file(self.get_mut(), name.as_ref(), file, mode)
     }
 
-    /// Adds a directory to this archive with the given path as the name of the
-    /// directory in the archive.
+    /// Adds a directory to this archive with the given name in the archive.
     ///
     /// This will use `stat` to populate a `Header`, and it will then append the
-    /// directory to the archive with the name `path`.
+    /// directory to the archive with the name `name`.
     ///
     /// Note that this will not attempt to seek the archive to a valid position,
     /// so if the archive is in the middle of a read or some other similar
@@ -285,21 +283,20 @@ impl<W: Write> Builder<W> {
     ///
     /// let mut ar = Builder::new(Vec::new());
     ///
-    /// // Use the directory at one location, but insert it into the archive
-    /// // with a different name.
+    /// // Use current directory, but insert it into the archive as `bardir`.
     /// ar.append_dir("bardir", ".").unwrap();
     /// ```
-    pub fn append_dir<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
+    pub fn append_dir<N, P>(&mut self, name: N, path: P) -> io::Result<()>
     where
+        N: AsRef<Path>,
         P: AsRef<Path>,
-        Q: AsRef<Path>,
     {
         let mode = self.mode.clone();
-        append_dir(self.get_mut(), path.as_ref(), src_path.as_ref(), mode)
+        append_dir(self.get_mut(), name.as_ref(), path.as_ref(), mode)
     }
 
     /// Adds a directory and all of its contents (recursively) to this archive
-    /// with the given path as the name of the directory in the archive.
+    /// with the given name in the archive.
     ///
     /// Note that this will not attempt to seek the archive to a valid position,
     /// so if the archive is in the middle of a read or some other similar
@@ -320,20 +317,14 @@ impl<W: Write> Builder<W> {
     /// // with a different name.
     /// ar.append_dir_all("bardir", ".").unwrap();
     /// ```
-    pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
+    pub fn append_dir_all<N, P>(&mut self, name: N, path: P) -> io::Result<()>
     where
+        N: AsRef<Path>,
         P: AsRef<Path>,
-        Q: AsRef<Path>,
     {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_dir_all(
-            self.get_mut(),
-            path.as_ref(),
-            src_path.as_ref(),
-            mode,
-            follow,
-        )
+        append_dir_all(self.get_mut(), name.as_ref(), path.as_ref(), mode, follow)
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -410,22 +401,17 @@ fn append_path_with_name(
 
 fn append_file(
     dst: &mut dyn Write,
-    path: &Path,
+    name: &Path,
     file: &mut fs::File,
     mode: HeaderMode,
 ) -> io::Result<()> {
     let stat = file.metadata()?;
-    append_fs(dst, path, &stat, file, mode, None)
+    append_fs(dst, name, &stat, file, mode, None)
 }
 
-fn append_dir(
-    dst: &mut dyn Write,
-    path: &Path,
-    src_path: &Path,
-    mode: HeaderMode,
-) -> io::Result<()> {
-    let stat = fs::metadata(src_path)?;
-    append_fs(dst, path, &stat, &mut io::empty(), mode, None)
+fn append_dir(dst: &mut dyn Write, name: &Path, path: &Path, mode: HeaderMode) -> io::Result<()> {
+    let stat = fs::metadata(path)?;
+    append_fs(dst, name, &stat, &mut io::empty(), mode, None)
 }
 
 fn prepare_header(size: u64, entry_type: u8) -> Header {
@@ -488,7 +474,7 @@ fn prepare_header_link(
 
 fn append_fs(
     dst: &mut dyn Write,
-    path: &Path,
+    name: &Path,
     meta: &fs::Metadata,
     read: &mut dyn Read,
     mode: HeaderMode,
@@ -496,7 +482,7 @@ fn append_fs(
 ) -> io::Result<()> {
     let mut header = Header::new_gnu();
 
-    prepare_header_path(dst, &mut header, path)?;
+    prepare_header_path(dst, &mut header, name)?;
     header.set_metadata_in_mode(meta, mode);
     if let Some(link_name) = link_name {
         prepare_header_link(dst, &mut header, link_name)?;
@@ -507,14 +493,14 @@ fn append_fs(
 
 fn append_dir_all(
     dst: &mut dyn Write,
+    name: &Path,
     path: &Path,
-    src_path: &Path,
     mode: HeaderMode,
     follow: bool,
 ) -> io::Result<()> {
-    let mut stack = vec![(src_path.to_path_buf(), true, false)];
+    let mut stack = vec![(path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
-        let dest = path.join(src.strip_prefix(&src_path).unwrap());
+        let dest = name.join(src.strip_prefix(&path).unwrap());
         // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
         if is_dir || (is_symlink && follow && src.is_dir()) {
             for entry in fs::read_dir(&src)? {
