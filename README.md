@@ -1,7 +1,5 @@
 # tar-rs
 
-[![Coverage Status](https://coveralls.io/repos/alexcrichton/tar-rs/badge.svg?branch=master&service=github)](https://coveralls.io/github/alexcrichton/tar-rs?branch=master)
-
 [Documentation](https://docs.rs/tar)
 
 A tar archive reading/writing library for Rust.
