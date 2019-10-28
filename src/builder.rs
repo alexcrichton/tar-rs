@@ -217,10 +217,47 @@ impl<W: Write> Builder<W> {
     /// // "bar/foo.txt".
     /// ar.append_path_with_name("foo/bar.txt", "bar/foo.txt").unwrap();
     /// ```
+    #[deprecated(
+        since = "0.4.27",
+        note = "replaced with `append_named_path` for argument order consistency with the rest of the API"
+    )]
     pub fn append_path_with_name<P: AsRef<Path>, N: AsRef<Path>>(
         &mut self,
         path: P,
         name: N,
+    ) -> io::Result<()> {
+        self.append_named_path(name, path)
+    }
+
+    /// Adds a file on the local filesystem to this archive under another name.
+    ///
+    /// This function will open the file specified by `path` and insert the file
+    /// into the archive as `name` with appropriate metadata set, returning any
+    /// I/O error which occurs while writing. The path name for the file inside
+    /// of this archive will be `name` is required to be a relative path.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all files have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tar::Builder;
+    ///
+    /// let mut ar = Builder::new(Vec::new());
+    ///
+    /// // Insert the local file "foo/bar.txt" in the archive but with the name
+    /// // "bar/foo.txt".
+    /// ar.append_named_path("bar/foo.txt", "foo/bar.txt").unwrap();
+    /// ```
+    pub fn append_named_path<N: AsRef<Path>, P: AsRef<Path>>(
+        &mut self,
+        name: N,
+        path: P,
     ) -> io::Result<()> {
         let mode = self.mode.clone();
         let follow = self.follow;
