@@ -52,7 +52,7 @@ impl<W: Write> Builder<W> {
     /// Gets mutable reference to the underlying object.
     ///
     /// Note that care must be taken while writing to the underlying
-    /// object. But, e.g. `get_mut().flush()` is clamed to be safe and
+    /// object. But, e.g. `get_mut().flush()` is claimed to be safe and
     /// useful in the situations when one needs to be ensured that
     /// tar entry was flushed to the disk.
     pub fn get_mut(&mut self) -> &mut W {
@@ -197,8 +197,7 @@ impl<W: Write> Builder<W> {
     /// This function will open the file specified by `path` and insert the file
     /// into the archive as `name` with appropriate metadata set, returning any
     /// I/O error which occurs while writing. The path name for the file inside
-    /// of this archive will be `name` and `path` is required to be a relative
-    /// path.
+    /// of this archive will be `name` is required to be a relative path.
     ///
     /// Note that this will not attempt to seek the archive to a valid position,
     /// so if the archive is in the middle of a read or some other similar
