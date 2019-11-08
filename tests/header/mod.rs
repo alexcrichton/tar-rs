@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::{iter, mem, thread, time};
 
-use tempdir::TempDir;
+use tempfile::Builder;
 
 use tar::{GnuHeader, Header, HeaderMode};
 
@@ -168,7 +168,7 @@ fn set_ustar_path_hard() {
 
 #[test]
 fn set_metadata_deterministic() {
-    let td = t!(TempDir::new("tar-rs"));
+    let td = t!(Builder::new().prefix("tar-rs").tempdir());
     let tmppath = td.path().join("tmpfile");
 
     fn mk_header(path: &Path, readonly: bool) -> Result<Header, io::Error> {
