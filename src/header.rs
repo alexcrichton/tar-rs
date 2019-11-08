@@ -1579,12 +1579,11 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
 pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     return match bytes {
         Cow::Borrowed(bytes) => {
-            let s = r#try!(str::from_utf8(bytes).map_err(|_| not_unicode(bytes)));
+            let s = str::from_utf8(bytes).map_err(|_| not_unicode(bytes))?;
             Ok(Cow::Borrowed(Path::new(s)))
         }
         Cow::Owned(bytes) => {
-            let s =
-                r#try!(String::from_utf8(bytes).map_err(|uerr| not_unicode(&uerr.into_bytes())));
+            let s = String::from_utf8(bytes).map_err(|uerr| not_unicode(&uerr.into_bytes()))?;
             Ok(Cow::Owned(PathBuf::from(s)))
         }
     };
