@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
 use tar::{Archive, Builder, EntryType, Header};
-use tempfile::{Builder as TempBuilder,TempDir};
+use tempfile::{Builder as TempBuilder, TempDir};
 
 macro_rules! t {
     ($e:expr) => {
