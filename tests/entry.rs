@@ -1,10 +1,10 @@
 extern crate tar;
-extern crate tempdir;
+extern crate tempfile;
 
 use std::fs::File;
 use std::io::Read;
 
-use tempdir::TempDir;
+use tempfile::Builder;
 
 macro_rules! t {
     ($e:expr) => {
@@ -30,7 +30,7 @@ fn absolute_symlink() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     t!(ar.unpack(td.path()));
 
     t!(td.path().join("foo").symlink_metadata());
@@ -43,7 +43,7 @@ fn absolute_symlink() {
 
 #[test]
 fn absolute_hardlink() {
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     let mut ar = tar::Builder::new(Vec::new());
 
     let mut header = tar::Header::new_gnu();
@@ -92,7 +92,7 @@ fn relative_hardlink() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     t!(ar.unpack(td.path()));
     t!(td.path().join("foo").metadata());
     t!(td.path().join("bar").metadata());
@@ -120,7 +120,7 @@ fn absolute_link_deref_error() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     assert!(ar.unpack(td.path()).is_err());
     t!(td.path().join("foo").symlink_metadata());
     assert!(File::open(td.path().join("foo").join("bar")).is_err());
@@ -148,7 +148,7 @@ fn relative_link_deref_error() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     assert!(ar.unpack(td.path()).is_err());
     t!(td.path().join("foo").symlink_metadata());
     assert!(File::open(td.path().join("foo").join("bar")).is_err());
@@ -172,7 +172,7 @@ fn directory_maintains_permissions() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     t!(ar.unpack(td.path()));
     let f = t!(File::open(td.path().join("foo")));
     let md = t!(f.metadata());
@@ -210,7 +210,7 @@ fn modify_link_just_created() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     t!(ar.unpack(td.path()));
 
     t!(File::open(td.path().join("bar/foo")));
@@ -241,7 +241,7 @@ fn parent_paths_error() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     assert!(ar.unpack(td.path()).is_err());
     t!(td.path().join("foo").symlink_metadata());
     assert!(File::open(td.path().join("foo").join("bar")).is_err());
@@ -271,7 +271,7 @@ fn good_parent_paths_ok() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
     t!(ar.unpack(td.path()));
     t!(td.path().join("foo").join("bar").read_link());
     let dst = t!(td.path().join("foo").join("bar").canonicalize());
@@ -300,7 +300,7 @@ fn modify_hard_link_just_created() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
 
     let test = td.path().join("test");
     t!(File::create(&test));
@@ -335,7 +335,7 @@ fn modify_symlink_just_created() {
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    let td = t!(TempDir::new("tar"));
+    let td = t!(Builder::new().prefix("tar").tempdir());
 
     let test = td.path().join("test");
     t!(File::create(&test));
