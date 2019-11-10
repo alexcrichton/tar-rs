@@ -645,9 +645,9 @@ impl<'a> EntryFields<'a> {
             dst: &Path,
             f: Option<&mut std::fs::File>,
             mode: u32,
-            _preserve: bool,
+            preserve: bool,
         ) -> io::Result<()> {
-            if mode & 0o200 == 0o200 {
+            if !preserve || mode & 0o200 == 0o200 {
                 return Ok(());
             }
             match f {
