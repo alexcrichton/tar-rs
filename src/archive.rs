@@ -51,7 +51,7 @@ impl<R: Read> Archive<R> {
                 preserve_permissions: false,
                 preserve_mtime: true,
                 preserve_ownership: false,
-                overwrite: false,
+                overwrite: true,
                 ignore_zeros: false,
                 obj: RefCell::new(obj),
                 pos: Cell::new(0),
