@@ -876,7 +876,7 @@ impl<'a> Read for EntryIo<'a> {
 /// # Safety
 /// This is hacky and racy since no file descriptors are used. Might need retrofitting the
 /// crate to use `nix` low-level API.
-#[cfg(any(unix, target_os = "redox"))]
+#[cfg(unix)]
 unsafe fn set_owner<P: AsRef<Path>>(path: P, uid: u64, gid: u64) -> io::Result<()> {
     use std::os::unix::prelude::*;
 
