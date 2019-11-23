@@ -914,6 +914,6 @@ fn libc_errno() -> libc::c_int {
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
-fn errno() -> i32 {
-    unsafe { *libc::__errno() }
+fn libc_errno() -> i32 {
+    unsafe { *libc::__error() }
 }
