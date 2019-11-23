@@ -41,6 +41,7 @@ pub struct EntryFields<'a> {
     pub data: Vec<EntryIo<'a>>,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
+    #[cfg(unix)]
     pub preserve_ownership: bool,
     pub preserve_mtime: bool,
     pub overwrite: bool,
