@@ -903,7 +903,17 @@ unsafe fn set_owner<P: AsRef<Path>>(path: P, uid: u64, gid: u64) -> io::Result<(
     let res_chown =
         /*unsafe*/ { libc::chown(cstr_path.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) };
     if res_chown != 0 {
-        return Err(io::Error::from_raw_os_error(*libc::__errno_location()));
+        return Err(io::Error::from_raw_os_error(libc_errno()));
     }
     Ok(())
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+fn libc_errno() -> libc::c_int {
+    unsafe { *libc::__errno_location() }
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn errno() -> i32 {
+    unsafe { *libc::__errno() }
 }
