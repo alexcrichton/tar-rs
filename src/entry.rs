@@ -15,6 +15,7 @@ use crate::header::bytes2path;
 use crate::other;
 use crate::pax::pax_extensions;
 use crate::{Archive, Header, PaxExtensions};
+#[cfg(unix)]
 use std::ffi::CString;
 
 /// A read-only view into an entry of an archive.

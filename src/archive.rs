@@ -50,6 +50,7 @@ impl<R: Read> Archive<R> {
                 unpack_xattrs: false,
                 preserve_permissions: false,
                 preserve_mtime: true,
+                #[cfg(unix)]
                 preserve_ownership: false,
                 overwrite: true,
                 ignore_zeros: false,
@@ -284,6 +285,7 @@ impl<'a> EntriesFields<'a> {
             long_linkname: None,
             pax_extensions: None,
             unpack_xattrs: self.archive.inner.unpack_xattrs,
+            #[cfg(unix)]
             preserve_permissions: self.archive.inner.preserve_permissions,
             preserve_ownership: self.archive.inner.preserve_ownership,
             preserve_mtime: self.archive.inner.preserve_mtime,
