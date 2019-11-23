@@ -22,6 +22,9 @@ pub struct ArchiveInner<R: ?Sized> {
     unpack_xattrs: bool,
     preserve_permissions: bool,
     preserve_mtime: bool,
+    #[cfg(unix)]
+    preserve_ownership: bool,
+    overwrite: bool,
     ignore_zeros: bool,
     obj: RefCell<R>,
 }
@@ -47,6 +50,8 @@ impl<R: Read> Archive<R> {
                 unpack_xattrs: false,
                 preserve_permissions: false,
                 preserve_mtime: true,
+                preserve_ownership: false,
+                overwrite: false,
                 ignore_zeros: false,
                 obj: RefCell::new(obj),
                 pos: Cell::new(0),
@@ -117,6 +122,21 @@ impl<R: Read> Archive<R> {
         self.inner.preserve_permissions = preserve;
     }
 
+    /// Indicate whether ownership information is preserved
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default and is only present on
+    /// Unix.
+    #[cfg(unix)]
+    pub fn set_preserve_ownership(&mut self, preserve: bool) {
+        self.inner.preserve_ownership = preserve;
+    }
+
+    /// Indicate whether files and symlinks should be overwritten on extraction.
+    pub fn set_overwrite(&mut self, overwrite: bool) {
+        self.inner.overwrite = overwrite;
+    }
+
     /// Indicate whether access time information is preserved when unpacking
     /// this entry.
     ///
@@ -151,9 +171,20 @@ impl<'a> Archive<dyn Read + 'a> {
     }
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+        let mut deferred_times = vec![];
+
         for entry in self._entries()? {
             let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
-            file.unpack_in(dst)?;
+            file.unpack_in(&mut deferred_times, dst)?;
+        }
+        {
+            // set times on directories
+            for (dst, time) in deferred_times {
+                //eprintln!("actually set mtime {} on dir: {:?}", time, dst);
+                filetime::set_file_times(&dst, time, time).map_err(|e| {
+                    TarError::new(&format!("failed to set mtime for `{}`", dst.display()), e)
+                })?;
+            }
         }
         Ok(())
     }
@@ -254,7 +285,9 @@ impl<'a> EntriesFields<'a> {
             pax_extensions: None,
             unpack_xattrs: self.archive.inner.unpack_xattrs,
             preserve_permissions: self.archive.inner.preserve_permissions,
+            preserve_ownership: self.archive.inner.preserve_ownership,
             preserve_mtime: self.archive.inner.preserve_mtime,
+            overwrite: self.archive.inner.overwrite,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of

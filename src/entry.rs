@@ -15,6 +15,7 @@ use crate::header::bytes2path;
 use crate::other;
 use crate::pax::pax_extensions;
 use crate::{Archive, Header, PaxExtensions};
+use std::ffi::CString;
 
 /// A read-only view into an entry of an archive.
 ///
@@ -39,7 +40,9 @@ pub struct EntryFields<'a> {
     pub data: Vec<EntryIo<'a>>,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
+    pub preserve_ownership: bool,
     pub preserve_mtime: bool,
+    pub overwrite: bool,
 }
 
 pub enum EntryIo<'a> {
@@ -185,13 +188,19 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
     ///
+    /// let mut  deferred_times= vec![];
+    ///
     /// for (i, file) in ar.entries().unwrap().enumerate() {
     ///     let mut file = file.unwrap();
-    ///     file.unpack(format!("file-{}", i)).unwrap();
+    ///     file.unpack(&mut deferred_times, format!("file-{}", i)).unwrap();
     /// }
     /// ```
-    pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<Unpacked> {
-        self.fields.unpack(None, dst.as_ref())
+    pub fn unpack<P: AsRef<Path>>(
+        &mut self,
+        deferred_times: &mut Vec<(PathBuf, FileTime)>,
+        dst: P,
+    ) -> io::Result<Unpacked> {
+        self.fields.unpack(deferred_times, None, dst.as_ref())
     }
 
     /// Extracts this file under the specified path, avoiding security issues.
@@ -213,13 +222,19 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
     ///
+    /// let mut  deferred_times= vec![];
+    ///
     /// for (i, file) in ar.entries().unwrap().enumerate() {
     ///     let mut file = file.unwrap();
-    ///     file.unpack_in("target").unwrap();
+    ///     file.unpack_in(&mut deferred_times, "target").unwrap();
     /// }
     /// ```
-    pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<bool> {
-        self.fields.unpack_in(dst.as_ref())
+    pub fn unpack_in<P: AsRef<Path>>(
+        &mut self,
+        deferred_times: &mut Vec<(PathBuf, FileTime)>,
+        dst: P,
+    ) -> io::Result<bool> {
+        self.fields.unpack_in(deferred_times, dst.as_ref())
     }
 
     /// Indicate whether extended file attributes (xattrs on Unix) are preserved
@@ -240,6 +255,16 @@ impl<'a, R: Read> Entry<'a, R> {
     /// Unix.
     pub fn set_preserve_permissions(&mut self, preserve: bool) {
         self.fields.preserve_permissions = preserve;
+    }
+
+    /// Indicate whether ownership information is preserved
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default and is only present on
+    /// Unix.
+    #[cfg(unix)]
+    pub fn set_preserve_ownership(&mut self, preserve: bool) {
+        self.fields.preserve_ownership = preserve;
     }
 
     /// Indicate whether access time information is preserved when unpacking
@@ -341,7 +366,11 @@ impl<'a> EntryFields<'a> {
         Ok(Some(pax_extensions(self.pax_extensions.as_ref().unwrap())))
     }
 
-    fn unpack_in(&mut self, dst: &Path) -> io::Result<bool> {
+    fn unpack_in(
+        &mut self,
+        deferred_times: &mut Vec<(PathBuf, FileTime)>,
+        dst: &Path,
+    ) -> io::Result<bool> {
         // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
         // * Leading '/'s are trimmed. For example, `///test` is treated as
         //   `test`.
@@ -401,7 +430,7 @@ impl<'a> EntryFields<'a> {
 
         let canon_target = self.validate_inside_dst(&dst, parent)?;
 
-        self.unpack(Some(&canon_target), &file_dst)
+        self.unpack(deferred_times, Some(&canon_target), &file_dst)
             .map_err(|e| TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e))?;
 
         Ok(true)
@@ -425,13 +454,32 @@ impl<'a> EntryFields<'a> {
     }
 
     /// Returns access to the header of this entry in the archive.
-    fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<Unpacked> {
+    fn unpack(
+        &mut self,
+        deferred_times: &mut Vec<(PathBuf, FileTime)>,
+        target_base: Option<&Path>,
+        dst: &Path,
+    ) -> io::Result<Unpacked> {
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
             self.unpack_dir(dst)?;
             if let Ok(mode) = self.header.mode() {
                 set_perms(dst, None, mode, self.preserve_permissions)?;
+            }
+            #[cfg(unix)]
+            {
+                if self.preserve_ownership {
+                    unsafe {
+                        set_owner(&dst, self.header.uid()?, self.header.gid()?)?;
+                    }
+                }
+            }
+            if self.preserve_mtime {
+                if let Ok(mtime) = self.header.mtime() {
+                    let mtime_set = FileTime::from_unix_time(mtime as i64, 0);
+                    deferred_times.push((dst.to_owned(), mtime_set));
+                }
             }
             return Ok(Unpacked::__Nonexhaustive);
         } else if kind.is_hard_link() || kind.is_symlink() {
@@ -484,17 +532,41 @@ impl<'a> EntryFields<'a> {
                     )
                 })?;
             } else {
-                symlink(&src, dst).map_err(|err| {
-                    Error::new(
-                        err.kind(),
-                        format!(
-                            "{} when symlinking {} to {}",
-                            err,
-                            src.display(),
-                            dst.display()
-                        ),
-                    )
-                })?;
+                symlink(&src, dst)
+                    .or_else(|err_io| {
+                        if err_io.kind() == io::ErrorKind::AlreadyExists && self.overwrite {
+                            // remove dest and try once more
+                            std::fs::remove_file(dst).and_then(|()| symlink(&src, dst))
+                        } else {
+                            Err(err_io)
+                        }
+                    })
+                    .map_err(|err| {
+                        Error::new(
+                            err.kind(),
+                            format!(
+                                "{} when symlinking {} to {}",
+                                err,
+                                src.display(),
+                                dst.display()
+                            ),
+                        )
+                    })
+                    .and_then(|_| {
+                        if self.preserve_mtime {
+                            if let Ok(mtime) = self.header.mtime() {
+                                let mtime_set = FileTime::from_unix_time(mtime as i64, 0);
+                                filetime::set_symlink_file_times(&dst, mtime_set, mtime_set)
+                                    .map_err(|e| {
+                                        TarError::new(
+                                            &format!("failed to set mtime for `{}`", dst.display()),
+                                            e,
+                                        )
+                                    })?;
+                            }
+                        }
+                        Ok(())
+                    })?;
             };
             return Ok(Unpacked::__Nonexhaustive);
 
@@ -529,6 +601,14 @@ impl<'a> EntryFields<'a> {
             if let Ok(mode) = self.header.mode() {
                 set_perms(dst, None, mode, self.preserve_permissions)?;
             }
+            #[cfg(unix)]
+            {
+                if self.preserve_ownership {
+                    unsafe {
+                        set_owner(&dst, self.header.uid()?, self.header.gid()?)?;
+                    }
+                }
+            }
             return Ok(Unpacked::__Nonexhaustive);
         }
 
@@ -550,12 +630,14 @@ impl<'a> EntryFields<'a> {
             let mut f = open(dst).or_else(|err| {
                 if err.kind() != ErrorKind::AlreadyExists {
                     Err(err)
-                } else {
+                } else if self.overwrite {
                     match fs::remove_file(dst) {
                         Ok(()) => open(dst),
                         Err(ref e) if e.kind() == io::ErrorKind::NotFound => open(dst),
                         Err(e) => Err(e),
                     }
+                } else {
+                    Err(err)
                 }
             })?;
             for io in self.data.drain(..) {
@@ -596,6 +678,15 @@ impl<'a> EntryFields<'a> {
                 })?;
             }
         }
+        #[cfg(unix)]
+        {
+            if self.preserve_ownership {
+                unsafe {
+                    set_owner(&dst, self.header.uid()?, self.header.gid()?)?;
+                }
+            }
+        }
+
         if let Ok(mode) = self.header.mode() {
             set_perms(dst, Some(&mut f), mode, self.preserve_permissions)?;
         }
@@ -778,4 +869,41 @@ impl<'a> Read for EntryIo<'a> {
             EntryIo::Data(ref mut io) => io.read(into),
         }
     }
+}
+
+/// Attempts setting ownership information on provided path.
+///
+/// # Safety
+/// This is hacky and racy since no file descriptors are used. Might need retrofitting the
+/// crate to use `nix` low-level API.
+#[cfg(any(unix, target_os = "redox"))]
+unsafe fn set_owner<P: AsRef<Path>>(path: P, uid: u64, gid: u64) -> io::Result<()> {
+    use std::os::unix::prelude::*;
+
+    //let fd = f.as_raw_fd();
+    if uid > libc::uid_t::max_value() as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("uid ({}) of entry would overflow system `uid_t` type", uid),
+        ));
+    }
+    if gid > libc::gid_t::max_value() as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("gid ({}) of entry would overflow system `gid_t` type", gid),
+        ));
+    }
+    let cstr_path =
+        CString::new(Vec::from(path.as_ref().as_os_str().as_bytes())).map_err(|err_nul| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unable to create CString from path: {}", err_nul),
+            )
+        })?;
+    let res_chown =
+        /*unsafe*/ { libc::chown(cstr_path.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) };
+    if res_chown != 0 {
+        return Err(io::Error::from_raw_os_error(*libc::__errno_location()));
+    }
+    Ok(())
 }
