@@ -139,6 +139,12 @@ fn set_path() {
         assert_eq!(t!(h.path()).to_str(), Some("foo\\bar"));
     }
 
+    // set_path documentation explictly states it removes any ".", signfying the
+    // current directory, from the path. This test ensures that documented
+    // beavhior occurs
+    t!(h.set_path("./control"));
+    assert_eq!(t!(h.path()).to_str(), Some("control"));
+
     let long_name = iter::repeat("foo").take(100).collect::<String>();
     let medium1 = iter::repeat("foo").take(52).collect::<String>();
     let medium2 = iter::repeat("fo/").take(52).collect::<String>();
