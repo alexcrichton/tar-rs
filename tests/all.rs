@@ -1011,3 +1011,11 @@ fn tar_directory_containing_symlink_to_directory() {
     ar.append_dir_all("symlinks", td.path()).unwrap();
     ar.finish().unwrap();
 }
+
+#[test]
+fn long_path() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let rdr = Cursor::new(tar!("7z_long_path.tar"));
+    let mut ar = Archive::new(rdr);
+    assert!(ar.unpack(td.path()).is_ok());
+}

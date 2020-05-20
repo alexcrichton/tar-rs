@@ -287,7 +287,10 @@ impl<'a> EntriesFields<'a> {
                 None => return Ok(None),
             };
 
-            if entry.header().as_gnu().is_some() && entry.header().entry_type().is_gnu_longname() {
+            let is_recognized_header =
+                entry.header().as_gnu().is_some() || entry.header().as_ustar().is_some();
+
+            if is_recognized_header && entry.header().entry_type().is_gnu_longname() {
                 if gnu_longname.is_some() {
                     return Err(other(
                         "two long name entries describing \
@@ -298,7 +301,7 @@ impl<'a> EntriesFields<'a> {
                 continue;
             }
 
-            if entry.header().as_gnu().is_some() && entry.header().entry_type().is_gnu_longlink() {
+            if is_recognized_header && entry.header().entry_type().is_gnu_longlink() {
                 if gnu_longlink.is_some() {
                     return Err(other(
                         "two long name entries describing \
@@ -309,9 +312,7 @@ impl<'a> EntriesFields<'a> {
                 continue;
             }
 
-            if entry.header().as_ustar().is_some()
-                && entry.header().entry_type().is_pax_local_extensions()
-            {
+            if is_recognized_header && entry.header().entry_type().is_pax_local_extensions() {
                 if pax_extensions.is_some() {
                     return Err(other(
                         "two pax extensions entries describing \
