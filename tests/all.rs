@@ -652,6 +652,26 @@ fn unpack_links() {
 }
 
 #[test]
+fn pax_size() {
+    let mut ar = Archive::new(tar!("pax_size.tar"));
+    let mut entries = t!(ar.entries());
+    let mut entry = t!(entries.next().unwrap());
+    let mut attributes = t!(entry.pax_extensions()).unwrap();
+
+    let _first = t!(attributes.next().unwrap());
+    let _second = t!(attributes.next().unwrap());
+    let _third = t!(attributes.next().unwrap());
+    let fourth = t!(attributes.next().unwrap());
+    assert!(attributes.next().is_none());
+
+    assert_eq!(fourth.key(), Ok("size"));
+    assert_eq!(fourth.value(), Ok("4"));
+
+    assert_eq!(entry.header().size().unwrap(), 0);
+    assert_eq!(entry.size(), 4);
+}
+
+#[test]
 fn pax_simple() {
     let mut ar = Archive::new(tar!("pax.tar"));
     let mut entries = t!(ar.entries());

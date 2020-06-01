@@ -141,6 +141,15 @@ impl<'a, R: Read> Entry<'a, R> {
         &self.fields.header
     }
 
+    /// Returns access to the size of this entry in the archive.
+    ///
+    /// In the event the size is stored in a pax extension, this value needs
+    /// to be referenced for the entry size and not the size value in the header
+    /// (which will be zero)
+    pub fn size(&self) -> u64 {
+        self.fields.size
+    }
+
     /// Returns the starting position, in bytes, of the header of this entry in
     /// the archive.
     ///
