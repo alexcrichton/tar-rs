@@ -27,6 +27,29 @@ pub fn pax_extensions(a: &[u8]) -> PaxExtensions {
     }
 }
 
+pub fn pax_extensions_size(a: &[u8]) -> Option<u64> {
+    for extension in pax_extensions(a) {
+        let current_extension = match extension {
+            Ok(ext) => ext,
+            Err(_) => return None,
+        };
+        if current_extension.key() != Ok("size") {
+            continue;
+        }
+
+        let value = match current_extension.value() {
+            Ok(value) => value,
+            Err(_) => return None,
+        };
+        let size = match value.parse::<u64>() {
+            Ok(size) => size,
+            Err(_) => return None,
+        };
+        return Some(size);
+    }
+    None
+}
+
 impl<'entry> Iterator for PaxExtensions<'entry> {
     type Item = io::Result<PaxExtension<'entry>>;
 

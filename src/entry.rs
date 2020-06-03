@@ -13,7 +13,7 @@ use crate::archive::ArchiveInner;
 use crate::error::TarError;
 use crate::header::bytes2path;
 use crate::other;
-use crate::pax::pax_extensions;
+use crate::pax::{pax_extensions, pax_extensions_size};
 use crate::{Archive, Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
@@ -147,6 +147,11 @@ impl<'a, R: Read> Entry<'a, R> {
     /// to be referenced for the entry size and not the size value in the header
     /// (which will be zero)
     pub fn size(&self) -> u64 {
+        if let Some(ref pax) = self.fields.pax_extensions {
+            if let Some(size) = pax_extensions_size(pax) {
+                return size;
+            }
+        }
         self.fields.size
     }
 

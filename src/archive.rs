@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::entry::{EntryFields, EntryIo};
 use crate::error::TarError;
 use crate::other;
-use crate::pax::pax_extensions;
+use crate::pax::pax_extensions_size;
 use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
 
 /// A top-level representation of an archive file.
@@ -248,7 +248,7 @@ impl<'a> EntriesFields<'a> {
             size = pax_size.unwrap();
         }
         let ret = EntryFields {
-            size: size,
+            size: header.entry_size()?,
             header_pos: header_pos,
             file_pos: file_pos,
             data: vec![EntryIo::Data((&self.archive.inner).take(size))],
@@ -325,7 +325,7 @@ impl<'a> EntriesFields<'a> {
                     ));
                 }
                 pax_extensions = Some(EntryFields::from(entry).read_all()?);
-                pax_size = self.get_pax_extension_size(&pax_extensions.as_ref().unwrap());
+                pax_size = pax_extensions_size(&pax_extensions.as_ref().unwrap());
                 continue;
             }
 
@@ -336,25 +336,6 @@ impl<'a> EntriesFields<'a> {
             self.parse_sparse_header(&mut fields)?;
             return Ok(Some(fields.into_entry()));
         }
-    }
-
-    fn get_pax_extension_size(&mut self, pax: &[u8]) -> Option<u64> {
-        for extension in pax_extensions(pax) {
-            let current_extension = extension.unwrap();
-            let value = match current_extension.value() {
-                Ok(value) => value,
-                Err(_) => return None,
-            };
-            let key = match current_extension.key() {
-                Ok(key) => key,
-                Err(_) => return None,
-            };
-            if key == "size" {
-                let size = value.parse::<u64>().unwrap();
-                return Some(size);
-            }
-        }
-        None
     }
 
     fn parse_sparse_header(&mut self, entry: &mut EntryFields<'a>) -> io::Result<()> {
