@@ -33,7 +33,6 @@ pub struct EntryFields<'a> {
     pub long_linkname: Option<Vec<u8>>,
     pub pax_extensions: Option<Vec<u8>>,
     pub header: Header,
-    pub size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
     pub data: Vec<EntryIo<'a>>,
@@ -143,16 +142,15 @@ impl<'a, R: Read> Entry<'a, R> {
 
     /// Returns access to the size of this entry in the archive.
     ///
-    /// In the event the size is stored in a pax extension, this value needs
-    /// to be referenced for the entry size and not the size value in the header
-    /// (which will be zero)
-    pub fn size(&self) -> u64 {
+    /// In the event the size is stored in a pax extension, that size value
+    /// will be referenced. Otherwise, the entry size will be stored in the header.
+    pub fn size(&self) -> io::Result<u64> {
         if let Some(ref pax) = self.fields.pax_extensions {
             if let Some(size) = pax_extensions_size(pax) {
-                return size;
+                return Ok(size);
             }
         }
-        self.fields.size
+        self.fields.header.entry_size()
     }
 
     /// Returns the starting position, in bytes, of the header of this entry in
@@ -285,7 +283,7 @@ impl<'a> EntryFields<'a> {
 
     pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
         // Preallocate some data but don't let ourselves get too crazy now.
-        let cap = cmp::min(self.size, 128 * 1024);
+        let cap = cmp::min(self.header.entry_size()?, 128 * 1024);
         let mut v = Vec::with_capacity(cap as usize);
         self.read_to_end(&mut v).map(|_| v)
     }

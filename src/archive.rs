@@ -248,7 +248,6 @@ impl<'a> EntriesFields<'a> {
             size = pax_size.unwrap();
         }
         let ret = EntryFields {
-            size: header.entry_size()?,
             header_pos: header_pos,
             file_pos: file_pos,
             data: vec![EntryIo::Data((&self.archive.inner).take(size))],
@@ -369,11 +368,11 @@ impl<'a> EntriesFields<'a> {
         entry.data.truncate(0);
 
         let mut cur = 0;
-        let mut remaining = entry.size;
+        let mut remaining = entry.header.entry_size()?;
         {
             let data = &mut entry.data;
             let reader = &self.archive.inner;
-            let size = entry.size;
+            let size = entry.header.entry_size()?;
             let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
                 if block.is_empty() {
                     return Ok(());
@@ -431,7 +430,7 @@ impl<'a> EntriesFields<'a> {
                  size in header",
             ));
         }
-        entry.size = cur;
+        entry.header.set_size(cur);
         if remaining > 0 {
             return Err(other(
                 "mismatch in sparse file chunks and \
