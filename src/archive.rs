@@ -22,6 +22,7 @@ pub struct ArchiveInner<R: ?Sized> {
     unpack_xattrs: bool,
     preserve_permissions: bool,
     preserve_mtime: bool,
+    overwrite: bool,
     ignore_zeros: bool,
     obj: RefCell<R>,
 }
@@ -47,6 +48,7 @@ impl<R: Read> Archive<R> {
                 unpack_xattrs: false,
                 preserve_permissions: false,
                 preserve_mtime: true,
+                overwrite: true,
                 ignore_zeros: false,
                 obj: RefCell::new(obj),
                 pos: Cell::new(0),
@@ -115,6 +117,11 @@ impl<R: Read> Archive<R> {
     /// Unix.
     pub fn set_preserve_permissions(&mut self, preserve: bool) {
         self.inner.preserve_permissions = preserve;
+    }
+
+    /// Indicate whether files and symlinks should be overwritten on extraction.
+    pub fn set_overwrite(&mut self, overwrite: bool) {
+        self.inner.overwrite = overwrite;
     }
 
     /// Indicate whether access time information is preserved when unpacking
@@ -255,6 +262,7 @@ impl<'a> EntriesFields<'a> {
             unpack_xattrs: self.archive.inner.unpack_xattrs,
             preserve_permissions: self.archive.inner.preserve_permissions,
             preserve_mtime: self.archive.inner.preserve_mtime,
+            overwrite: self.archive.inner.overwrite,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
