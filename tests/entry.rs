@@ -1,8 +1,10 @@
 extern crate tar;
 extern crate tempfile;
 
-use std::fs::File;
-use std::io::Read;
+#[allow(unused_imports)]
+use std::fs::{self, File};
+#[allow(unused_imports)]
+use std::io::{self, Read};
 
 use tempfile::Builder;
 
@@ -346,4 +348,55 @@ fn modify_symlink_just_created() {
     let mut contents = Vec::new();
     t!(t!(File::open(&test)).read_to_end(&mut contents));
     assert_eq!(contents.len(), 0);
+}
+
+#[test]
+#[cfg(unix)]
+fn modify_mode_during_unpack() -> io::Result<()> {
+    use ::std::os::unix::fs::PermissionsExt;
+    let td = t!(TempDir::new("tar-rs"));
+
+    let mut tar = Vec::new();
+
+    {
+        let mut a = tar::Builder::new(&mut tar);
+        let path = "file.txt";
+
+        let mut header = tar::Header::new_gnu();
+        header.set_path(path)?;
+        {
+            let h = header.as_gnu_mut().unwrap();
+            for (a, b) in h.name.iter_mut().zip(path.as_bytes()) {
+                *a = *b;
+            }
+        }
+        header.set_size(1);
+        header.set_mtime(2);
+        header.set_mode(0o400); // no exec, no write
+        header.set_cksum();
+        t!(a.append(&header, io::repeat(1).take(1)));
+    }
+
+    let mut ar = tar::Archive::new(&tar[..]);
+    let entries = ar.entries()?;
+    for entry in entries {
+        let mut entry = entry?;
+        let full_path = td.path().join(entry.path()?.into_owned());
+        entry.set_preserve_mtime(false);
+        entry.set_mode(Some(0o500)); // exec, no write
+        entry.unpack(&full_path).and_then(|unpacked| {
+            match unpacked {
+                tar::Unpacked::File(f) => {
+                    assert_eq!(f.metadata()?.permissions().mode() & 0o777, 0o500);
+                }
+                _ => {}
+            };
+            Ok(())
+        })?;
+    }
+
+    let path = td.path().join("file.txt");
+    assert_eq!(1, fs::read(&path)?[0]);
+
+    Ok(())
 }

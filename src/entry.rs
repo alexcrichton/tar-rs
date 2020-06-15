@@ -40,6 +40,8 @@ pub struct EntryFields<'a> {
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
     pub preserve_mtime: bool,
+    pub ignore_permissions: bool,
+    pub mode: Option<u32>,
 }
 
 pub enum EntryIo<'a> {
@@ -249,6 +251,20 @@ impl<'a, R: Read> Entry<'a, R> {
     pub fn set_preserve_mtime(&mut self, preserve: bool) {
         self.fields.preserve_mtime = preserve;
     }
+
+    /// Indicate whether any permissions (like exec/readonly/suid on Unix) are set
+    /// when unpacking this entry.
+    ///
+    /// This flag is disabled by default. When enabled all files will be unpacked
+    /// and the final chmod after extracting content entirely skipped.
+    pub fn set_ignore_permissions(&mut self, ignore: bool) {
+        self.fields.ignore_permissions = ignore;
+    }
+
+    /// Use a custom mode when unpacking the entry.
+    pub fn set_mode(&mut self, mode: Option<u32>) {
+        self.fields.mode = mode;
+    }
 }
 
 impl<'a, R: Read> Read for Entry<'a, R> {
@@ -424,14 +440,24 @@ impl<'a> EntryFields<'a> {
         })
     }
 
+    fn get_mode(&mut self) -> Option<u32> {
+        self.mode.or_else(|| self.header.mode().ok())
+    }
+
     /// Returns access to the header of this entry in the archive.
     fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<Unpacked> {
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
             self.unpack_dir(dst)?;
-            if let Ok(mode) = self.header.mode() {
-                set_perms(dst, None, mode, self.preserve_permissions)?;
+            if let Some(mode) = self.get_mode() {
+                set_perms(
+                    dst,
+                    None,
+                    mode,
+                    self.preserve_permissions,
+                    self.ignore_permissions,
+                )?;
             }
             return Ok(Unpacked::__Nonexhaustive);
         } else if kind.is_hard_link() || kind.is_symlink() {
@@ -526,8 +552,14 @@ impl<'a> EntryFields<'a> {
         // Only applies to old headers.
         if self.header.as_ustar().is_none() && self.path_bytes().ends_with(b"/") {
             self.unpack_dir(dst)?;
-            if let Ok(mode) = self.header.mode() {
-                set_perms(dst, None, mode, self.preserve_permissions)?;
+            if let Some(mode) = self.get_mode() {
+                set_perms(
+                    dst,
+                    None,
+                    mode,
+                    self.preserve_permissions,
+                    self.ignore_permissions,
+                )?;
             }
             return Ok(Unpacked::__Nonexhaustive);
         }
@@ -596,8 +628,14 @@ impl<'a> EntryFields<'a> {
                 })?;
             }
         }
-        if let Ok(mode) = self.header.mode() {
-            set_perms(dst, Some(&mut f), mode, self.preserve_permissions)?;
+        if let Some(mode) = self.get_mode() {
+            set_perms(
+                dst,
+                Some(&mut f),
+                mode,
+                self.preserve_permissions,
+                self.ignore_permissions,
+            )?;
         }
         if self.unpack_xattrs {
             set_xattrs(self, dst)?;
@@ -609,7 +647,11 @@ impl<'a> EntryFields<'a> {
             f: Option<&mut std::fs::File>,
             mode: u32,
             preserve: bool,
+            ignore: bool,
         ) -> Result<(), TarError> {
+            if ignore {
+                return Ok(());
+            }
             _set_perms(dst, f, mode, preserve).map_err(|e| {
                 TarError::new(
                     &format!(
