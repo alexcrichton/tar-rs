@@ -368,11 +368,11 @@ impl<'a> EntriesFields<'a> {
         entry.data.truncate(0);
 
         let mut cur = 0;
-        let mut remaining = entry.header.entry_size()?;
+        let mut remaining = entry.entry_size()?;
         {
+            let size = entry.entry_size()?;
             let data = &mut entry.data;
             let reader = &self.archive.inner;
-            let size = entry.header.entry_size()?;
             let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
                 if block.is_empty() {
                     return Ok(());

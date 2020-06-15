@@ -668,7 +668,7 @@ fn pax_size() {
     assert_eq!(fourth.value(), Ok("4"));
 
     assert_eq!(entry.header().size().unwrap(), 0);
-    assert_eq!(entry.size().unwrap(), 4);
+    assert_eq!(entry.entry_size().unwrap(), 4);
 }
 
 #[test]

@@ -144,13 +144,8 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// In the event the size is stored in a pax extension, that size value
     /// will be referenced. Otherwise, the entry size will be stored in the header.
-    pub fn size(&self) -> io::Result<u64> {
-        if let Some(ref pax) = self.fields.pax_extensions {
-            if let Some(size) = pax_extensions_size(pax) {
-                return Ok(size);
-            }
-        }
-        self.fields.header.entry_size()
+    pub fn entry_size(&self) -> io::Result<u64> {
+        self.fields.entry_size()
     }
 
     /// Returns the starting position, in bytes, of the header of this entry in
@@ -283,9 +278,18 @@ impl<'a> EntryFields<'a> {
 
     pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
         // Preallocate some data but don't let ourselves get too crazy now.
-        let cap = cmp::min(self.header.entry_size()?, 128 * 1024);
+        let cap = cmp::min(self.entry_size()?, 128 * 1024);
         let mut v = Vec::with_capacity(cap as usize);
         self.read_to_end(&mut v).map(|_| v)
+    }
+
+    pub fn entry_size(&self) -> io::Result<u64> {
+        if let Some(ref pax) = self.pax_extensions {
+            if let Some(size) = pax_extensions_size(pax) {
+                return Ok(size);
+            }
+        }
+        self.header.entry_size()
     }
 
     fn path(&self) -> io::Result<Cow<Path>> {
