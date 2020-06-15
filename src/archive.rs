@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::cmp;
+use std::fs;
 use std::io;
 use std::io::prelude::*;
 use std::marker;
@@ -151,6 +152,18 @@ impl<'a> Archive<dyn Read + 'a> {
     }
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+        if dst.symlink_metadata().is_err() {
+            fs::create_dir_all(&dst)
+                .map_err(|e| TarError::new(&format!("failed to create `{}`", dst.display()), e))?;
+        }
+
+        // Canonicalizing the dst directory will prepend the path with '\\?\'
+        // on windows which will allow windows APIs to treat the path as an
+        // extended-length path with a 32,767 character limit. Otherwise all
+        // unpacked paths over 260 characters will fail on creation with a
+        // NotFound exception.
+        let dst = &dst.canonicalize().unwrap_or(dst.to_path_buf());
+
         for entry in self._entries()? {
             let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
             file.unpack_in(dst)?;
