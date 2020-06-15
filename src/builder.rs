@@ -203,6 +203,9 @@ impl<W: Write> Builder<W> {
     /// so if the archive is in the middle of a read or some other similar
     /// operation then this may corrupt the archive.
     ///
+    /// Note if the `path` is a directory. This will just add an entry to the archive,
+    /// rather than contents of the directory.  
+    ///
     /// Also note that after all files have been written to an archive the
     /// `finish` function needs to be called to finish writing the archive.
     ///
@@ -273,6 +276,9 @@ impl<W: Write> Builder<W> {
     /// Note that this will not attempt to seek the archive to a valid position,
     /// so if the archive is in the middle of a read or some other similar
     /// operation then this may corrupt the archive.
+    ///
+    /// Note this will not add the contents of the directory to the archive.
+    /// See `append_dir_all` for recusively adding the contents of the directory.
     ///
     /// Also note that after all files have been written to an archive the
     /// `finish` function needs to be called to finish writing the archive.
