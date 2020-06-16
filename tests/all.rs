@@ -1019,3 +1019,16 @@ fn long_path() {
     let mut ar = Archive::new(rdr);
     assert!(ar.unpack(td.path()).is_ok());
 }
+
+#[test]
+fn unpack_path_larger_than_windows_max_path() {
+    let dir_name = "iamaprettylongnameandtobepreciseiam91characterslongwhichsomethinkisreallylongandothersdonot";
+    // 183 character directory name
+    let really_long_path = format!("{}{}", dir_name, dir_name);
+    let td = t!(TempBuilder::new().prefix(&really_long_path).tempdir());
+    // directory in 7z_long_path.tar is over 100 chars
+    let rdr = Cursor::new(tar!("7z_long_path.tar"));
+    let mut ar = Archive::new(rdr);
+    // should unpack path greater than windows MAX_PATH length of 260 characters
+    assert!(ar.unpack(td.path()).is_ok());
+}
