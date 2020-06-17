@@ -1032,3 +1032,56 @@ fn unpack_path_larger_than_windows_max_path() {
     // should unpack path greater than windows MAX_PATH length of 260 characters
     assert!(ar.unpack(td.path()).is_ok());
 }
+
+#[test]
+fn contiguous_archive() {
+    fn append_contiguous(
+        path: impl AsRef<Path>,
+        data: &[u8],
+        buf: &mut Vec<u8>,
+        finish: bool,
+    ) -> io::Result<()> {
+        let mut ar = Builder::new(buf);
+        ar.contiguous(true);
+        ar.append_data(&mut Header::new_gnu(), path, data)?;
+        if finish {
+            ar.finish()
+        } else {
+            Ok(())
+        }
+    }
+
+    const DATA_A: &[u8] = &[1, 2, 3];
+    const DATA_B: &[u8] = &[4, 5, 6];
+
+    let mut ar = Builder::new(Vec::new());
+
+    assert!(ar.append_data(&mut Header::new_gnu(), "a", DATA_A).is_ok());
+    assert!(ar.append_data(&mut Header::new_gnu(), "b", DATA_B).is_ok());
+
+    let expected = t!(ar.into_inner());
+
+    let mut actual = Vec::new();
+
+    assert!(append_contiguous("a", DATA_A, &mut actual, false).is_ok());
+    assert!(append_contiguous("b", DATA_B, &mut actual, true).is_ok());
+
+    assert_eq!(expected, actual);
+}
+
+#[test]
+fn contiguous_into_inner() {
+    const DATA: &[u8] = &[1, 2, 3];
+
+    let mut ar = Builder::new(Vec::new());
+    assert!(ar.append_data(&mut Header::new_gnu(), "a", DATA).is_ok());
+    let expected = t!(ar.into_inner());
+    let expected = &expected[0..expected.len() - 1024];
+
+    let mut ar = Builder::new(Vec::new());
+    ar.contiguous(true);
+    assert!(ar.append_data(&mut Header::new_gnu(), "a", DATA).is_ok());
+    let actual = t!(ar.into_inner());
+
+    assert_eq!(expected, &*actual);
+}
