@@ -282,7 +282,6 @@ fn extracting_duplicate_file_succeed() {
 fn extracting_duplicate_link_fail() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path_present = td.path().join("lnk");
-
     t!(std::os::unix::fs::symlink("file", path_present));
 
     let rdr = Cursor::new(tar!("link.tar"));
@@ -306,7 +305,6 @@ fn extracting_duplicate_link_fail() {
 fn extracting_duplicate_link_succeed() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path_present = td.path().join("lnk");
-
     t!(std::os::unix::fs::symlink("file", path_present));
 
     let rdr = Cursor::new(tar!("link.tar"));
