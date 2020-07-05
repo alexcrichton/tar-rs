@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::cmp;
+use std::fs;
 use std::io;
 use std::io::prelude::*;
 use std::marker;
@@ -23,6 +24,7 @@ pub struct ArchiveInner<R: ?Sized> {
     unpack_xattrs: bool,
     preserve_permissions: bool,
     preserve_mtime: bool,
+    overwrite: bool,
     ignore_zeros: bool,
     obj: RefCell<R>,
 }
@@ -48,6 +50,7 @@ impl<R: Read> Archive<R> {
                 unpack_xattrs: false,
                 preserve_permissions: false,
                 preserve_mtime: true,
+                overwrite: true,
                 ignore_zeros: false,
                 obj: RefCell::new(obj),
                 pos: Cell::new(0),
@@ -118,6 +121,11 @@ impl<R: Read> Archive<R> {
         self.inner.preserve_permissions = preserve;
     }
 
+    /// Indicate whether files and symlinks should be overwritten on extraction.
+    pub fn set_overwrite(&mut self, overwrite: bool) {
+        self.inner.overwrite = overwrite;
+    }
+
     /// Indicate whether access time information is preserved when unpacking
     /// this entry.
     ///
@@ -152,6 +160,18 @@ impl<'a> Archive<dyn Read + 'a> {
     }
 
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+        if dst.symlink_metadata().is_err() {
+            fs::create_dir_all(&dst)
+                .map_err(|e| TarError::new(&format!("failed to create `{}`", dst.display()), e))?;
+        }
+
+        // Canonicalizing the dst directory will prepend the path with '\\?\'
+        // on windows which will allow windows APIs to treat the path as an
+        // extended-length path with a 32,767 character limit. Otherwise all
+        // unpacked paths over 260 characters will fail on creation with a
+        // NotFound exception.
+        let dst = &dst.canonicalize().unwrap_or(dst.to_path_buf());
+
         for entry in self._entries()? {
             let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
             file.unpack_in(dst)?;
@@ -258,6 +278,7 @@ impl<'a> EntriesFields<'a> {
             unpack_xattrs: self.archive.inner.unpack_xattrs,
             preserve_permissions: self.archive.inner.preserve_permissions,
             preserve_mtime: self.archive.inner.preserve_mtime,
+            overwrite: self.archive.inner.overwrite,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of

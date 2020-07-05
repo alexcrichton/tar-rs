@@ -39,6 +39,7 @@ pub struct EntryFields<'a> {
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
     pub preserve_mtime: bool,
+    pub overwrite: bool,
 }
 
 pub enum EntryIo<'a> {
@@ -500,17 +501,26 @@ impl<'a> EntryFields<'a> {
                     )
                 })?;
             } else {
-                symlink(&src, dst).map_err(|err| {
-                    Error::new(
-                        err.kind(),
-                        format!(
-                            "{} when symlinking {} to {}",
-                            err,
-                            src.display(),
-                            dst.display()
-                        ),
-                    )
-                })?;
+                symlink(&src, dst)
+                    .or_else(|err_io| {
+                        if err_io.kind() == io::ErrorKind::AlreadyExists && self.overwrite {
+                            // remove dest and try once more
+                            std::fs::remove_file(dst).and_then(|()| symlink(&src, dst))
+                        } else {
+                            Err(err_io)
+                        }
+                    })
+                    .map_err(|err| {
+                        Error::new(
+                            err.kind(),
+                            format!(
+                                "{} when symlinking {} to {}",
+                                err,
+                                src.display(),
+                                dst.display()
+                            ),
+                        )
+                    })?;
             };
             return Ok(Unpacked::__Nonexhaustive);
 
@@ -566,12 +576,14 @@ impl<'a> EntryFields<'a> {
             let mut f = open(dst).or_else(|err| {
                 if err.kind() != ErrorKind::AlreadyExists {
                     Err(err)
-                } else {
+                } else if self.overwrite {
                     match fs::remove_file(dst) {
                         Ok(()) => open(dst),
                         Err(ref e) if e.kind() == io::ErrorKind::NotFound => open(dst),
                         Err(e) => Err(e),
                     }
+                } else {
+                    Err(err)
                 }
             })?;
             for io in self.data.drain(..) {

@@ -244,6 +244,76 @@ fn extracting_directories() {
 }
 
 #[test]
+fn extracting_duplicate_file_fail() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let path_present = td.path().join("a");
+    t!(File::create(path_present));
+
+    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let mut ar = Archive::new(rdr);
+    ar.set_overwrite(false);
+    if let Err(err) = ar.unpack(td.path()) {
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            // as expected with overwrite false
+            return;
+        }
+        panic!("unexpected error: {:?}", err);
+    }
+    panic!(
+        "unpack() should have returned an error of kind {:?}, returned Ok",
+        std::io::ErrorKind::AlreadyExists
+    )
+}
+
+#[test]
+fn extracting_duplicate_file_succeed() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let path_present = td.path().join("a");
+    t!(File::create(path_present));
+
+    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let mut ar = Archive::new(rdr);
+    ar.set_overwrite(true);
+    t!(ar.unpack(td.path()));
+}
+
+#[test]
+#[cfg(unix)]
+fn extracting_duplicate_link_fail() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let path_present = td.path().join("lnk");
+    t!(std::os::unix::fs::symlink("file", path_present));
+
+    let rdr = Cursor::new(tar!("link.tar"));
+    let mut ar = Archive::new(rdr);
+    ar.set_overwrite(false);
+    if let Err(err) = ar.unpack(td.path()) {
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            // as expected with overwrite false
+            return;
+        }
+        panic!("unexpected error: {:?}", err);
+    }
+    panic!(
+        "unpack() should have returned an error of kind {:?}, returned Ok",
+        std::io::ErrorKind::AlreadyExists
+    )
+}
+
+#[test]
+#[cfg(unix)]
+fn extracting_duplicate_link_succeed() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let path_present = td.path().join("lnk");
+    t!(std::os::unix::fs::symlink("file", path_present));
+
+    let rdr = Cursor::new(tar!("link.tar"));
+    let mut ar = Archive::new(rdr);
+    ar.set_overwrite(true);
+    t!(ar.unpack(td.path()));
+}
+
+#[test]
 #[cfg(all(unix, feature = "xattr"))]
 fn xattrs() {
     // If /tmp is a tmpfs, xattr will fail
@@ -1037,5 +1107,18 @@ fn long_path() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let rdr = Cursor::new(tar!("7z_long_path.tar"));
     let mut ar = Archive::new(rdr);
+    assert!(ar.unpack(td.path()).is_ok());
+}
+
+#[test]
+fn unpack_path_larger_than_windows_max_path() {
+    let dir_name = "iamaprettylongnameandtobepreciseiam91characterslongwhichsomethinkisreallylongandothersdonot";
+    // 183 character directory name
+    let really_long_path = format!("{}{}", dir_name, dir_name);
+    let td = t!(TempBuilder::new().prefix(&really_long_path).tempdir());
+    // directory in 7z_long_path.tar is over 100 chars
+    let rdr = Cursor::new(tar!("7z_long_path.tar"));
+    let mut ar = Archive::new(rdr);
+    // should unpack path greater than windows MAX_PATH length of 260 characters
     assert!(ar.unpack(td.path()).is_ok());
 }
