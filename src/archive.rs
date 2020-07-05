@@ -264,10 +264,13 @@ impl<'a> EntriesFields<'a> {
 
         let file_pos = self.next;
         let mut size = header.entry_size()?;
-        if (size == 0) && (pax_size.is_some()) {
-            size = pax_size.unwrap();
+        if size == 0 {
+            if let Some(pax_size) = pax_size {
+                size = pax_size;
+            }
         }
         let ret = EntryFields {
+            size: size,
             header_pos: header_pos,
             file_pos: file_pos,
             data: vec![EntryIo::Data((&self.archive.inner).take(size))],
@@ -345,7 +348,9 @@ impl<'a> EntriesFields<'a> {
                     ));
                 }
                 pax_extensions = Some(EntryFields::from(entry).read_all()?);
-                pax_size = pax_extensions_size(&pax_extensions.as_ref().unwrap());
+                if let Some(pax_extensions_ref) = &pax_extensions {
+                    pax_size = pax_extensions_size(pax_extensions_ref);
+                }
                 continue;
             }
 
@@ -389,11 +394,11 @@ impl<'a> EntriesFields<'a> {
         entry.data.truncate(0);
 
         let mut cur = 0;
-        let mut remaining = entry.entry_size()?;
+        let mut remaining = entry.size;
         {
-            let size = entry.entry_size()?;
             let data = &mut entry.data;
             let reader = &self.archive.inner;
+            let size = entry.size;
             let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
                 if block.is_empty() {
                     return Ok(());
@@ -451,7 +456,7 @@ impl<'a> EntriesFields<'a> {
                  size in header",
             ));
         }
-        entry.header.set_size(cur);
+        entry.size = cur;
         if remaining > 0 {
             return Err(other(
                 "mismatch in sparse file chunks and \

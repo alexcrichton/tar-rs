@@ -13,7 +13,7 @@ use crate::archive::ArchiveInner;
 use crate::error::TarError;
 use crate::header::bytes2path;
 use crate::other;
-use crate::pax::{pax_extensions, pax_extensions_size};
+use crate::pax::pax_extensions;
 use crate::{Archive, Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
@@ -33,6 +33,7 @@ pub struct EntryFields<'a> {
     pub long_linkname: Option<Vec<u8>>,
     pub pax_extensions: Option<Vec<u8>>,
     pub header: Header,
+    pub size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
     pub data: Vec<EntryIo<'a>>,
@@ -145,8 +146,8 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// In the event the size is stored in a pax extension, that size value
     /// will be referenced. Otherwise, the entry size will be stored in the header.
-    pub fn entry_size(&self) -> io::Result<u64> {
-        self.fields.entry_size()
+    pub fn size(&self) -> u64 {
+        self.fields.size
     }
 
     /// Returns the starting position, in bytes, of the header of this entry in
@@ -279,18 +280,9 @@ impl<'a> EntryFields<'a> {
 
     pub fn read_all(&mut self) -> io::Result<Vec<u8>> {
         // Preallocate some data but don't let ourselves get too crazy now.
-        let cap = cmp::min(self.entry_size()?, 128 * 1024);
+        let cap = cmp::min(self.size, 128 * 1024);
         let mut v = Vec::with_capacity(cap as usize);
         self.read_to_end(&mut v).map(|_| v)
-    }
-
-    pub fn entry_size(&self) -> io::Result<u64> {
-        if let Some(ref pax) = self.pax_extensions {
-            if let Some(size) = pax_extensions_size(pax) {
-                return Ok(size);
-            }
-        }
-        self.header.entry_size()
     }
 
     fn path(&self) -> io::Result<Cow<Path>> {
