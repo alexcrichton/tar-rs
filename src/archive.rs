@@ -9,6 +9,7 @@ use std::path::Path;
 use crate::entry::{EntryFields, EntryIo};
 use crate::error::TarError;
 use crate::other;
+use crate::pax::pax_extensions_size;
 use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
 
 /// A top-level representation of an archive file.
@@ -219,10 +220,12 @@ impl<'a, R: Read> Iterator for Entries<'a, R> {
 }
 
 impl<'a> EntriesFields<'a> {
-    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
+    fn next_entry_raw(
+        &mut self,
+        pax_size: Option<u64>,
+    ) -> io::Result<Option<Entry<'a, io::Empty>>> {
         let mut header = Header::new_old();
         let mut header_pos = self.next;
-
         loop {
             // Seek to the start of the next header in the archive
             let delta = self.next - self.archive.inner.pos.get();
@@ -244,7 +247,6 @@ impl<'a> EntriesFields<'a> {
             if !self.archive.inner.ignore_zeros {
                 return Ok(None);
             }
-
             self.next += 512;
             header_pos = self.next;
         }
@@ -261,8 +263,12 @@ impl<'a> EntriesFields<'a> {
         }
 
         let file_pos = self.next;
-        let size = header.entry_size()?;
-
+        let mut size = header.entry_size()?;
+        if size == 0 {
+            if let Some(pax_size) = pax_size {
+                size = pax_size;
+            }
+        }
         let ret = EntryFields {
             size: size,
             header_pos: header_pos,
@@ -288,16 +294,17 @@ impl<'a> EntriesFields<'a> {
 
     fn next_entry(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
         if self.raw {
-            return self.next_entry_raw();
+            return self.next_entry_raw(None);
         }
 
         let mut gnu_longname = None;
         let mut gnu_longlink = None;
         let mut pax_extensions = None;
+        let mut pax_size = None;
         let mut processed = 0;
         loop {
             processed += 1;
-            let entry = match self.next_entry_raw()? {
+            let entry = match self.next_entry_raw(pax_size)? {
                 Some(entry) => entry,
                 None if processed > 1 => {
                     return Err(other(
@@ -341,6 +348,9 @@ impl<'a> EntriesFields<'a> {
                     ));
                 }
                 pax_extensions = Some(EntryFields::from(entry).read_all()?);
+                if let Some(pax_extensions_ref) = &pax_extensions {
+                    pax_size = pax_extensions_size(pax_extensions_ref);
+                }
                 continue;
             }
 
