@@ -15,6 +15,7 @@ pub struct Builder<W: Write> {
     mode: HeaderMode,
     follow: bool,
     finished: bool,
+    contiguous: bool,
     obj: Option<W>,
 }
 
@@ -27,6 +28,7 @@ impl<W: Write> Builder<W> {
             mode: HeaderMode::Complete,
             follow: true,
             finished: false,
+            contiguous: false,
             obj: Some(obj),
         }
     }
@@ -42,6 +44,13 @@ impl<W: Write> Builder<W> {
     /// than adding a symlink to the archive. Defaults to true.
     pub fn follow_symlinks(&mut self, follow: bool) {
         self.follow = follow;
+    }
+
+    /// Determines wheter the archive will be automatically finished
+    /// Contiguous Builder will not finish the archive unless `finish`
+    /// is explicitly called. Defaults to false.
+    pub fn contiguous(&mut self, contiguous: bool) {
+        self.contiguous = contiguous;
     }
 
     /// Gets shared reference to the underlying object.
@@ -61,13 +70,11 @@ impl<W: Write> Builder<W> {
 
     /// Unwrap this archive, returning the underlying object.
     ///
-    /// This function will finish writing the archive if the `finish` function
-    /// hasn't yet been called, returning any I/O error which happens during
-    /// that operation.
+    /// This function will finish writing the archive if it is not contiguous
+    /// and the `finish` function hasn't yet been called, returning any
+    /// I/O error which happens during that operation.
     pub fn into_inner(mut self) -> io::Result<W> {
-        if !self.finished {
-            self.finish()?;
-        }
+        self.finalize()?;
         Ok(self.obj.take().unwrap())
     }
 
@@ -204,7 +211,7 @@ impl<W: Write> Builder<W> {
     /// operation then this may corrupt the archive.
     ///
     /// Note if the `path` is a directory. This will just add an entry to the archive,
-    /// rather than contents of the directory.  
+    /// rather than contents of the directory.
     ///
     /// Also note that after all files have been written to an archive the
     /// `finish` function needs to be called to finish writing the archive.
@@ -342,11 +349,11 @@ impl<W: Write> Builder<W> {
         )
     }
 
-    /// Finish writing this archive, emitting the termination sections.
+    /// Finish writing this archive, emitting the termination sections
     ///
     /// This function should only be called when the archive has been written
     /// entirely and if an I/O error happens the underlying object still needs
-    /// to be acquired.
+    /// to be acquired or contiguous archive needs to be finished.
     ///
     /// In most situations the `into_inner` method should be preferred.
     pub fn finish(&mut self) -> io::Result<()> {
@@ -355,6 +362,14 @@ impl<W: Write> Builder<W> {
         }
         self.finished = true;
         self.get_mut().write_all(&[0; 1024])
+    }
+
+    fn finalize(&mut self) -> io::Result<()> {
+        if !self.contiguous {
+            self.finish()
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -544,6 +559,6 @@ fn append_dir_all(
 
 impl<W: Write> Drop for Builder<W> {
     fn drop(&mut self) {
-        let _ = self.finish();
+        let _ = self.finalize();
     }
 }
