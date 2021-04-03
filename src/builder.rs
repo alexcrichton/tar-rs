@@ -410,6 +410,39 @@ fn append_path_with_name(
             Some(&link_name),
         )
     } else {
+        #[cfg(unix)]
+        {
+            append_special(dst, path, &stat, mode)
+        }
+        #[cfg(not(unix))]
+        {
+            Err(other(&format!("{} has unknown file type", path.display())))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn append_special(
+    dst: &mut dyn Write,
+    path: &Path,
+    stat: &fs::Metadata,
+    mode: HeaderMode,
+) -> io::Result<()> {
+    use ::std::os::unix::fs::FileTypeExt;
+    let file_type = stat.file_type();
+    if file_type.is_socket() {
+        // sockets can't be archived
+        Err(other(&format!(
+            "{}: socket can not be archived",
+            path.display()
+        )))
+    } else if file_type.is_fifo() {
+        append_fs_special(dst, path, &stat, EntryType::Fifo, mode)
+    } else if file_type.is_char_device() {
+        append_fs_special(dst, path, &stat, EntryType::Char, mode)
+    } else if file_type.is_block_device() {
+        append_fs_special(dst, path, &stat, EntryType::Block, mode)
+    } else {
         Err(other(&format!("{} has unknown file type", path.display())))
     }
 }
@@ -518,6 +551,32 @@ fn append_fs(
     append(dst, &header, read)
 }
 
+#[cfg(unix)]
+fn append_fs_special(
+    dst: &mut dyn Write,
+    path: &Path,
+    meta: &fs::Metadata,
+    entry_type: EntryType,
+    mode: HeaderMode,
+) -> io::Result<()> {
+    use ::std::os::unix::fs::MetadataExt;
+    let mut header = Header::new_gnu();
+    header.set_metadata_in_mode(meta, mode);
+    prepare_header_path(dst, &mut header, path)?;
+
+    header.set_entry_type(entry_type);
+    let dev_id = meta.rdev();
+    let dev_major = ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
+    let dev_minor = ((dev_id >> 12) & 0xffff_ff00) | ((dev_id) & 0x0000_00ff);
+    header.set_device_major(dev_major as u32)?;
+    header.set_device_minor(dev_minor as u32)?;
+
+    header.set_cksum();
+    dst.write_all(header.as_bytes())?;
+
+    Ok(())
+}
+
 fn append_dir_all(
     dst: &mut dyn Write,
     path: &Path,
@@ -543,6 +602,14 @@ fn append_dir_all(
             let link_name = fs::read_link(&src)?;
             append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name))?;
         } else {
+            #[cfg(unix)]
+            {
+                let stat = fs::metadata(&src)?;
+                if !stat.is_file() {
+                    append_special(dst, &dest, &stat, mode)?;
+                    continue;
+                }
+            }
             append_file(dst, &dest, &mut fs::File::open(src)?, mode)?;
         }
     }
