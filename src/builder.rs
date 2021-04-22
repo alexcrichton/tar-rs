@@ -584,15 +584,25 @@ fn append_dir_all(
     mode: HeaderMode,
     follow: bool,
 ) -> io::Result<()> {
-    let mut stack = vec![(src_path.to_path_buf(), true, false)];
-    while let Some((src, is_dir, is_symlink)) = stack.pop() {
+    let metadata = fs::metadata(src_path)?;
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a directory", src_path.display()),
+        ));
+    }
+    let mut stack = vec![(src_path.to_path_buf(), metadata)];
+    while let Some((src, metadata)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());
+        let file_type = metadata.file_type();
+        let is_dir = file_type.is_dir();
+        let is_symlink = file_type.is_symlink();
         // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
         if is_dir || (is_symlink && follow && src.is_dir()) {
             for entry in fs::read_dir(&src)? {
                 let entry = entry?;
-                let file_type = entry.file_type()?;
-                stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
+                let metadata = entry.metadata()?;
+                stack.push((entry.path(), metadata));
             }
             if dest != Path::new("") {
                 append_dir(dst, &dest, &src, mode)?;
@@ -604,9 +614,8 @@ fn append_dir_all(
         } else {
             #[cfg(unix)]
             {
-                let stat = fs::metadata(&src)?;
-                if !stat.is_file() {
-                    append_special(dst, &dest, &stat, mode)?;
+                if !file_type.is_file() {
+                    append_special(dst, &dest, &metadata, mode)?;
                     continue;
                 }
             }

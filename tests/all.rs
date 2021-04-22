@@ -1236,6 +1236,11 @@ fn tar_directory_containing_special_files() {
     // append_path has a different logic for processing files, so we need to test it as well
     t!(ar.append_path("fifo"));
     t!(ar.append_dir_all("special", td.path()));
+    // unfortunately, macOS CI can't handle `set_current_dir` correctly
+    if !cfg!(target_os = "linux") {
+        t!(ar.finish());
+        return;
+    }
     // unfortunately, block device file cannot be created by non-root users
     // as a substitute, just test the file that exists on most Unix systems
     t!(env::set_current_dir("/dev/"));
