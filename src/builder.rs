@@ -428,23 +428,41 @@ fn append_special(
     stat: &fs::Metadata,
     mode: HeaderMode,
 ) -> io::Result<()> {
-    use ::std::os::unix::fs::FileTypeExt;
+    use ::std::os::unix::fs::{FileTypeExt, MetadataExt};
+
     let file_type = stat.file_type();
+    let entry_type;
     if file_type.is_socket() {
         // sockets can't be archived
-        Err(other(&format!(
+        return Err(other(&format!(
             "{}: socket can not be archived",
             path.display()
-        )))
+        )));
     } else if file_type.is_fifo() {
-        append_fs_special(dst, path, &stat, EntryType::Fifo, mode)
+        entry_type = EntryType::Fifo;
     } else if file_type.is_char_device() {
-        append_fs_special(dst, path, &stat, EntryType::Char, mode)
+        entry_type = EntryType::Char;
     } else if file_type.is_block_device() {
-        append_fs_special(dst, path, &stat, EntryType::Block, mode)
+        entry_type = EntryType::Block;
     } else {
-        Err(other(&format!("{} has unknown file type", path.display())))
+        return Err(other(&format!("{} has unknown file type", path.display())));
     }
+
+    let mut header = Header::new_gnu();
+    header.set_metadata_in_mode(stat, mode);
+    prepare_header_path(dst, &mut header, path)?;
+
+    header.set_entry_type(entry_type);
+    let dev_id = stat.rdev();
+    let dev_major = ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
+    let dev_minor = ((dev_id >> 12) & 0xffff_ff00) | ((dev_id) & 0x0000_00ff);
+    header.set_device_major(dev_major as u32)?;
+    header.set_device_minor(dev_minor as u32)?;
+
+    header.set_cksum();
+    dst.write_all(header.as_bytes())?;
+
+    Ok(())
 }
 
 fn append_file(
@@ -551,32 +569,6 @@ fn append_fs(
     append(dst, &header, read)
 }
 
-#[cfg(unix)]
-fn append_fs_special(
-    dst: &mut dyn Write,
-    path: &Path,
-    meta: &fs::Metadata,
-    entry_type: EntryType,
-    mode: HeaderMode,
-) -> io::Result<()> {
-    use ::std::os::unix::fs::MetadataExt;
-    let mut header = Header::new_gnu();
-    header.set_metadata_in_mode(meta, mode);
-    prepare_header_path(dst, &mut header, path)?;
-
-    header.set_entry_type(entry_type);
-    let dev_id = meta.rdev();
-    let dev_major = ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
-    let dev_minor = ((dev_id >> 12) & 0xffff_ff00) | ((dev_id) & 0x0000_00ff);
-    header.set_device_major(dev_major as u32)?;
-    header.set_device_minor(dev_minor as u32)?;
-
-    header.set_cksum();
-    dst.write_all(header.as_bytes())?;
-
-    Ok(())
-}
-
 fn append_dir_all(
     dst: &mut dyn Write,
     path: &Path,
@@ -584,25 +576,15 @@ fn append_dir_all(
     mode: HeaderMode,
     follow: bool,
 ) -> io::Result<()> {
-    let metadata = fs::metadata(src_path)?;
-    if !metadata.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{} is not a directory", src_path.display()),
-        ));
-    }
-    let mut stack = vec![(src_path.to_path_buf(), metadata)];
-    while let Some((src, metadata)) = stack.pop() {
+    let mut stack = vec![(src_path.to_path_buf(), true, false)];
+    while let Some((src, is_dir, is_symlink)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());
-        let file_type = metadata.file_type();
-        let is_dir = file_type.is_dir();
-        let is_symlink = file_type.is_symlink();
         // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
         if is_dir || (is_symlink && follow && src.is_dir()) {
             for entry in fs::read_dir(&src)? {
                 let entry = entry?;
-                let metadata = entry.metadata()?;
-                stack.push((entry.path(), metadata));
+                let file_type = entry.file_type()?;
+                stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
             }
             if dest != Path::new("") {
                 append_dir(dst, &dest, &src, mode)?;
@@ -614,8 +596,9 @@ fn append_dir_all(
         } else {
             #[cfg(unix)]
             {
-                if !file_type.is_file() {
-                    append_special(dst, &dest, &metadata, mode)?;
+                let stat = fs::metadata(&src)?;
+                if !stat.is_file() {
+                    append_special(dst, &dest, &stat, mode)?;
                     continue;
                 }
             }
