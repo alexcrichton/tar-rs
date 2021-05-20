@@ -1149,3 +1149,29 @@ fn append_long_multibyte() {
         name.pop();
     }
 }
+
+#[test]
+fn read_only_directory_containing_files() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+    let mut b = Builder::new(Vec::<u8>::new());
+
+    let mut h = Header::new_gnu();
+    t!(h.set_path("dir/"));
+    h.set_size(0);
+    h.set_entry_type(EntryType::dir());
+    h.set_mode(0o444);
+    h.set_cksum();
+    t!(b.append(&h, "".as_bytes()));
+
+    let mut h = Header::new_gnu();
+    t!(h.set_path("dir/file"));
+    h.set_size(2);
+    h.set_entry_type(EntryType::file());
+    h.set_cksum();
+    t!(b.append(&h, "hi".as_bytes()));
+
+    let contents = t!(b.into_inner());
+    let mut ar = Archive::new(&contents[..]);
+    assert!(ar.unpack(td.path()).is_ok());
+}
