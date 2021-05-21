@@ -172,10 +172,22 @@ impl<'a> Archive<dyn Read + 'a> {
         // NotFound exception.
         let dst = &dst.canonicalize().unwrap_or(dst.to_path_buf());
 
+        // Delay any directory entries until the end (they will be created if needed by
+        // descendants), to ensure that directory permissions do not interfer with descendant
+        // extraction.
+        let mut directories = Vec::new();
         for entry in self._entries()? {
             let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
-            file.unpack_in(dst)?;
+            if file.header().entry_type() == crate::EntryType::Directory {
+                directories.push(file);
+            } else {
+                file.unpack_in(dst)?;
+            }
         }
+        for mut dir in directories {
+            dir.unpack_in(dst)?;
+        }
+
         Ok(())
     }
 
