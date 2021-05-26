@@ -610,6 +610,13 @@ impl<'a> EntryFields<'a> {
 
         if self.preserve_mtime {
             if let Ok(mtime) = self.header.mtime() {
+                // For some more information on this see the comments in
+                // `Header::fill_platform_from`, but the general idea is that
+                // we're trying to avoid 0-mtime files coming out of archives
+                // since some tools don't ingest them well. Perhaps one day
+                // when Cargo stops working with 0-mtime archives we can remove
+                // this.
+                let mtime = if mtime == 0 { 1 } else { mtime };
                 let mtime = FileTime::from_unix_time(mtime as i64, 0);
                 filetime::set_file_handle_times(&f, Some(mtime), Some(mtime)).map_err(|e| {
                     TarError::new(&format!("failed to set mtime for `{}`", dst.display()), e)

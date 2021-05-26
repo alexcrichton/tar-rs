@@ -734,7 +734,16 @@ impl Header {
                 self.set_mode(meta.mode() as u32);
             }
             HeaderMode::Deterministic => {
-                self.set_mtime(0);
+                // We could in theory set the mtime to zero here, but not all
+                // tools seem to behave well when ingesting files with a 0
+                // timestamp. For example rust-lang/cargo#9512 shows that lldb
+                // doesn't ingest files with a zero timestamp correctly.
+                //
+                // We just need things to be deterministic here so just pick
+                // something that isn't zero. This time, chosen after careful
+                // deliberation, corresponds to Nov 29, 1973.
+                self.set_mtime(123456789);
+
                 self.set_uid(0);
                 self.set_gid(0);
 
