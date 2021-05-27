@@ -11,7 +11,7 @@ use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
-use tar::{Archive, Builder, EntryType, Header};
+use tar::{Archive, Builder, EntryType, Header, HeaderMode};
 use tempfile::{Builder as TempBuilder, TempDir};
 
 macro_rules! t {
@@ -643,6 +643,27 @@ fn file_times() {
     assert_eq!(mtime.nanoseconds(), 0);
     assert_eq!(atime.unix_seconds(), 1000000000);
     assert_eq!(atime.nanoseconds(), 0);
+}
+
+#[test]
+fn zero_file_times() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+    let mut ar = Builder::new(Vec::new());
+    ar.mode(HeaderMode::Deterministic);
+    let path = td.path().join("tmpfile");
+    t!(File::create(&path));
+    t!(ar.append_path_with_name(&path, "a"));
+
+    let data = t!(ar.into_inner());
+    let mut ar = Archive::new(&data[..]);
+    assert!(ar.unpack(td.path()).is_ok());
+
+    let meta = fs::metadata(td.path().join("a")).unwrap();
+    let mtime = FileTime::from_last_modification_time(&meta);
+    let atime = FileTime::from_last_access_time(&meta);
+    assert!(mtime.unix_seconds() != 0);
+    assert!(atime.unix_seconds() != 0);
 }
 
 #[test]
