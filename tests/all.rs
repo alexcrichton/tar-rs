@@ -792,6 +792,22 @@ fn pax_path() {
 }
 
 #[test]
+fn pax_linkpath() {
+    let mut ar = Archive::new(tar!("pax2.tar"));
+    let mut links = t!(ar.entries()).skip(3).take(2);
+
+    let long_symlink = t!(links.next().unwrap());
+    let link_name = long_symlink.link_name().unwrap().unwrap();
+    assert!(link_name.to_str().unwrap().len() > 99);
+    assert!(link_name.ends_with("bbbbbbbbbbbbbbb"));
+
+    let long_hardlink = t!(links.next().unwrap());
+    let link_name = long_hardlink.link_name().unwrap().unwrap();
+    assert!(link_name.to_str().unwrap().len() > 99);
+    assert!(link_name.ends_with("ccccccccccccccc"));
+}
+
+#[test]
 fn long_name_trailing_nul() {
     let mut b = Builder::new(Vec::<u8>::new());
 
