@@ -1,5 +1,9 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [master]
+  pull_request:
 
 jobs:
   test:
@@ -7,8 +11,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        build: [stable, beta, nightly, macos, windows]
+        build: [msrv, stable, beta, nightly, macos, windows]
         include:
+          - build: msrv
+            os: ubuntu-latest
+            rust: 1.51
           - build: stable
             os: ubuntu-latest
             rust: stable
@@ -26,30 +33,50 @@ jobs:
             rust: stable
     steps:
     - uses: actions/checkout@master
-    - name: Install Rust
-      run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}
-      shell: bash
-    - run: cargo test
-    - run: cargo test --no-default-features
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: ${{ matrix.rust }}
+        override: true
+    - uses: actions-rs/cargo@v1
+      with:
+        command: test
+    - uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --no-default-features
+
 
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@master
-    - name: Install Rust
-      run: rustup update stable && rustup default stable && rustup component add rustfmt
-    - run: cargo fmt -- --check
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: nightly
+        override: true
+        components: rustfmt
+    - uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: -- --check
 
   publish_docs:
     name: Publish Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
-      - name: Install Rust
-        run: rustup update stable && rustup default stable
-      - name: Build documentation
-        run: cargo doc --no-deps --all-features
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: doc
+          args: --no-deps --all-features
       - name: Publish documentation
         run: |
           cd target/doc
