@@ -646,12 +646,9 @@ impl Header {
     /// minor device number.
     pub fn set_device_minor(&mut self, minor: u32) -> io::Result<()> {
         if let Some(ustar) = self.as_ustar_mut() {
-            return {
-                ustar.set_device_minor(minor);
-                Ok(())
-            };
-        }
-        if let Some(gnu) = self.as_gnu_mut() {
+            ustar.set_device_minor(minor);
+            Ok(())
+        } else if let Some(gnu) = self.as_gnu_mut() {
             gnu.set_device_minor(minor);
             Ok(())
         } else {
