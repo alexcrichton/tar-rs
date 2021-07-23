@@ -613,12 +613,9 @@ impl Header {
     /// major device number.
     pub fn set_device_major(&mut self, major: u32) -> io::Result<()> {
         if let Some(ustar) = self.as_ustar_mut() {
-            return {
-                ustar.set_device_major(major);
-                Ok(())
-            };
-        }
-        if let Some(gnu) = self.as_gnu_mut() {
+            ustar.set_device_major(major);
+            Ok(())
+        } else if let Some(gnu) = self.as_gnu_mut() {
             gnu.set_device_major(major);
             Ok(())
         } else {
