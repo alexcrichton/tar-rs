@@ -26,6 +26,7 @@ pub struct Header {
 /// Declares the information that should be included when filling a Header
 /// from filesystem metadata.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub enum HeaderMode {
     /// All supported metadata, including mod/access times and ownership will
     /// be included.
@@ -34,9 +35,6 @@ pub enum HeaderMode {
     /// Only metadata that is directly relevant to the identity of a file will
     /// be included. In particular, ownership and mod/access times are excluded.
     Deterministic,
-
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// Representation of the header of an entry in an archive
@@ -615,10 +613,11 @@ impl Header {
     /// major device number.
     pub fn set_device_major(&mut self, major: u32) -> io::Result<()> {
         if let Some(ustar) = self.as_ustar_mut() {
-            return Ok(ustar.set_device_major(major));
-        }
-        if let Some(gnu) = self.as_gnu_mut() {
-            Ok(gnu.set_device_major(major))
+            ustar.set_device_major(major);
+            Ok(())
+        } else if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_device_major(major);
+            Ok(())
         } else {
             Err(other("not a ustar or gnu archive, cannot set dev_major"))
         }
@@ -647,10 +646,11 @@ impl Header {
     /// minor device number.
     pub fn set_device_minor(&mut self, minor: u32) -> io::Result<()> {
         if let Some(ustar) = self.as_ustar_mut() {
-            return Ok(ustar.set_device_minor(minor));
-        }
-        if let Some(gnu) = self.as_gnu_mut() {
-            Ok(gnu.set_device_minor(minor))
+            ustar.set_device_minor(minor);
+            Ok(())
+        } else if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_device_minor(minor);
+            Ok(())
         } else {
             Err(other("not a ustar or gnu archive, cannot set dev_minor"))
         }
@@ -755,7 +755,6 @@ impl Header {
                 };
                 self.set_mode(fs_mode);
             }
-            HeaderMode::__Nonexhaustive => panic!(),
         }
 
         // Note that if we are a GNU header we *could* set atime/ctime, except
@@ -815,7 +814,6 @@ impl Header {
                 let fs_mode = if meta.is_dir() { 0o755 } else { 0o644 };
                 self.set_mode(fs_mode);
             }
-            HeaderMode::__Nonexhaustive => panic!(),
         }
 
         let ft = meta.file_type();
@@ -940,7 +938,7 @@ impl UstarHeader {
         } else {
             let mut bytes = Vec::new();
             let prefix = truncate(&self.prefix);
-            if prefix.len() > 0 {
+            if !prefix.is_empty() {
                 bytes.extend_from_slice(prefix);
                 bytes.push(b'/');
             }
@@ -1113,8 +1111,8 @@ impl GnuHeader {
     fn fullname_lossy(&self) -> String {
         format!(
             "{}:{}",
-            String::from_utf8_lossy(&self.groupname_bytes()),
-            String::from_utf8_lossy(&self.username_bytes()),
+            String::from_utf8_lossy(self.groupname_bytes()),
+            String::from_utf8_lossy(self.username_bytes()),
         )
     }
 
