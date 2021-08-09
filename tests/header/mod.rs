@@ -154,6 +154,10 @@ fn set_path() {
     assert!(h.set_path(&medium2).is_err());
     assert!(h.set_path("\0").is_err());
 
+    assert!(h.set_path("..").is_err());
+    assert!(h.set_path("foo/..").is_err());
+    assert!(h.set_path("foo/../bar").is_err());
+
     h = Header::new_ustar();
     t!(h.set_path("foo"));
     assert_eq!(t!(h.path()).to_str(), Some("foo"));
