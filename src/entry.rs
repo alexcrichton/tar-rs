@@ -413,11 +413,8 @@ impl<'a> EntryFields<'a> {
             None => return Ok(false),
         };
 
-        if parent.symlink_metadata().is_err() {
-            fs::create_dir_all(&parent).map_err(|e| {
-                TarError::new(&format!("failed to create `{}`", parent.display()), e)
-            })?;
-        }
+        self.ensure_dir_created(&dst, parent)
+            .map_err(|e| TarError::new(&format!("failed to create `{}`", parent.display()), e))?;
 
         let canon_target = self.validate_inside_dst(&dst, parent)?;
 
@@ -759,6 +756,26 @@ impl<'a> EntryFields<'a> {
         fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    fn ensure_dir_created(&self, dst: &Path, dir: &Path) -> io::Result<()> {
+        let mut ancestor = dir;
+        let mut dirs_to_create = Vec::new();
+        while ancestor.symlink_metadata().is_err() {
+            dirs_to_create.push(ancestor);
+            if let Some(parent) = ancestor.parent() {
+                ancestor = parent;
+            } else {
+                break;
+            }
+        }
+        for ancestor in dirs_to_create.into_iter().rev() {
+            if let Some(parent) = ancestor.parent() {
+                self.validate_inside_dst(dst, parent)?;
+            }
+            fs::create_dir(ancestor)?;
+        }
+        Ok(())
     }
 
     fn validate_inside_dst(&self, dst: &Path, file_dst: &Path) -> io::Result<PathBuf> {
