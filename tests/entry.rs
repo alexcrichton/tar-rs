@@ -1,7 +1,7 @@
 extern crate tar;
 extern crate tempfile;
 
-use std::fs::File;
+use std::fs::{create_dir, File};
 use std::io::Read;
 
 use tempfile::Builder;
@@ -217,6 +217,36 @@ fn modify_link_just_created() {
     t!(File::open(td.path().join("bar/bar")));
     t!(File::open(td.path().join("foo/foo")));
     t!(File::open(td.path().join("foo/bar")));
+}
+
+#[test]
+#[cfg(not(windows))] // dangling symlinks have weird permissions
+fn modify_outside_with_relative_symlink() {
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Symlink);
+    t!(header.set_path("symlink"));
+    t!(header.set_link_name(".."));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("symlink/foo/bar"));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+
+    let td = t!(Builder::new().prefix("tar").tempdir());
+    let tar_dir = td.path().join("tar");
+    create_dir(&tar_dir).unwrap();
+    assert!(ar.unpack(tar_dir).is_err());
+    assert!(!td.path().join("foo").exists());
 }
 
 #[test]
