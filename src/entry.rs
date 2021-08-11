@@ -773,7 +773,7 @@ impl<'a> EntryFields<'a> {
             if let Some(parent) = ancestor.parent() {
                 self.validate_inside_dst(dst, parent)?;
             }
-            fs::create_dir(ancestor)?;
+            fs::create_dir_all(ancestor)?;
         }
         Ok(())
     }
