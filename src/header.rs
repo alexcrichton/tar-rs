@@ -741,8 +741,9 @@ impl Header {
                 //
                 // We just need things to be deterministic here so just pick
                 // something that isn't zero. This time, chosen after careful
-                // deliberation, corresponds to Nov 29, 1973.
-                self.set_mtime(123456789);
+                // deliberation, corresponds to Jul 23, 2006 -- the date of the
+                // first commit for what would become Rust.
+                self.set_mtime(1153704088);
 
                 self.set_uid(0);
                 self.set_gid(0);
