@@ -301,7 +301,10 @@ impl<'a> EntriesFields<'a> {
         let size = size
             .checked_add(511)
             .ok_or_else(|| other("size overflow"))?;
-        self.next += size & !(512 - 1);
+        self.next = self
+            .next
+            .checked_add(size & !(512 - 1))
+            .ok_or_else(|| other("size overflow"))?;
 
         Ok(Some(ret.into_entry()))
     }

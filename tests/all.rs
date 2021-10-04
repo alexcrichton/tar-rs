@@ -1248,13 +1248,40 @@ fn tar_directory_containing_special_files() {
 
 #[test]
 fn header_size_overflow() {
+    // maximal file size doesn't overflow anything
     let mut ar = Builder::new(Vec::new());
     let mut header = Header::new_gnu();
-    header.set_size(0xffffffffffffffff);
+    header.set_size(u64::MAX);
     header.set_cksum();
     ar.append(&mut header, "x".as_bytes()).unwrap();
     let result = t!(ar.into_inner());
     let mut ar = Archive::new(&result[..]);
     let mut e = ar.entries().unwrap();
-    assert!(e.next().unwrap().is_err());
+    let err = e.next().unwrap().err().unwrap();
+    assert!(
+        err.to_string().contains("size overflow"),
+        "bad error: {}",
+        err
+    );
+
+    // back-to-back entries that would overflow also don't panic
+    let mut ar = Builder::new(Vec::new());
+    let mut header = Header::new_gnu();
+    header.set_size(1_000);
+    header.set_cksum();
+    ar.append(&mut header, &[0u8; 1_000][..]).unwrap();
+    let mut header = Header::new_gnu();
+    header.set_size(u64::MAX - 513);
+    header.set_cksum();
+    ar.append(&mut header, "x".as_bytes()).unwrap();
+    let result = t!(ar.into_inner());
+    let mut ar = Archive::new(&result[..]);
+    let mut e = ar.entries().unwrap();
+    e.next().unwrap().unwrap();
+    let err = e.next().unwrap().err().unwrap();
+    assert!(
+        err.to_string().contains("size overflow"),
+        "bad error: {}",
+        err
+    );
 }
