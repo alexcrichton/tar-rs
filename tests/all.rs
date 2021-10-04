@@ -1245,3 +1245,16 @@ fn tar_directory_containing_special_files() {
     t!(ar.append_path("null"));
     t!(ar.finish());
 }
+
+#[test]
+fn header_size_overflow() {
+    let mut ar = Builder::new(Vec::new());
+    let mut header = Header::new_gnu();
+    header.set_size(0xffffffffffffffff);
+    header.set_cksum();
+    ar.append(&mut header, "x".as_bytes()).unwrap();
+    let result = t!(ar.into_inner());
+    let mut ar = Archive::new(&result[..]);
+    let mut e = ar.entries().unwrap();
+    assert!(e.next().unwrap().is_err());
+}

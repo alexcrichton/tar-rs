@@ -298,8 +298,10 @@ impl<'a> EntriesFields<'a> {
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
         // a header);
-        let size = (size + 511) & !(512 - 1);
-        self.next += size;
+        let size = size
+            .checked_add(511)
+            .ok_or_else(|| other("size overflow"))?;
+        self.next += size & !(512 - 1);
 
         Ok(Some(ret.into_entry()))
     }
