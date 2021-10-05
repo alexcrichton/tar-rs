@@ -11,7 +11,7 @@ use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
-use tar::{Archive, Builder, EntryType, Header, HeaderMode};
+use tar::{Archive, Builder, Entries, EntryType, Header, HeaderMode};
 use tempfile::{Builder as TempBuilder, TempDir};
 
 macro_rules! t {
@@ -203,11 +203,7 @@ fn large_filename() {
     assert!(entries.next().is_none());
 }
 
-#[test]
-fn reading_entries() {
-    let rdr = Cursor::new(tar!("reading_files.tar"));
-    let mut ar = Archive::new(rdr);
-    let mut entries = t!(ar.entries());
+fn reading_entries_common<R: Read>(mut entries: Entries<R>) {
     let mut a = t!(entries.next().unwrap());
     assert_eq!(&*a.header().path_bytes(), b"a");
     let mut s = String::new();
@@ -216,13 +212,74 @@ fn reading_entries() {
     s.truncate(0);
     t!(a.read_to_string(&mut s));
     assert_eq!(s, "");
-    let mut b = t!(entries.next().unwrap());
 
+    let mut b = t!(entries.next().unwrap());
     assert_eq!(&*b.header().path_bytes(), b"b");
     s.truncate(0);
     t!(b.read_to_string(&mut s));
     assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
     assert!(entries.next().is_none());
+}
+
+#[test]
+fn reading_entries() {
+    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let mut ar = Archive::new(rdr);
+    reading_entries_common(t!(ar.entries()));
+}
+
+#[test]
+fn reading_entries_with_seek() {
+    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let mut ar = Archive::new(rdr);
+    reading_entries_common(t!(ar.entries_with_seek()));
+}
+
+struct LoggingReader<R> {
+    inner: R,
+    read_bytes: u64,
+}
+
+impl<R> LoggingReader<R> {
+    fn new(reader: R) -> LoggingReader<R> {
+        LoggingReader {
+            inner: reader,
+            read_bytes: 0,
+        }
+    }
+}
+
+impl<T: Read> Read for LoggingReader<T> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf).map(|i| {
+            self.read_bytes += i as u64;
+            i
+        })
+    }
+}
+
+impl<T: Seek> Seek for LoggingReader<T> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+#[test]
+fn skipping_entries_with_seek() {
+    let mut reader = LoggingReader::new(Cursor::new(tar!("reading_files.tar")));
+    let mut ar_reader = Archive::new(&mut reader);
+    let files: Vec<_> = t!(ar_reader.entries())
+        .map(|entry| entry.unwrap().path().unwrap().to_path_buf())
+        .collect();
+
+    let mut seekable_reader = LoggingReader::new(Cursor::new(tar!("reading_files.tar")));
+    let mut ar_seekable_reader = Archive::new(&mut seekable_reader);
+    let files_seekable: Vec<_> = t!(ar_seekable_reader.entries_with_seek())
+        .map(|entry| entry.unwrap().path().unwrap().to_path_buf())
+        .collect();
+
+    assert!(files == files_seekable);
+    assert!(seekable_reader.read_bytes < reader.read_bytes);
 }
 
 fn check_dirtree(td: &TempDir) {
