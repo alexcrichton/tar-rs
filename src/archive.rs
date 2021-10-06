@@ -2,8 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::cmp;
 use std::convert::TryFrom;
 use std::fs;
-use std::io;
 use std::io::prelude::*;
+use std::io::{self, SeekFrom};
 use std::marker;
 use std::path::Path;
 
@@ -166,11 +166,11 @@ impl<R: Seek + Read> Archive<R> {
     }
 }
 
-impl<'a> Archive<dyn Read + 'a> {
-    fn _entries(
+impl Archive<dyn Read + '_> {
+    fn _entries<'a>(
         &'a self,
         seekable_archive: Option<&'a Archive<dyn SeekRead + 'a>>,
-    ) -> io::Result<EntriesFields> {
+    ) -> io::Result<EntriesFields<'a>> {
         if self.inner.pos.get() != 0 {
             return Err(other(
                 "cannot call entries unless archive is at \
@@ -186,7 +186,7 @@ impl<'a> Archive<dyn Read + 'a> {
         })
     }
 
-    fn _unpack(&'a mut self, dst: &Path) -> io::Result<()> {
+    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
         if dst.symlink_metadata().is_err() {
             fs::create_dir_all(&dst)
                 .map_err(|e| TarError::new(&format!("failed to create `{}`", dst.display()), e))?;
@@ -215,19 +215,6 @@ impl<'a> Archive<dyn Read + 'a> {
             dir.unpack_in(dst)?;
         }
 
-        Ok(())
-    }
-
-    fn skip(&self, mut amt: u64) -> io::Result<()> {
-        let mut buf = [0u8; 4096 * 8];
-        while amt > 0 {
-            let n = cmp::min(amt, buf.len() as u64);
-            let n = (&self.inner).read(&mut buf[..n as usize])?;
-            if n == 0 {
-                return Err(other("unexpected EOF during skip"));
-            }
-            amt -= n as u64;
-        }
         Ok(())
     }
 }
@@ -509,17 +496,24 @@ impl<'a> EntriesFields<'a> {
         Ok(())
     }
 
-    fn skip(&mut self, amt: u64) -> io::Result<()> {
+    fn skip(&mut self, mut amt: u64) -> io::Result<()> {
         if let Some(seekable_archive) = self.seekable_archive {
             let pos = io::SeekFrom::Current(
                 i64::try_from(amt).map_err(|_| other("seek position out of bounds"))?,
             );
-            let i = seekable_archive.inner.obj.borrow_mut().seek(pos)?;
-            seekable_archive.inner.pos.set(i);
-            Ok(())
+            (&seekable_archive.inner).seek(pos)?;
         } else {
-            self.archive.skip(amt)
+            let mut buf = [0u8; 4096 * 8];
+            while amt > 0 {
+                let n = cmp::min(amt, buf.len() as u64);
+                let n = (&self.archive.inner).read(&mut buf[..n as usize])?;
+                if n == 0 {
+                    return Err(other("unexpected EOF during skip"));
+                }
+                amt -= n as u64;
+            }
         }
+        Ok(())
     }
 }
 
@@ -547,10 +541,17 @@ impl<'a> Iterator for EntriesFields<'a> {
 
 impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        self.obj.borrow_mut().read(into).map(|i| {
-            self.pos.set(self.pos.get() + i as u64);
-            i
-        })
+        let i = self.obj.borrow_mut().read(into)?;
+        self.pos.set(self.pos.get() + i as u64);
+        Ok(i)
+    }
+}
+
+impl<'a, R: ?Sized + Seek> Seek for &'a ArchiveInner<R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let pos = self.obj.borrow_mut().seek(pos)?;
+        self.pos.set(pos);
+        Ok(pos)
     }
 }
 
