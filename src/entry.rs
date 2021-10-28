@@ -379,7 +379,7 @@ impl<'a> EntryFields<'a> {
         {
             let path = self.path().map_err(|e| {
                 TarError::new(
-                    &format!("invalid path in entry header: {}", self.path_lossy()),
+                    format!("invalid path in entry header: {}", self.path_lossy()),
                     e,
                 )
             })?;
@@ -414,12 +414,12 @@ impl<'a> EntryFields<'a> {
         };
 
         self.ensure_dir_created(&dst, parent)
-            .map_err(|e| TarError::new(&format!("failed to create `{}`", parent.display()), e))?;
+            .map_err(|e| TarError::new(format!("failed to create `{}`", parent.display()), e))?;
 
         let canon_target = self.validate_inside_dst(&dst, parent)?;
 
         self.unpack(Some(&canon_target), &file_dst)
-            .map_err(|e| TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e))?;
+            .map_err(|e| TarError::new(format!("failed to unpack `{}`", file_dst.display()), e))?;
 
         Ok(true)
     }
@@ -607,7 +607,7 @@ impl<'a> EntryFields<'a> {
         .map_err(|e| {
             let header = self.header.path_bytes();
             TarError::new(
-                &format!(
+                format!(
                     "failed to unpack `{}` into `{}`",
                     String::from_utf8_lossy(&header),
                     dst.display()
@@ -627,7 +627,7 @@ impl<'a> EntryFields<'a> {
                 let mtime = if mtime == 0 { 1 } else { mtime };
                 let mtime = FileTime::from_unix_time(mtime as i64, 0);
                 filetime::set_file_handle_times(&f, Some(mtime), Some(mtime)).map_err(|e| {
-                    TarError::new(&format!("failed to set mtime for `{}`", dst.display()), e)
+                    TarError::new(format!("failed to set mtime for `{}`", dst.display()), e)
                 })?;
             }
         }
@@ -647,7 +647,7 @@ impl<'a> EntryFields<'a> {
         ) -> Result<(), TarError> {
             _set_perms(dst, f, mode, preserve).map_err(|e| {
                 TarError::new(
-                    &format!(
+                    format!(
                         "failed to set permissions to {:o} \
                          for `{}`",
                         mode,
@@ -735,7 +735,7 @@ impl<'a> EntryFields<'a> {
             for (key, value) in exts {
                 xattr::set(dst, key, value).map_err(|e| {
                     TarError::new(
-                        &format!(
+                        format!(
                             "failed to set extended \
                              attributes to {}. \
                              Xattrs: key={:?}, value={:?}.",
@@ -794,7 +794,7 @@ impl<'a> EntryFields<'a> {
         })?;
         if !canon_parent.starts_with(&canon_target) {
             let err = TarError::new(
-                &format!(
+                format!(
                     "trying to unpack outside of destination path: {}",
                     canon_target.display()
                 ),
