@@ -1,17 +1,18 @@
+use std::borrow::Cow;
 use std::error;
 use std::fmt;
 use std::io::{self, Error};
 
 #[derive(Debug)]
 pub struct TarError {
-    desc: String,
+    desc: Cow<'static, str>,
     io: io::Error,
 }
 
 impl TarError {
-    pub fn new(desc: &str, err: Error) -> TarError {
+    pub fn new(desc: impl Into<Cow<'static, str>>, err: Error) -> TarError {
         TarError {
-            desc: desc.to_string(),
+            desc: desc.into(),
             io: err,
         }
     }
