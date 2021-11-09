@@ -7,6 +7,7 @@ use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
 use std::path::{Component, Path, PathBuf};
 
+#[allow(unused_imports)]
 use filetime::{self, FileTime};
 
 use crate::archive::ArchiveInner;
@@ -572,6 +573,7 @@ impl<'a> EntryFields<'a> {
         fn open(dst: &Path) -> io::Result<std::fs::File> {
             OpenOptions::new().write(true).create_new(true).open(dst)
         }
+        #[allow(unused_mut)]
         let mut f = (|| -> io::Result<std::fs::File> {
             let mut f = open(dst).or_else(|err| {
                 if err.kind() != ErrorKind::AlreadyExists {
@@ -616,6 +618,7 @@ impl<'a> EntryFields<'a> {
             )
         })?;
 
+        #[cfg(not(target_os = "wasi"))]
         if self.preserve_mtime {
             if let Ok(mtime) = self.header.mtime() {
                 // For some more information on this see the comments in
@@ -631,9 +634,11 @@ impl<'a> EntryFields<'a> {
                 })?;
             }
         }
+        #[cfg(not(target_os = "wasi"))]
         if let Ok(mode) = self.header.mode() {
             set_perms(dst, Some(&mut f), mode, self.preserve_permissions)?;
         }
+        #[cfg(not(target_os = "wasi"))]
         if self.unpack_xattrs {
             set_xattrs(self, dst)?;
         }
@@ -752,6 +757,7 @@ impl<'a> EntryFields<'a> {
         }
         // Windows does not completely support posix xattrs
         // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
+        #[allow(dead_code)]
         #[cfg(any(windows, not(feature = "xattr"), target_arch = "wasm32"))]
         fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
             Ok(())
@@ -780,18 +786,26 @@ impl<'a> EntryFields<'a> {
 
     fn validate_inside_dst(&self, dst: &Path, file_dst: &Path) -> io::Result<PathBuf> {
         // Abort if target (canonical) parent is outside of `dst`
+        #[cfg(not(target_os = "wasi"))]
         let canon_parent = file_dst.canonicalize().map_err(|err| {
             Error::new(
                 err.kind(),
                 format!("{} while canonicalizing {}", err, file_dst.display()),
             )
         })?;
+        #[cfg(target_os = "wasi")]
+        let canon_parent = file_dst.to_path_buf();
+
+        #[cfg(not(target_os = "wasi"))]
         let canon_target = dst.canonicalize().map_err(|err| {
             Error::new(
                 err.kind(),
                 format!("{} while canonicalizing {}", err, dst.display()),
             )
         })?;
+        #[cfg(target_os = "wasi")]
+        let canon_target = dst.to_path_buf();
+
         if !canon_parent.starts_with(&canon_target) {
             let err = TarError::new(
                 format!(
