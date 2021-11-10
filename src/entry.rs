@@ -13,7 +13,6 @@ use crate::archive::ArchiveInner;
 use crate::error::TarError;
 use crate::header::bytes2path;
 use crate::other;
-use crate::pax::pax_extensions;
 use crate::{Archive, Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
@@ -300,7 +299,7 @@ impl<'a> EntryFields<'a> {
             }
             None => {
                 if let Some(ref pax) = self.pax_extensions {
-                    let pax = pax_extensions(pax)
+                    let pax = PaxExtensions::new(pax)
                         .filter_map(|f| f.ok())
                         .find(|f| f.key_bytes() == b"path")
                         .map(|f| f.value_bytes());
@@ -336,7 +335,7 @@ impl<'a> EntryFields<'a> {
             }
             None => {
                 if let Some(ref pax) = self.pax_extensions {
-                    let pax = pax_extensions(pax)
+                    let pax = PaxExtensions::new(pax)
                         .filter_map(|f| f.ok())
                         .find(|f| f.key_bytes() == b"linkpath")
                         .map(|f| f.value_bytes());
@@ -358,7 +357,9 @@ impl<'a> EntryFields<'a> {
             }
             self.pax_extensions = Some(self.read_all()?);
         }
-        Ok(Some(pax_extensions(self.pax_extensions.as_ref().unwrap())))
+        Ok(Some(PaxExtensions::new(
+            self.pax_extensions.as_ref().unwrap(),
+        )))
     }
 
     fn unpack_in(&mut self, dst: &Path) -> io::Result<bool> {
