@@ -1,3 +1,4 @@
+#![cfg(not(target_os = "wasi"))]
 extern crate tar;
 extern crate tempfile;
 

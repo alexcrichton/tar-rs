@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "wasi", allow(unused_imports, dead_code))]
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -35,6 +36,7 @@ fn goto_ustar() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn link_name() {
     let mut h = Header::new_gnu();
     t!(h.set_link_name("foo"));
@@ -124,6 +126,7 @@ fn dev_major_minor() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn set_path() {
     let mut h = Header::new_gnu();
     t!(h.set_path("foo"));
@@ -177,6 +180,7 @@ fn set_ustar_path_hard() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn set_metadata_deterministic() {
     let td = t!(Builder::new().prefix("tar-rs").tempdir());
     let tmppath = td.path().join("tmpfile");

@@ -1616,13 +1616,32 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
         Cow::Borrowed(bytes) => {
             Cow::Borrowed(Path::new(str::from_utf8(bytes).map_err(invalid_utf8)?))
         }
-        Cow::Owned(bytes) => {
-            Cow::Owned(PathBuf::from(String::from_utf8(bytes).map_err(invalid_utf8)?))
-        }
+        Cow::Owned(bytes) => Cow::Owned(PathBuf::from(
+            String::from_utf8(bytes).map_err(invalid_utf8)?,
+        )),
     })
 }
 
 #[cfg(target_arch = "wasm32")]
 fn invalid_utf8<T>(_: T) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid utf-8")
+}
+
+pub fn canonicalize(path: &Path) -> PathBuf {
+    canonicalize_or_err(path).unwrap_or(path.to_path_buf())
+}
+
+#[cfg(not(target_os = "wasi"))]
+pub fn canonicalize_or_err(path: &Path) -> io::Result<PathBuf> {
+    Ok(path.canonicalize().map_err(|err| {
+        io::Error::new(
+            err.kind(),
+            format!("{} while canonicalizing {}", err, path.display()),
+        )
+    })?)
+}
+
+#[cfg(target_os = "wasi")]
+pub fn canonicalize_or_err(path: &Path) -> io::Result<PathBuf> {
+    Ok(path.to_path_buf())
 }

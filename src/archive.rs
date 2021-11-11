@@ -13,6 +13,7 @@ use crate::error::TarError;
 use crate::other;
 use crate::pax::pax_extensions_size;
 use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
+use crate::header::canonicalize;
 
 /// A top-level representation of an archive file.
 ///
@@ -198,10 +199,7 @@ impl Archive<dyn Read + '_> {
         // extended-length path with a 32,767 character limit. Otherwise all
         // unpacked paths over 260 characters will fail on creation with a
         // NotFound exception.
-        #[cfg(not(target_os = "wasi"))]
-        let dst = &dst.canonicalize().unwrap_or(dst.to_path_buf());
-        #[cfg(target_os = "wasi")]
-        let dst = &dst.to_path_buf();
+        let dst = &canonicalize(&dst);
 
         // Delay any directory entries until the end (they will be created if needed by
         // descendants), to ensure that directory permissions do not interfer with descendant

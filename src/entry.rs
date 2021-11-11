@@ -16,6 +16,7 @@ use crate::header::bytes2path;
 use crate::other;
 use crate::pax::pax_extensions;
 use crate::{Archive, Header, PaxExtensions};
+use crate::header::canonicalize_or_err;
 
 /// A read-only view into an entry of an archive.
 ///
@@ -786,25 +787,8 @@ impl<'a> EntryFields<'a> {
 
     fn validate_inside_dst(&self, dst: &Path, file_dst: &Path) -> io::Result<PathBuf> {
         // Abort if target (canonical) parent is outside of `dst`
-        #[cfg(not(target_os = "wasi"))]
-        let canon_parent = file_dst.canonicalize().map_err(|err| {
-            Error::new(
-                err.kind(),
-                format!("{} while canonicalizing {}", err, file_dst.display()),
-            )
-        })?;
-        #[cfg(target_os = "wasi")]
-        let canon_parent = file_dst.to_path_buf();
-
-        #[cfg(not(target_os = "wasi"))]
-        let canon_target = dst.canonicalize().map_err(|err| {
-            Error::new(
-                err.kind(),
-                format!("{} while canonicalizing {}", err, dst.display()),
-            )
-        })?;
-        #[cfg(target_os = "wasi")]
-        let canon_target = dst.to_path_buf();
+        let canon_parent = canonicalize_or_err(file_dst)?;
+        let canon_target = canonicalize_or_err(dst)?;
 
         if !canon_parent.starts_with(&canon_target) {
             let err = TarError::new(
