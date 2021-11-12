@@ -153,7 +153,7 @@ impl<R: Read> Archive<R> {
 fn default_preserve_mtime() -> bool {
     if cfg!(target_os = "wasi") {
         // The filetime crate does not yet implement updating file times but hopefully
-        // the upstream developers will incorporate it at which point at which time we
+        // the upstream developers will incorporate it at which time this we
         // can default again to preserving mtime on WASI systems
         // see: https://github.com/alexcrichton/filetime/blob/master/src/wasm.rs#L34
         return false;

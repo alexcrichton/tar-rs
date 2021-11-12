@@ -722,7 +722,7 @@ impl<'a> EntryFields<'a> {
             preserve: bool,
         ) -> io::Result<()> {
             if cfg!(target_os = "wasi") {
-                // WASI file permissions have not yet been implemented in the standard library panics
+                // WASI file permissions have not yet been implemented in the standard library
                 // see: https://github.com/rust-lang/rust/blob/master/library/std/src/sys/wasi/fs.rs#L538
                 if preserve {
                     Err(io::Error::new(io::ErrorKind::Other, "setting file permissions not yet supported on WASI - omit preserve_permissions to avoid this error"))
