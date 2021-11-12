@@ -41,6 +41,8 @@ jobs:
       run: rustup update stable && rustup default stable && rustup component add rustfmt
     - name: Install WASI
       run: cargo install cargo-wasi
+    - name: Install wasmtime
+      run: curl https://wasmtime.dev/install.sh -sSf | bash
     - run: cargo wasi test -- --nocapture
 
   rustfmt:
