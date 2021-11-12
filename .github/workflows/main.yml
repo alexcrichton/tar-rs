@@ -32,6 +32,17 @@ jobs:
     - run: cargo test
     - run: cargo test --no-default-features
 
+  wasi:
+    name: Wasi
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust
+      run: rustup update stable && rustup default stable && rustup component add rustfmt
+    - name: Install WASI
+      run: cargo install cargo-wasi
+    - run: cargo wasi test -- --nocapture
+
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest
