@@ -1631,17 +1631,17 @@ pub fn canonicalize(path: &Path) -> PathBuf {
     canonicalize_or_err(path).unwrap_or(path.to_path_buf())
 }
 
-#[cfg(not(target_os = "wasi"))]
 pub fn canonicalize_or_err(path: &Path) -> io::Result<PathBuf> {
-    Ok(path.canonicalize().map_err(|err| {
-        io::Error::new(
-            err.kind(),
-            format!("{} while canonicalizing {}", err, path.display()),
-        )
-    })?)
-}
-
-#[cfg(target_os = "wasi")]
-pub fn canonicalize_or_err(path: &Path) -> io::Result<PathBuf> {
-    Ok(path.to_path_buf())
+    if cfg!(target_os = "wasi") {
+        // canonicalize is not yet supported in the standard library
+        // see: https://github.com/rust-lang/rust/blob/master/library/std/src/sys/wasi/fs.rs#L609
+        return Ok(path.to_path_buf());
+    } else {
+        Ok(path.canonicalize().map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, path.display()),
+            )
+        })?)
+    }    
 }

@@ -7,9 +7,6 @@ use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
 use std::path::{Component, Path, PathBuf};
 
-#[allow(unused_imports)]
-use filetime::{self, FileTime};
-
 use crate::archive::ArchiveInner;
 use crate::error::TarError;
 use crate::header::bytes2path;
@@ -574,7 +571,6 @@ impl<'a> EntryFields<'a> {
         fn open(dst: &Path) -> io::Result<std::fs::File> {
             OpenOptions::new().write(true).create_new(true).open(dst)
         }
-        #[allow(unused_mut)]
         let mut f = (|| -> io::Result<std::fs::File> {
             let mut f = open(dst).or_else(|err| {
                 if err.kind() != ErrorKind::AlreadyExists {
@@ -619,31 +615,43 @@ impl<'a> EntryFields<'a> {
             )
         })?;
 
-        #[cfg(not(target_os = "wasi"))]
         if self.preserve_mtime {
             if let Ok(mtime) = self.header.mtime() {
-                // For some more information on this see the comments in
-                // `Header::fill_platform_from`, but the general idea is that
-                // we're trying to avoid 0-mtime files coming out of archives
-                // since some tools don't ingest them well. Perhaps one day
-                // when Cargo stops working with 0-mtime archives we can remove
-                // this.
-                let mtime = if mtime == 0 { 1 } else { mtime };
-                let mtime = FileTime::from_unix_time(mtime as i64, 0);
-                filetime::set_file_handle_times(&f, Some(mtime), Some(mtime)).map_err(|e| {
-                    TarError::new(format!("failed to set mtime for `{}`", dst.display()), e)
-                })?;
+                set_mtime(dst, &mut f, mtime)?;                
             }
         }
-        #[cfg(not(target_os = "wasi"))]
         if let Ok(mode) = self.header.mode() {
             set_perms(dst, Some(&mut f), mode, self.preserve_permissions)?;
         }
-        #[cfg(not(target_os = "wasi"))]
         if self.unpack_xattrs {
             set_xattrs(self, dst)?;
         }
         return Ok(Unpacked::File(f));
+
+        #[cfg_attr(target_os = "wasi", allow(unused_variables))]
+        fn set_mtime(dst: &Path, f: &mut std::fs::File, mtime: u64) -> Result<(), TarError> {
+            if cfg!(target_os = "wasi") {
+                // The filetime crate does not yet implement updating file times but hopefully
+                // the upstream developers will incorporate it at which point at which time this
+                // can be implemented in this crate as well.
+                // see: https://github.com/alexcrichton/filetime/blob/master/src/wasm.rs#L34
+                return Err(TarError::new(format!("failed to set mtime for `{}`", dst.display()),
+                    io::Error::new(io::ErrorKind::Other, "setting modified date/times is not yet supported on WASI - omit preserve_mtime to avoid this error")));
+            }
+
+            // For some more information on this see the comments in
+            // `Header::fill_platform_from`, but the general idea is that
+            // we're trying to avoid 0-mtime files coming out of archives
+            // since some tools don't ingest them well. Perhaps one day
+            // when Cargo stops working with 0-mtime archives we can remove
+            // this.
+            let mtime = if mtime == 0 { 1 } else { mtime };
+            let mtime = filetime::FileTime::from_unix_time(mtime as i64, 0);
+            filetime::set_file_handle_times(&f, Some(mtime), Some(mtime)).map_err(|e| {
+                TarError::new(format!("failed to set mtime for `{}`", dst.display()), e)
+            })?;
+            Ok(())
+        }
 
         fn set_perms(
             dst: &Path,
@@ -711,9 +719,19 @@ impl<'a> EntryFields<'a> {
             dst: &Path,
             f: Option<&mut std::fs::File>,
             mode: u32,
-            _preserve: bool,
+            preserve: bool,
         ) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
+            if cfg!(target_os = "wasi") {
+                // WASI file permissions have not yet been implemented in the standard library panics
+                // see: https://github.com/rust-lang/rust/blob/master/library/std/src/sys/wasi/fs.rs#L538
+                if preserve {
+                    Err(io::Error::new(io::ErrorKind::Other, "setting file permissions not yet supported on WASI - omit preserve_permissions to avoid this error"))
+                } else {
+                    Ok(())
+                }
+            } else {
+                Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
+            }
         }
 
         #[cfg(all(unix, feature = "xattr"))]

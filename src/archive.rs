@@ -56,7 +56,7 @@ impl<R: Read> Archive<R> {
             inner: ArchiveInner {
                 unpack_xattrs: false,
                 preserve_permissions: false,
-                preserve_mtime: true,
+                preserve_mtime: default_preserve_mtime(),
                 overwrite: true,
                 ignore_zeros: false,
                 obj: RefCell::new(obj),
@@ -148,6 +148,17 @@ impl<R: Read> Archive<R> {
     pub fn set_ignore_zeros(&mut self, ignore_zeros: bool) {
         self.inner.ignore_zeros = ignore_zeros;
     }
+}
+
+fn default_preserve_mtime() -> bool {
+    if cfg!(target_os = "wasi") {
+        // The filetime crate does not yet implement updating file times but hopefully
+        // the upstream developers will incorporate it at which point at which time we
+        // can default again to preserving mtime on WASI systems
+        // see: https://github.com/alexcrichton/filetime/blob/master/src/wasm.rs#L34
+        return false;
+    }
+    true
 }
 
 impl<R: Seek + Read> Archive<R> {

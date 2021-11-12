@@ -131,7 +131,7 @@ fn reading_files() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn writing_files() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -156,7 +156,7 @@ fn writing_files() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn large_filename() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -295,7 +295,7 @@ fn check_dirtree(td: &TempDir) {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn extracting_directories() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let rdr = Cursor::new(tar!("directory.tar"));
@@ -305,7 +305,7 @@ fn extracting_directories() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn extracting_duplicate_file_fail() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path_present = td.path().join("a");
@@ -328,7 +328,7 @@ fn extracting_duplicate_file_fail() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn extracting_duplicate_file_succeed() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path_present = td.path().join("a");
@@ -409,7 +409,7 @@ fn no_xattrs() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn writing_and_extracting_directories() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -428,7 +428,7 @@ fn writing_and_extracting_directories() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn writing_directories_recursively() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -460,7 +460,7 @@ fn writing_directories_recursively() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn append_dir_all_blank_dest() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -492,7 +492,7 @@ fn append_dir_all_blank_dest() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn append_dir_all_does_not_work_on_non_directory() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("test");
@@ -504,7 +504,7 @@ fn append_dir_all_does_not_work_on_non_directory() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn extracting_duplicate_dirs() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let rdr = Cursor::new(tar!("duplicate_dirs.tar"));
@@ -516,7 +516,7 @@ fn extracting_duplicate_dirs() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn unpack_old_style_bsd_dir() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -543,7 +543,7 @@ fn unpack_old_style_bsd_dir() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn handling_incorrect_file_size() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -571,7 +571,7 @@ fn handling_incorrect_file_size() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn extracting_malicious_tarball() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -670,7 +670,7 @@ fn octal_spaces() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn extracting_malformed_tar_null_blocks() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -694,7 +694,7 @@ fn extracting_malformed_tar_null_blocks() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn empty_filename() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let rdr = Cursor::new(tar!("empty_filename.tar"));
@@ -703,7 +703,7 @@ fn empty_filename() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn file_times() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let rdr = Cursor::new(tar!("file_times.tar"));
@@ -720,7 +720,7 @@ fn file_times() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn zero_file_times() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -742,7 +742,7 @@ fn zero_file_times() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn backslash_treated_well() {
     // Insert a file into an archive with a backslash
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -934,7 +934,7 @@ fn long_linkname_trailing_nul() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn encoded_long_name_has_trailing_nul() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("foo");
@@ -1008,7 +1008,7 @@ fn reading_sparse() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn extract_sparse() {
     let rdr = Cursor::new(tar!("sparse.tar"));
     let mut ar = Archive::new(rdr);
@@ -1064,7 +1064,7 @@ fn sparse_with_trailing() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn path_separators() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -1162,7 +1162,7 @@ fn append_path_symlink() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -1196,7 +1196,7 @@ fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn insert_local_file_different_name() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -1235,7 +1235,7 @@ fn tar_directory_containing_symlink_to_directory() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn long_path() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let rdr = Cursor::new(tar!("7z_long_path.tar"));
@@ -1244,7 +1244,7 @@ fn long_path() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn unpack_path_larger_than_windows_max_path() {
     let dir_name = "iamaprettylongnameandtobepreciseiam91characterslongwhichsomethinkisreallylongandothersdonot";
     // 183 character directory name
@@ -1271,7 +1271,7 @@ fn append_long_multibyte() {
 }
 
 #[test]
-#[cfg(not(target_os = "wasi"))]
+#[cfg_attr(target_os = "wasi", ignore)]
 fn read_only_directory_containing_files() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
