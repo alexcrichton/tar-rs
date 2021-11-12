@@ -632,8 +632,8 @@ impl<'a> EntryFields<'a> {
         fn set_mtime(dst: &Path, f: &mut std::fs::File, mtime: u64) -> Result<(), TarError> {
             if cfg!(target_os = "wasi") {
                 // The filetime crate does not yet implement updating file times but hopefully
-                // the upstream developers will incorporate it at which point at which time this
-                // can be implemented in this crate as well.
+                // the upstream developers will incorporate it at which time this can be
+                // implemented in this crate as well.
                 // see: https://github.com/alexcrichton/filetime/blob/master/src/wasm.rs#L34
                 return Err(TarError::new(format!("failed to set mtime for `{}`", dst.display()),
                     io::Error::new(io::ErrorKind::Other, "setting modified date/times is not yet supported on WASI - omit preserve_mtime to avoid this error")));
