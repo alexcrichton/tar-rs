@@ -43,7 +43,9 @@ jobs:
       run: cargo install cargo-wasi
     - name: Install wasmtime
       run: curl https://wasmtime.dev/install.sh -sSf | bash
-    - run: cargo wasi test -- --nocapture
+    - run: |
+        export WASMTIME_HOME="/home/runner/.wasmtime"
+        cargo wasi test -- --nocapture
 
   rustfmt:
     name: Rustfmt
