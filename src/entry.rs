@@ -10,10 +10,10 @@ use std::path::{Component, Path, PathBuf};
 use crate::archive::ArchiveInner;
 use crate::error::TarError;
 use crate::header::bytes2path;
+use crate::header::canonicalize_or_err;
 use crate::other;
 use crate::pax::pax_extensions;
 use crate::{Archive, Header, PaxExtensions};
-use crate::header::canonicalize_or_err;
 
 /// A read-only view into an entry of an archive.
 ///
@@ -617,7 +617,7 @@ impl<'a> EntryFields<'a> {
 
         if self.preserve_mtime {
             if let Ok(mtime) = self.header.mtime() {
-                set_mtime(dst, &mut f, mtime)?;                
+                set_mtime(dst, &mut f, mtime)?;
             }
         }
         if let Ok(mode) = self.header.mode() {

@@ -1643,5 +1643,5 @@ pub fn canonicalize_or_err(path: &Path) -> io::Result<PathBuf> {
                 format!("{} while canonicalizing {}", err, path.display()),
             )
         })?)
-    }    
+    }
 }

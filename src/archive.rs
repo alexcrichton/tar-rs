@@ -10,10 +10,10 @@ use std::path::Path;
 #[allow(unused_imports)]
 use crate::entry::{EntryFields, EntryIo};
 use crate::error::TarError;
+use crate::header::canonicalize;
 use crate::other;
 use crate::pax::pax_extensions_size;
 use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
-use crate::header::canonicalize;
 
 /// A top-level representation of an archive file.
 ///
