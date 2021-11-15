@@ -628,23 +628,15 @@ impl<'a> EntryFields<'a> {
         }
         return Ok(Unpacked::File(f));
 
-        #[cfg_attr(target_os = "wasi", allow(unused_variables))]
         fn set_mtime(dst: &Path, f: &mut std::fs::File, mtime: u64) -> Result<(), TarError> {
-            if cfg!(target_os = "wasi") {
-                // The filetime crate does not yet implement updating file times but hopefully
-                // the upstream developers will incorporate it at which time this can be
-                // implemented in this crate as well.
-                // see: https://github.com/alexcrichton/filetime/blob/master/src/wasm.rs#L34
-                return Err(TarError::new(format!("failed to set mtime for `{}`", dst.display()),
-                    io::Error::new(io::ErrorKind::Other, "setting modified date/times is not yet supported on WASI - omit preserve_mtime to avoid this error")));
-            }
-
             // For some more information on this see the comments in
             // `Header::fill_platform_from`, but the general idea is that
             // we're trying to avoid 0-mtime files coming out of archives
             // since some tools don't ingest them well. Perhaps one day
             // when Cargo stops working with 0-mtime archives we can remove
             // this.
+            // Note: wasi does not yet implemented this function - see:
+            // https://github.com/alexcrichton/filetime/blob/master/src/wasm.rs#L34
             let mtime = if mtime == 0 { 1 } else { mtime };
             let mtime = filetime::FileTime::from_unix_time(mtime as i64, 0);
             filetime::set_file_handle_times(&f, Some(mtime), Some(mtime)).map_err(|e| {
