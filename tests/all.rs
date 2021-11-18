@@ -915,6 +915,27 @@ fn long_linkname_trailing_nul() {
 }
 
 #[test]
+fn long_linkname_gnu() {
+    for t in [tar::EntryType::Symlink, tar::EntryType::Link] {
+        let mut b = Builder::new(Vec::<u8>::new());
+        let mut h = Header::new_gnu();
+        h.set_entry_type(t);
+        h.set_size(0);
+        let path = "usr/lib/.build-id/05/159ed904e45ff5100f7acd3d3b99fa7e27e34f";
+        let target = "../../../../usr/lib64/qt5/plugins/wayland-graphics-integration-server/libqt-wayland-compositor-xcomposite-egl.so";
+        t!(b.append_link(&mut h, path, target));
+
+        let contents = t!(b.into_inner());
+        let mut a = Archive::new(&contents[..]);
+
+        let e = &t!(t!(a.entries()).next().unwrap());
+        assert_eq!(e.header().entry_type(), t);
+        assert_eq!(e.path().unwrap().to_str().unwrap(), path);
+        assert_eq!(e.link_name().unwrap().unwrap().to_str().unwrap(), target);
+    }
+}
+
+#[test]
 fn encoded_long_name_has_trailing_nul() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("foo");
