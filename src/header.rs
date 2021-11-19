@@ -420,6 +420,8 @@ impl Header {
     /// in the appropriate format. May fail if the link name is too long or if
     /// the path specified is not Unicode and this is a Windows platform. Will
     /// strip out any "." path component, which signifies the current directory.
+    ///
+    /// To use GNU long link names, prefer instead [`crate::Builder::append_link`].
     pub fn set_link_name<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
         self._set_link_name(p.as_ref())
     }

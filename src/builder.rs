@@ -162,6 +162,54 @@ impl<W: Write> Builder<W> {
         self.append(&header, data)
     }
 
+    /// Adds a new link (symbolic or hard) entry to this archive with the specified path and target.
+    ///
+    /// This function is similar to [`Self::append_data`] which supports long filenames,
+    /// but also supports long link targets using GNU extensions if necessary.
+    /// You must set the entry type to either [`EntryType::Link`] or [`EntryType::Symlink`].
+    /// The `set_cksum` method will be invoked after setting the path. No other metadata in the
+    /// header will be modified.
+    ///
+    /// If you are intending to use GNU extensions, you must use this method over calling
+    /// [`Header::set_link_name`] because that function will fail on long links.
+    ///
+    /// Similar constraints around the position of the archive and completion
+    /// apply as with [`Self::append_data`].
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when either reading or writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tar::{Builder, Header, EntryType};
+    ///
+    /// let mut ar = Builder::new(Vec::new());
+    /// let mut header = Header::new_gnu();
+    /// header.set_username("foo");
+    /// header.set_entry_type(EntryType::Symlink);
+    /// header.set_size(0);
+    /// ar.append_link(&mut header, "really/long/path/to/foo", "other/really/long/target").unwrap();
+    /// let data = ar.into_inner().unwrap();
+    /// ```
+    pub fn append_link<P: AsRef<Path>, T: AsRef<Path>>(
+        &mut self,
+        header: &mut Header,
+        path: P,
+        target: T,
+    ) -> io::Result<()> {
+        self._append_link(header, path.as_ref(), target.as_ref())
+    }
+
+    fn _append_link(&mut self, header: &mut Header, path: &Path, target: &Path) -> io::Result<()> {
+        prepare_header_path(self.get_mut(), header, path)?;
+        prepare_header_link(self.get_mut(), header, target)?;
+        header.set_cksum();
+        self.append(&header, std::io::empty())
+    }
+
     /// Adds a file on the local filesystem to this archive.
     ///
     /// This function will open the file specified by `path` and insert the file
