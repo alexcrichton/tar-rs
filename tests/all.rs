@@ -936,6 +936,28 @@ fn long_linkname_gnu() {
 }
 
 #[test]
+fn linkname_literal() {
+    for t in [tar::EntryType::Symlink, tar::EntryType::Link] {
+        let mut b = Builder::new(Vec::<u8>::new());
+        let mut h = Header::new_gnu();
+        h.set_entry_type(t);
+        h.set_size(0);
+        let path = "usr/lib/systemd/systemd-sysv-install";
+        let target = "../../..//sbin/chkconfig";
+        h.set_link_name_literal(target).unwrap();
+        t!(b.append_data(&mut h, path, std::io::empty()));
+
+        let contents = t!(b.into_inner());
+        let mut a = Archive::new(&contents[..]);
+
+        let e = &t!(t!(a.entries()).next().unwrap());
+        assert_eq!(e.header().entry_type(), t);
+        assert_eq!(e.path().unwrap().to_str().unwrap(), path);
+        assert_eq!(e.link_name().unwrap().unwrap().to_str().unwrap(), target);
+    }
+}
+
+#[test]
 fn encoded_long_name_has_trailing_nul() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("foo");
