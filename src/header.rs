@@ -435,6 +435,18 @@ impl Header {
         })
     }
 
+    /// Sets the link name for this header without any transformation.
+    ///
+    /// This function is like [`Self::set_link_name`] but accepts an arbitrary byte array.
+    /// Hence it will not perform any canonicalization, such as replacing duplicate `//` with `/`.
+    pub fn set_link_name_literal<P: AsRef<[u8]>>(&mut self, p: P) -> io::Result<()> {
+        self._set_link_name_literal(p.as_ref())
+    }
+
+    fn _set_link_name_literal(&mut self, bytes: &[u8]) -> io::Result<()> {
+        copy_into(&mut self.as_old_mut().linkname, bytes)
+    }
+
     /// Returns the mode bits for this file
     ///
     /// May return an error if the field is corrupted.
