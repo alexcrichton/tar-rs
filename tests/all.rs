@@ -1385,3 +1385,30 @@ fn header_size_overflow() {
         err
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn ownership_preserving() {
+    use std::os::unix::prelude::*;
+
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let rdr = Cursor::new(tar!("ownership.tar"));
+    let mut ar = Archive::new(rdr);
+    ar.set_preserve_ownerships(true);
+
+    if unsafe { libc::getuid() } == 0 {
+        assert!(ar.unpack(td.path()).is_ok());
+        // validate against premade files
+        // iamuid580800001 has this ownership: 580800001:580800000
+        let meta = std::fs::metadata(td.path().join("iamuid580800000")).unwrap();
+        assert_eq!(meta.uid(), 580800000);
+        assert_eq!(meta.gid(), 580800000);
+        let meta = std::fs::metadata(td.path().join("iamuid580800001")).unwrap();
+        assert_eq!(meta.uid(), 580800001);
+        assert_eq!(meta.gid(), 580800000);
+    } else {
+        // it's not possible to unpack tar while preserving ownership
+        // without root permissions
+        assert!(ar.unpack(td.path()).is_err());
+    }
+}

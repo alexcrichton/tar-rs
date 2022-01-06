@@ -38,6 +38,7 @@ pub struct EntryFields<'a> {
     pub data: Vec<EntryIo<'a>>,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
+    pub preserve_ownerships: bool,
     pub preserve_mtime: bool,
     pub overwrite: bool,
 }
@@ -635,10 +636,86 @@ impl<'a> EntryFields<'a> {
         if let Ok(mode) = self.header.mode() {
             set_perms(dst, Some(&mut f), mode, self.preserve_permissions)?;
         }
+        if self.preserve_ownerships {
+            set_ownerships(
+                dst,
+                Some(&mut f),
+                self.header.uid().ok(),
+                self.header.gid().ok(),
+            )?;
+        }
         if self.unpack_xattrs {
             set_xattrs(self, dst)?;
         }
         return Ok(Unpacked::File(f));
+
+        fn set_ownerships(
+            dst: &Path,
+            f: Option<&mut std::fs::File>,
+            uid: Option<u64>,
+            gid: Option<u64>,
+        ) -> Result<(), TarError> {
+            _set_ownerships(dst, f, uid, gid).map_err(|e| {
+                TarError::new(
+                    format!(
+                        "failed to set ownerships to uid={:?}, gid={:?} \
+                         for `{}`",
+                        uid,
+                        gid,
+                        dst.display()
+                    ),
+                    e,
+                )
+            })
+        }
+
+        #[cfg(unix)]
+        fn _set_ownerships(
+            dst: &Path,
+            f: Option<&mut std::fs::File>,
+            uid: Option<u64>,
+            gid: Option<u64>,
+        ) -> io::Result<()> {
+            use std::os::unix::prelude::*;
+
+            // -1 (0xffffffff) means no ownership change in most libc implementations
+            let uid = uid.unwrap_or(0xFFFF_FFFF);
+            let gid = gid.unwrap_or(0xFFFF_FFFF);
+            match f {
+                Some(f) => unsafe {
+                    let fd = f.as_raw_fd();
+                    if libc::fchown(fd, uid as u32, gid as u32) != 0 {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                },
+                None => unsafe {
+                    let path = std::ffi::CString::new(dst.as_os_str().as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("path contains null character: {:?}", e),
+                        )
+                    })?;
+                    if libc::lchown(path.as_ptr(), uid as u32, gid as u32) != 0 {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                },
+            }
+        }
+
+        // Windows does not support posix numeric ownership IDs
+        #[cfg(any(windows, target_arch = "wasm32"))]
+        fn _set_ownerships(
+            _: &Path,
+            _: Option<&mut std::fs::File>,
+            _: Option<u64>,
+            _: Option<u64>,
+        ) -> io::Result<()> {
+            Ok(())
+        }
 
         fn set_perms(
             dst: &Path,
