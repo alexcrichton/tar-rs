@@ -1,3 +1,4 @@
+#[cfg(feature = "filetime")]
 extern crate filetime;
 extern crate tar;
 extern crate tempfile;
@@ -10,6 +11,7 @@ use std::io::{self, Cursor};
 use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "filetime")]
 use filetime::FileTime;
 use tar::{Archive, Builder, Entries, EntryType, Header, HeaderMode};
 use tempfile::{Builder as TempBuilder, TempDir};
@@ -687,6 +689,7 @@ fn empty_filename() {
 }
 
 #[test]
+#[cfg(feature = "filetime")]
 fn file_times() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let rdr = Cursor::new(tar!("file_times.tar"));
@@ -703,6 +706,7 @@ fn file_times() {
 }
 
 #[test]
+#[cfg(feature = "filetime")]
 fn zero_file_times() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 

@@ -19,7 +19,7 @@ contents are never required to be entirely resident in memory all at once.
 """
 
 [dependencies]
-filetime = "0.2.8"
+filetime = { version = "0.2.8", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -29,4 +29,4 @@ xattr = { version = "0.2", optional = true }
 libc = "0.2"
 
 [features]
-default = ["xattr"]
+default = ["filetime", "xattr"]

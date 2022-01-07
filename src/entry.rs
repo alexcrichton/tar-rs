@@ -7,6 +7,7 @@ use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(feature = "filetime")]
 use filetime::{self, FileTime};
 
 use crate::archive::ArchiveInner;
@@ -617,6 +618,7 @@ impl<'a> EntryFields<'a> {
             )
         })?;
 
+        #[cfg(feature = "filetime")]
         if self.preserve_mtime {
             if let Ok(mtime) = self.header.mtime() {
                 // For some more information on this see the comments in
