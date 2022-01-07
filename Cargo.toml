@@ -26,7 +26,16 @@ tempfile = "3"
 
 [target."cfg(unix)".dependencies]
 xattr = { version = "0.2", optional = true }
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 
 [features]
-default = ["filetime", "xattr"]
+default = ["builder", "filetime", "xattr"]
+builder = ["libc"]
+
+[[test]]
+name = "entry"
+required-features = ["builder"]
+
+[[example]]
+name = "write"
+required-features = ["builder"]

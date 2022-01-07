@@ -58,6 +58,14 @@ fn main() {
 }
 ```
 
+# Cargo features
+
+- **builder** (enabled by default): provides tools for creating tarballs:
+  `Builder` and `Header::{set_metadata, set_metadata_in_mode}`. Depends on
+  libc on unix, and methods touching `std::fs` are unimplemented on wasm.
+- **filetime** (enabled by default): write file times when unpacking a tarball.
+- **xattr** (enabled by defeult): write xattrs when unpacking a tarball on unix.
+
 # License
 
 This project is licensed under either of

@@ -5,6 +5,7 @@ use std::os::windows::prelude::*;
 
 use std::borrow::Cow;
 use std::fmt;
+#[cfg(feature = "builder")]
 use std::fs;
 use std::io;
 use std::iter;
@@ -279,12 +280,14 @@ impl Header {
     /// This is useful for initializing a `Header` from the OS's metadata from a
     /// file. By default, this will use `HeaderMode::Complete` to include all
     /// metadata.
+    #[cfg(feature = "builder")]
     pub fn set_metadata(&mut self, meta: &fs::Metadata) {
         self.fill_from(meta, HeaderMode::Complete);
     }
 
     /// Sets only the metadata relevant to the given HeaderMode in this header
     /// from the metadata argument provided.
+    #[cfg(feature = "builder")]
     pub fn set_metadata_in_mode(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         self.fill_from(meta, mode);
     }
@@ -714,6 +717,7 @@ impl Header {
             .fold(0, |a, b| a + (*b as u32))
     }
 
+    #[cfg(feature = "builder")]
     fn fill_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         self.fill_platform_from(meta, mode);
         // Set size of directories to zero
@@ -732,13 +736,13 @@ impl Header {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", feature = "builder"))]
     #[allow(unused_variables)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         unimplemented!();
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "builder"))]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         match mode {
             HeaderMode::Complete => {
@@ -797,7 +801,7 @@ impl Header {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "builder"))]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         // There's no concept of a file mode on Windows, so do a best approximation here.
         match mode {
