@@ -452,6 +452,9 @@ impl<'a> EntryFields<'a> {
             if let Ok(mode) = self.header.mode() {
                 set_perms(dst, None, mode, self.preserve_permissions)?;
             }
+            if self.preserve_ownerships {
+                set_ownerships(dst, None, self.header.uid().ok(), self.header.gid().ok())?;
+            }
             return Ok(Unpacked::__Nonexhaustive);
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {
@@ -556,6 +559,9 @@ impl<'a> EntryFields<'a> {
             self.unpack_dir(dst)?;
             if let Ok(mode) = self.header.mode() {
                 set_perms(dst, None, mode, self.preserve_permissions)?;
+            }
+            if self.preserve_ownerships {
+                set_ownerships(dst, None, self.header.uid().ok(), self.header.gid().ok())?;
             }
             return Ok(Unpacked::__Nonexhaustive);
         }

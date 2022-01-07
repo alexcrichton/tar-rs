@@ -1406,6 +1406,9 @@ fn ownership_preserving() {
         let meta = std::fs::metadata(td.path().join("iamuid580800001")).unwrap();
         assert_eq!(meta.uid(), 580800001);
         assert_eq!(meta.gid(), 580800000);
+        let meta = std::fs::metadata(td.path().join("iamuid580800002")).unwrap();
+        assert_eq!(meta.uid(), 580800002);
+        assert_eq!(meta.gid(), 580800002);
     } else {
         // it's not possible to unpack tar while preserving ownership
         // without root permissions
