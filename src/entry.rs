@@ -445,16 +445,36 @@ impl<'a> EntryFields<'a> {
 
     /// Returns access to the header of this entry in the archive.
     fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<Unpacked> {
+        fn set_perms_ownerships(
+            dst: &Path,
+            f: Option<&mut std::fs::File>,
+            header: &Header,
+            perms: bool,
+            ownerships: bool,
+        ) -> io::Result<()> {
+            // ownerships need to be set first to avoid stripping SUID bits in the permissions ...
+            if ownerships {
+                set_ownerships(dst, &f, header.uid().ok(), header.gid().ok())?;
+            }
+            // ... then set permissions, SUID bits set here is kept
+            if let Ok(mode) = header.mode() {
+                set_perms(dst, f, mode, perms)?;
+            }
+
+            Ok(())
+        }
+
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
             self.unpack_dir(dst)?;
-            if let Ok(mode) = self.header.mode() {
-                set_perms(dst, None, mode, self.preserve_permissions)?;
-            }
-            if self.preserve_ownerships {
-                set_ownerships(dst, None, self.header.uid().ok(), self.header.gid().ok())?;
-            }
+            set_perms_ownerships(
+                dst,
+                None,
+                &self.header,
+                self.preserve_permissions,
+                self.preserve_ownerships,
+            )?;
             return Ok(Unpacked::__Nonexhaustive);
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {
@@ -557,12 +577,13 @@ impl<'a> EntryFields<'a> {
         // Only applies to old headers.
         if self.header.as_ustar().is_none() && self.path_bytes().ends_with(b"/") {
             self.unpack_dir(dst)?;
-            if let Ok(mode) = self.header.mode() {
-                set_perms(dst, None, mode, self.preserve_permissions)?;
-            }
-            if self.preserve_ownerships {
-                set_ownerships(dst, None, self.header.uid().ok(), self.header.gid().ok())?;
-            }
+            set_perms_ownerships(
+                dst,
+                None,
+                &self.header,
+                self.preserve_permissions,
+                self.preserve_ownerships,
+            )?;
             return Ok(Unpacked::__Nonexhaustive);
         }
 
@@ -639,17 +660,13 @@ impl<'a> EntryFields<'a> {
                 })?;
             }
         }
-        if let Ok(mode) = self.header.mode() {
-            set_perms(dst, Some(&mut f), mode, self.preserve_permissions)?;
-        }
-        if self.preserve_ownerships {
-            set_ownerships(
-                dst,
-                Some(&mut f),
-                self.header.uid().ok(),
-                self.header.gid().ok(),
-            )?;
-        }
+        set_perms_ownerships(
+            dst,
+            Some(&mut f),
+            &self.header,
+            self.preserve_permissions,
+            self.preserve_ownerships,
+        )?;
         if self.unpack_xattrs {
             set_xattrs(self, dst)?;
         }
@@ -657,7 +674,7 @@ impl<'a> EntryFields<'a> {
 
         fn set_ownerships(
             dst: &Path,
-            f: Option<&mut std::fs::File>,
+            f: &Option<&mut std::fs::File>,
             uid: Option<u64>,
             gid: Option<u64>,
         ) -> Result<(), TarError> {
@@ -678,7 +695,7 @@ impl<'a> EntryFields<'a> {
         #[cfg(unix)]
         fn _set_ownerships(
             dst: &Path,
-            f: Option<&mut std::fs::File>,
+            f: &Option<&mut std::fs::File>,
             uid: Option<u64>,
             gid: Option<u64>,
         ) -> io::Result<()> {
@@ -716,7 +733,7 @@ impl<'a> EntryFields<'a> {
         #[cfg(any(windows, target_arch = "wasm32"))]
         fn _set_ownerships(
             _: &Path,
-            _: Option<&mut std::fs::File>,
+            _: &Option<&mut std::fs::File>,
             _: Option<u64>,
             _: Option<u64>,
         ) -> io::Result<()> {
