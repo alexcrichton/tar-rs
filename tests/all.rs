@@ -1391,8 +1391,32 @@ fn header_size_overflow() {
 fn ownership_preserving() {
     use std::os::unix::prelude::*;
 
+    let mut rdr = Vec::new();
+    let mut ar = Builder::new(&mut rdr);
+    let data: &[u8] = &[];
+    let mut header = Header::new_gnu();
+    // file 1 with uid = 580800000, gid = 580800000
+    header.set_gid(580800000);
+    header.set_uid(580800000);
+    t!(header.set_path("iamuid580800000"));
+    header.set_size(0);
+    header.set_cksum();
+    t!(ar.append(&header, data));
+    // file 2 with uid = 580800001, gid = 580800000
+    header.set_uid(580800001);
+    t!(header.set_path("iamuid580800001"));
+    header.set_cksum();
+    t!(ar.append(&header, data));
+    // file 3 with uid = 580800002, gid = 580800002
+    header.set_gid(580800002);
+    header.set_uid(580800002);
+    t!(header.set_path("iamuid580800002"));
+    header.set_cksum();
+    t!(ar.append(&header, data));
+    t!(ar.finish());
+
+    let rdr = Cursor::new(t!(ar.into_inner()));
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
-    let rdr = Cursor::new(tar!("ownership.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_preserve_ownerships(true);
 

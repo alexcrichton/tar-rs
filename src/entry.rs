@@ -454,7 +454,7 @@ impl<'a> EntryFields<'a> {
         ) -> io::Result<()> {
             // ownerships need to be set first to avoid stripping SUID bits in the permissions ...
             if ownerships {
-                set_ownerships(dst, &f, header.uid().ok(), header.gid().ok())?;
+                set_ownerships(dst, &f, header.uid()?, header.gid()?)?;
             }
             // ... then set permissions, SUID bits set here is kept
             if let Ok(mode) = header.mode() {
@@ -675,8 +675,8 @@ impl<'a> EntryFields<'a> {
         fn set_ownerships(
             dst: &Path,
             f: &Option<&mut std::fs::File>,
-            uid: Option<u64>,
-            gid: Option<u64>,
+            uid: u64,
+            gid: u64,
         ) -> Result<(), TarError> {
             _set_ownerships(dst, f, uid, gid).map_err(|e| {
                 TarError::new(
@@ -696,14 +696,11 @@ impl<'a> EntryFields<'a> {
         fn _set_ownerships(
             dst: &Path,
             f: &Option<&mut std::fs::File>,
-            uid: Option<u64>,
-            gid: Option<u64>,
+            uid: u64,
+            gid: u64,
         ) -> io::Result<()> {
             use std::os::unix::prelude::*;
 
-            // -1 (0xffffffff) means no ownership change in most libc implementations
-            let uid = uid.unwrap_or(0xFFFF_FFFF);
-            let gid = gid.unwrap_or(0xFFFF_FFFF);
             match f {
                 Some(f) => unsafe {
                     let fd = f.as_raw_fd();
@@ -734,8 +731,8 @@ impl<'a> EntryFields<'a> {
         fn _set_ownerships(
             _: &Path,
             _: &Option<&mut std::fs::File>,
-            _: Option<u64>,
-            _: Option<u64>,
+            _: u64,
+            _: u64,
         ) -> io::Result<()> {
             Ok(())
         }
