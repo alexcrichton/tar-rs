@@ -699,12 +699,19 @@ impl<'a> EntryFields<'a> {
             uid: u64,
             gid: u64,
         ) -> io::Result<()> {
+            use std::convert::TryInto;
             use std::os::unix::prelude::*;
 
+            let uid: libc::uid_t = uid.try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::Other, format!("UID {} is too large!", uid))
+            })?;
+            let gid: libc::gid_t = gid.try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::Other, format!("GID {} is too large!", gid))
+            })?;
             match f {
                 Some(f) => unsafe {
                     let fd = f.as_raw_fd();
-                    if libc::fchown(fd, uid as u32, gid as u32) != 0 {
+                    if libc::fchown(fd, uid, gid) != 0 {
                         Err(io::Error::last_os_error())
                     } else {
                         Ok(())
@@ -717,7 +724,7 @@ impl<'a> EntryFields<'a> {
                             format!("path contains null character: {:?}", e),
                         )
                     })?;
-                    if libc::lchown(path.as_ptr(), uid as u32, gid as u32) != 0 {
+                    if libc::lchown(path.as_ptr(), uid, gid) != 0 {
                         Err(io::Error::last_os_error())
                     } else {
                         Ok(())
