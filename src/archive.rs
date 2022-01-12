@@ -24,6 +24,7 @@ pub struct ArchiveInner<R: ?Sized> {
     pos: Cell<u64>,
     unpack_xattrs: bool,
     preserve_permissions: bool,
+    preserve_ownerships: bool,
     preserve_mtime: bool,
     overwrite: bool,
     ignore_zeros: bool,
@@ -54,6 +55,7 @@ impl<R: Read> Archive<R> {
             inner: ArchiveInner {
                 unpack_xattrs: false,
                 preserve_permissions: false,
+                preserve_ownerships: false,
                 preserve_mtime: true,
                 overwrite: true,
                 ignore_zeros: false,
@@ -124,6 +126,15 @@ impl<R: Read> Archive<R> {
     /// Unix.
     pub fn set_preserve_permissions(&mut self, preserve: bool) {
         self.inner.preserve_permissions = preserve;
+    }
+
+    /// Indicate whether numeric ownership ids (like uid and gid on Unix)
+    /// are preserved when unpacking this entry.
+    ///
+    /// This flag is disabled by default and is currently only implemented on
+    /// Unix.
+    pub fn set_preserve_ownerships(&mut self, preserve: bool) {
+        self.inner.preserve_ownerships = preserve;
     }
 
     /// Indicate whether files and symlinks should be overwritten on extraction.
@@ -308,6 +319,7 @@ impl<'a> EntriesFields<'a> {
             preserve_permissions: self.archive.inner.preserve_permissions,
             preserve_mtime: self.archive.inner.preserve_mtime,
             overwrite: self.archive.inner.overwrite,
+            preserve_ownerships: self.archive.inner.preserve_ownerships,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of

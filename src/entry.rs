@@ -38,6 +38,7 @@ pub struct EntryFields<'a> {
     pub data: Vec<EntryIo<'a>>,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
+    pub preserve_ownerships: bool,
     pub preserve_mtime: bool,
     pub overwrite: bool,
 }
@@ -444,13 +445,36 @@ impl<'a> EntryFields<'a> {
 
     /// Returns access to the header of this entry in the archive.
     fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<Unpacked> {
+        fn set_perms_ownerships(
+            dst: &Path,
+            f: Option<&mut std::fs::File>,
+            header: &Header,
+            perms: bool,
+            ownerships: bool,
+        ) -> io::Result<()> {
+            // ownerships need to be set first to avoid stripping SUID bits in the permissions ...
+            if ownerships {
+                set_ownerships(dst, &f, header.uid()?, header.gid()?)?;
+            }
+            // ... then set permissions, SUID bits set here is kept
+            if let Ok(mode) = header.mode() {
+                set_perms(dst, f, mode, perms)?;
+            }
+
+            Ok(())
+        }
+
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
             self.unpack_dir(dst)?;
-            if let Ok(mode) = self.header.mode() {
-                set_perms(dst, None, mode, self.preserve_permissions)?;
-            }
+            set_perms_ownerships(
+                dst,
+                None,
+                &self.header,
+                self.preserve_permissions,
+                self.preserve_ownerships,
+            )?;
             return Ok(Unpacked::__Nonexhaustive);
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {
@@ -553,9 +577,13 @@ impl<'a> EntryFields<'a> {
         // Only applies to old headers.
         if self.header.as_ustar().is_none() && self.path_bytes().ends_with(b"/") {
             self.unpack_dir(dst)?;
-            if let Ok(mode) = self.header.mode() {
-                set_perms(dst, None, mode, self.preserve_permissions)?;
-            }
+            set_perms_ownerships(
+                dst,
+                None,
+                &self.header,
+                self.preserve_permissions,
+                self.preserve_ownerships,
+            )?;
             return Ok(Unpacked::__Nonexhaustive);
         }
 
@@ -632,13 +660,89 @@ impl<'a> EntryFields<'a> {
                 })?;
             }
         }
-        if let Ok(mode) = self.header.mode() {
-            set_perms(dst, Some(&mut f), mode, self.preserve_permissions)?;
-        }
+        set_perms_ownerships(
+            dst,
+            Some(&mut f),
+            &self.header,
+            self.preserve_permissions,
+            self.preserve_ownerships,
+        )?;
         if self.unpack_xattrs {
             set_xattrs(self, dst)?;
         }
         return Ok(Unpacked::File(f));
+
+        fn set_ownerships(
+            dst: &Path,
+            f: &Option<&mut std::fs::File>,
+            uid: u64,
+            gid: u64,
+        ) -> Result<(), TarError> {
+            _set_ownerships(dst, f, uid, gid).map_err(|e| {
+                TarError::new(
+                    format!(
+                        "failed to set ownerships to uid={:?}, gid={:?} \
+                         for `{}`",
+                        uid,
+                        gid,
+                        dst.display()
+                    ),
+                    e,
+                )
+            })
+        }
+
+        #[cfg(unix)]
+        fn _set_ownerships(
+            dst: &Path,
+            f: &Option<&mut std::fs::File>,
+            uid: u64,
+            gid: u64,
+        ) -> io::Result<()> {
+            use std::convert::TryInto;
+            use std::os::unix::prelude::*;
+
+            let uid: libc::uid_t = uid.try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::Other, format!("UID {} is too large!", uid))
+            })?;
+            let gid: libc::gid_t = gid.try_into().map_err(|_| {
+                io::Error::new(io::ErrorKind::Other, format!("GID {} is too large!", gid))
+            })?;
+            match f {
+                Some(f) => unsafe {
+                    let fd = f.as_raw_fd();
+                    if libc::fchown(fd, uid, gid) != 0 {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                },
+                None => unsafe {
+                    let path = std::ffi::CString::new(dst.as_os_str().as_bytes()).map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("path contains null character: {:?}", e),
+                        )
+                    })?;
+                    if libc::lchown(path.as_ptr(), uid, gid) != 0 {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                },
+            }
+        }
+
+        // Windows does not support posix numeric ownership IDs
+        #[cfg(any(windows, target_arch = "wasm32"))]
+        fn _set_ownerships(
+            _: &Path,
+            _: &Option<&mut std::fs::File>,
+            _: u64,
+            _: u64,
+        ) -> io::Result<()> {
+            Ok(())
+        }
 
         fn set_perms(
             dst: &Path,
