@@ -208,7 +208,7 @@ impl Archive<dyn Read + '_> {
         // extended-length path with a 32,767 character limit. Otherwise all
         // unpacked paths over 260 characters will fail on creation with a
         // NotFound exception.
-        let dst = &dst.canonicalize().unwrap_or(dst.to_path_buf());
+        let dst = &dunce::canonicalize(dst).unwrap_or(dst.to_path_buf());
 
         // Delay any directory entries until the end (they will be created if needed by
         // descendants), to ensure that directory permissions do not interfer with descendant

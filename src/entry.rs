@@ -885,13 +885,13 @@ impl<'a> EntryFields<'a> {
 
     fn validate_inside_dst(&self, dst: &Path, file_dst: &Path) -> io::Result<PathBuf> {
         // Abort if target (canonical) parent is outside of `dst`
-        let canon_parent = file_dst.canonicalize().map_err(|err| {
+        let canon_parent = dunce::canonicalize(file_dst).map_err(|err| {
             Error::new(
                 err.kind(),
                 format!("{} while canonicalizing {}", err, file_dst.display()),
             )
         })?;
-        let canon_target = dst.canonicalize().map_err(|err| {
+        let canon_target = dunce::canonicalize(dst).map_err(|err| {
             Error::new(
                 err.kind(),
                 format!("{} while canonicalizing {}", err, dst.display()),

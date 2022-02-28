@@ -304,7 +304,7 @@ fn good_parent_paths_ok() {
     let td = t!(Builder::new().prefix("tar").tempdir());
     t!(ar.unpack(td.path()));
     t!(td.path().join("foo").join("bar").read_link());
-    let dst = t!(td.path().join("foo").join("bar").canonicalize());
+    let dst = t!(dunce::canonicalize(td.path().join("foo").join("bar")));
     t!(File::open(dst));
 }
 
