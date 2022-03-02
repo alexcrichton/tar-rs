@@ -557,7 +557,7 @@ impl<'a> EntryFields<'a> {
 
             #[cfg(windows)]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
-                ::std::os::windows::fs::symlink_file(src, dst)
+                symlink::symlink_auto(src, dst)
             }
 
             #[cfg(unix)]

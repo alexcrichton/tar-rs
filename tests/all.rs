@@ -336,11 +336,11 @@ fn extracting_duplicate_file_succeed() {
 }
 
 #[test]
-#[cfg(unix)]
 fn extracting_duplicate_link_fail() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path_present = td.path().join("lnk");
-    t!(std::os::unix::fs::symlink("file", path_present));
+    t!(File::create(td.path().join("file")));
+    t!(symlink::symlink_auto("file", path_present));
 
     let rdr = Cursor::new(tar!("link.tar"));
     let mut ar = Archive::new(rdr);
@@ -359,11 +359,11 @@ fn extracting_duplicate_link_fail() {
 }
 
 #[test]
-#[cfg(unix)]
 fn extracting_duplicate_link_succeed() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path_present = td.path().join("lnk");
-    t!(std::os::unix::fs::symlink("file", path_present));
+    t!(File::create(td.path().join("file")));
+    t!(symlink::symlink_auto("file", path_present));
 
     let rdr = Cursor::new(tar!("link.tar"));
     let mut ar = Archive::new(rdr);
@@ -862,7 +862,6 @@ fn links() {
 }
 
 #[test]
-#[cfg(unix)] // making symlinks on windows is hard
 fn unpack_links() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let mut ar = Archive::new(Cursor::new(tar!("link.tar")));
@@ -1210,7 +1209,6 @@ fn path_separators() {
 fn append_path_symlink() {
     use std::borrow::Cow;
     use std::env;
-    use std::os::unix::fs::symlink;
 
     let mut ar = Builder::new(Vec::new());
     ar.follow_symlinks(false);
@@ -1220,13 +1218,13 @@ fn append_path_symlink() {
     let long_pathname = repeat("dcba").take(30).collect::<String>();
     t!(env::set_current_dir(td.path()));
     // "short" path name / short link name
-    t!(symlink("testdest", "test"));
+    t!(symlink::symlink_auto("testdest", "test"));
     t!(ar.append_path("test"));
     // short path name / long link name
-    t!(symlink(&long_linkname, "test2"));
+    t!(symlink::symlink_auto(&long_linkname, "test2"));
     t!(ar.append_path("test2"));
     // long path name / long link name
-    t!(symlink(&long_linkname, &long_pathname));
+    t!(symlink::symlink_auto(&long_linkname, &long_pathname));
     t!(ar.append_path(&long_pathname));
 
     let rd = Cursor::new(t!(ar.into_inner()));
@@ -1315,15 +1313,12 @@ fn insert_local_file_different_name() {
 }
 
 #[test]
-#[cfg(unix)]
 fn tar_directory_containing_symlink_to_directory() {
-    use std::os::unix::fs::symlink;
-
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let dummy_src = t!(TempBuilder::new().prefix("dummy_src").tempdir());
     let dummy_dst = td.path().join("dummy_dst");
     let mut ar = Builder::new(Vec::new());
-    t!(symlink(dummy_src.path().display().to_string(), &dummy_dst));
+    t!(symlink::symlink_auto(dummy_src.path().display().to_string(), &dummy_dst));
 
     assert!(dummy_dst.read_link().is_ok());
     assert!(dummy_dst.read_link().unwrap().is_dir());
