@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::cmp;
+use std::collections::VecDeque;
 use std::convert::TryFrom;
 use std::fs;
 use std::io::prelude::*;
@@ -214,18 +215,41 @@ impl Archive<dyn Read + '_> {
         // descendants), to ensure that directory permissions do not interfer with descendant
         // extraction.
         let mut directories = Vec::new();
+        let mut symlinks = VecDeque::new();
         for entry in self._entries(None)? {
             let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
-            if file.header().entry_type() == crate::EntryType::Directory {
-                directories.push(file);
-            } else {
-                file.unpack_in(dst)?;
+            match file.header().entry_type() {
+                crate::EntryType::Directory => {
+                    file.unpack_in(dst, true)?;
+                    directories.push(file);
+                }
+                crate::EntryType::Symlink => symlinks.push_back(file),
+                _ => {
+                    file.unpack_in(dst, true)?;
+                }
             }
         }
-        for mut dir in directories {
-            dir.unpack_in(dst)?;
+        loop {
+            let len = symlinks.len();
+            for _ in 0..symlinks.len() {
+                let mut symlink = symlinks.pop_front().unwrap();
+                if symlink.link_name()?.unwrap().exists() {
+                    symlink.unpack_in(dst, true)?;
+                } else {
+                    symlinks.push_back(symlink);
+                }
+            }
+            if symlinks.is_empty() || symlinks.len() == len {
+                break;
+            }
         }
-
+        for mut symlink in symlinks {
+            // last resort to handle dangling symlinks, will error on windows.
+            symlink.unpack_in(dst, true)?;
+        }
+        for mut dir in directories {
+            dir.unpack_in(dst, false)?;
+        }
         Ok(())
     }
 }

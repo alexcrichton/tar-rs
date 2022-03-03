@@ -196,11 +196,11 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// for (i, file) in ar.entries().unwrap().enumerate() {
     ///     let mut file = file.unwrap();
-    ///     file.unpack(format!("file-{}", i)).unwrap();
+    ///     file.unpack(format!("file-{}", i), true).unwrap();
     /// }
     /// ```
-    pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<Unpacked> {
-        self.fields.unpack(None, dst.as_ref())
+    pub fn unpack<P: AsRef<Path>>(&mut self, dst: P, first_pass: bool) -> io::Result<Unpacked> {
+        self.fields.unpack(None, dst.as_ref(), first_pass)
     }
 
     /// Extracts this file under the specified path, avoiding security issues.
@@ -224,11 +224,11 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// for (i, file) in ar.entries().unwrap().enumerate() {
     ///     let mut file = file.unwrap();
-    ///     file.unpack_in("target").unwrap();
+    ///     file.unpack_in("target", true).unwrap();
     /// }
     /// ```
-    pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<bool> {
-        self.fields.unpack_in(dst.as_ref())
+    pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P, first_pass: bool) -> io::Result<bool> {
+        self.fields.unpack_in(dst.as_ref(), first_pass)
     }
 
     /// Indicate whether extended file attributes (xattrs on Unix) are preserved
@@ -363,7 +363,7 @@ impl<'a> EntryFields<'a> {
         )))
     }
 
-    fn unpack_in(&mut self, dst: &Path) -> io::Result<bool> {
+    fn unpack_in(&mut self, dst: &Path, first_pass: bool) -> io::Result<bool> {
         // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
         // * Leading '/'s are trimmed. For example, `///test` is treated as
         //   `test`.
@@ -420,7 +420,7 @@ impl<'a> EntryFields<'a> {
 
         let canon_target = self.validate_inside_dst(&dst, parent)?;
 
-        self.unpack(Some(&canon_target), &file_dst)
+        self.unpack(Some(&canon_target), &file_dst, first_pass)
             .map_err(|e| TarError::new(format!("failed to unpack `{}`", file_dst.display()), e))?;
 
         Ok(true)
@@ -444,7 +444,12 @@ impl<'a> EntryFields<'a> {
     }
 
     /// Returns access to the header of this entry in the archive.
-    fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<Unpacked> {
+    fn unpack(
+        &mut self,
+        target_base: Option<&Path>,
+        dst: &Path,
+        first_pass: bool,
+    ) -> io::Result<Unpacked> {
         fn set_perms_ownerships(
             dst: &Path,
             f: Option<&mut std::fs::File>,
@@ -467,14 +472,17 @@ impl<'a> EntryFields<'a> {
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
-            self.unpack_dir(dst)?;
-            set_perms_ownerships(
-                dst,
-                None,
-                &self.header,
-                self.preserve_permissions,
-                self.preserve_ownerships,
-            )?;
+            if first_pass {
+                self.unpack_dir(dst)?;
+            } else {
+                set_perms_ownerships(
+                    dst,
+                    None,
+                    &self.header,
+                    self.preserve_permissions,
+                    self.preserve_ownerships,
+                )?;
+            }
             return Ok(Unpacked::__Nonexhaustive);
         } else if kind.is_hard_link() || kind.is_symlink() {
             let src = match self.link_name()? {

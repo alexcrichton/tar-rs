@@ -861,6 +861,7 @@ fn links() {
     assert!(t!(other.header().link_name()).is_none());
 }
 
+#[cfg(unix)]
 #[test]
 fn unpack_links() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -1318,7 +1319,10 @@ fn tar_directory_containing_symlink_to_directory() {
     let dummy_src = t!(TempBuilder::new().prefix("dummy_src").tempdir());
     let dummy_dst = td.path().join("dummy_dst");
     let mut ar = Builder::new(Vec::new());
-    t!(symlink::symlink_auto(dummy_src.path().display().to_string(), &dummy_dst));
+    t!(symlink::symlink_auto(
+        dummy_src.path().display().to_string(),
+        &dummy_dst
+    ));
 
     assert!(dummy_dst.read_link().is_ok());
     assert!(dummy_dst.read_link().unwrap().is_dir());
