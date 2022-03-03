@@ -444,7 +444,8 @@ fn append_path_with_name(
     };
     let ar_name = name.unwrap_or(path);
     if stat.is_file() {
-        append_fs(dst, ar_name, &stat, &mut fs::File::open(path)?, mode, None)
+        let file = fs::File::open(path)?;
+        append_fs(dst, ar_name, &stat, &mut file.take(stat.len()), mode, None)
     } else if stat.is_dir() {
         append_fs(dst, ar_name, &stat, &mut io::empty(), mode, None)
     } else if stat.file_type().is_symlink() {
@@ -520,7 +521,7 @@ fn append_file(
     mode: HeaderMode,
 ) -> io::Result<()> {
     let stat = file.metadata()?;
-    append_fs(dst, path, &stat, file, mode, None)
+    append_fs(dst, path, &stat, &mut file.take(stat.len()), mode, None)
 }
 
 fn append_dir(
