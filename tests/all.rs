@@ -792,6 +792,10 @@ fn unpack_links() {
 
     let md = t!(fs::symlink_metadata(td.path().join("lnk")));
     assert!(md.file_type().is_symlink());
+
+    let mtime = FileTime::from_last_modification_time(&md);
+    assert_eq!(mtime.unix_seconds(), 1448291033);
+
     assert_eq!(
         &*t!(fs::read_link(td.path().join("lnk"))),
         Path::new("file")
