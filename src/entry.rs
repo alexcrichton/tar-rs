@@ -464,6 +464,19 @@ impl<'a> EntryFields<'a> {
             Ok(())
         }
 
+        fn get_mtime(header: &Header) -> Option<FileTime> {
+            header.mtime().ok().map(|mtime| {
+                // For some more information on this see the comments in
+                // `Header::fill_platform_from`, but the general idea is that
+                // we're trying to avoid 0-mtime files coming out of archives
+                // since some tools don't ingest them well. Perhaps one day
+                // when Cargo stops working with 0-mtime archives we can remove
+                // this.
+                let mtime = if mtime == 0 { 1 } else { mtime };
+                FileTime::from_unix_time(mtime as i64, 0)
+            })
+        }
+
         let kind = self.header.entry_type();
 
         if kind.is_dir() {
@@ -546,7 +559,14 @@ impl<'a> EntryFields<'a> {
                             ),
                         )
                     })?;
-            };
+                if self.preserve_mtime {
+                    if let Some(mtime) = get_mtime(&self.header) {
+                        filetime::set_symlink_file_times(dst, mtime, mtime).map_err(|e| {
+                            TarError::new(format!("failed to set mtime for `{}`", dst.display()), e)
+                        })?;
+                    }
+                }
+            }
             return Ok(Unpacked::__Nonexhaustive);
 
             #[cfg(target_arch = "wasm32")]
@@ -646,15 +666,7 @@ impl<'a> EntryFields<'a> {
         })?;
 
         if self.preserve_mtime {
-            if let Ok(mtime) = self.header.mtime() {
-                // For some more information on this see the comments in
-                // `Header::fill_platform_from`, but the general idea is that
-                // we're trying to avoid 0-mtime files coming out of archives
-                // since some tools don't ingest them well. Perhaps one day
-                // when Cargo stops working with 0-mtime archives we can remove
-                // this.
-                let mtime = if mtime == 0 { 1 } else { mtime };
-                let mtime = FileTime::from_unix_time(mtime as i64, 0);
+            if let Some(mtime) = get_mtime(&self.header) {
                 filetime::set_file_handle_times(&f, Some(mtime), Some(mtime)).map_err(|e| {
                     TarError::new(format!("failed to set mtime for `{}`", dst.display()), e)
                 })?;
