@@ -339,8 +339,8 @@ impl<W: Write> Builder<W> {
     ///
     /// let mut ar = Builder::new(Vec::new());
     ///
-    /// // Use the directory at one location, but insert it into the archive
-    /// // with a different name.
+    /// // Add an entry for the current directory (`.`), but insert it into the
+    /// // archive as `bardir`.
     /// ar.append_dir("bardir", ".").unwrap();
     /// ```
     pub fn append_dir<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
@@ -370,8 +370,8 @@ impl<W: Write> Builder<W> {
     ///
     /// let mut ar = Builder::new(Vec::new());
     ///
-    /// // Use the directory at one location, but insert it into the archive
-    /// // with a different name.
+    /// // Add the contents of the current directory (`.`), but insert it into
+    /// // the archive as `bardir`.
     /// ar.append_dir_all("bardir", ".").unwrap();
     /// ```
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
