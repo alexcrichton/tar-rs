@@ -3,7 +3,7 @@ use std::cmp;
 use std::convert::TryFrom;
 use std::fs;
 use std::io::prelude::*;
-use std::io::{self, SeekFrom};
+use std::io::{self, Empty, SeekFrom};
 use std::marker;
 use std::path::Path;
 
@@ -105,7 +105,53 @@ impl<R: Read> Archive<R> {
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
         let me: &mut Archive<dyn Read> = self;
-        me._unpack(dst.as_ref())
+        me._unpack(dst.as_ref(), |_| true)
+    }
+
+    /// Unpacks everything matching `filter` into the specified `dst`.
+    ///
+    /// This function will iterate over the entire contents of this tarball.
+    /// It will call `filter` on each file, and extract each file in turn for
+    /// which `filter` returns true (extracting each file in turn to the
+    /// location specified by the entry's path name).
+    ///
+    /// This operation is relatively sensitive in that it will not write files
+    /// outside of the path specified by `dst`. Files in the archive which have
+    /// a '..' in their path are skipped during the unpacking process.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tar::Archive;
+    ///
+    /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
+    /// ar.unpack_with_filter("foo", |entry| entry.path().unwrap().ends_with("jpg")).unwrap();
+    /// ```
+    ///
+    /// `filter` can also be used to keep a record of which entries have been unpacked from an archive:
+    ///
+    /// ```no_run
+    /// use std::collections::BTreeSet;
+    /// use std::fs::File;
+    /// use std::path::PathBuf;
+    /// use tar::Archive;
+    ///
+    /// let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+    /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
+    /// ar.unpack_with_filter("foo", |entry| {
+    ///     paths.insert(entry.path().unwrap().into_owned());
+    ///     true
+    /// }).unwrap();
+    /// println!("unpacked {:?}", paths);
+    /// ```
+    pub fn unpack_with_filter<P: AsRef<Path>, F: FnMut(&Entry<Empty>) -> bool>(
+        &mut self,
+        dst: P,
+        filter: F,
+    ) -> io::Result<()> {
+        let me: &mut Archive<dyn Read> = self;
+        me._unpack(dst.as_ref(), filter)
     }
 
     /// Indicate whether extended file attributes (xattrs on Unix) are preserved
@@ -197,7 +243,11 @@ impl Archive<dyn Read + '_> {
         })
     }
 
-    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+    fn _unpack(
+        &mut self,
+        dst: &Path,
+        mut filter: impl FnMut(&Entry<Empty>) -> bool,
+    ) -> io::Result<()> {
         if dst.symlink_metadata().is_err() {
             fs::create_dir_all(&dst)
                 .map_err(|e| TarError::new(format!("failed to create `{}`", dst.display()), e))?;
@@ -216,7 +266,9 @@ impl Archive<dyn Read + '_> {
         let mut directories = Vec::new();
         for entry in self._entries(None)? {
             let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
-            if file.header().entry_type() == crate::EntryType::Directory {
+            if !filter(&file) {
+                continue;
+            } else if file.header().entry_type() == crate::EntryType::Directory {
                 directories.push(file);
             } else {
                 file.unpack_in(dst)?;
