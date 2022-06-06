@@ -381,12 +381,59 @@ impl<W: Write> Builder<W> {
     {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_dir_all(
+        append_dir_with_filter(
             self.get_mut(),
             path.as_ref(),
             src_path.as_ref(),
             mode,
             follow,
+            |_| true,
+        )
+    }
+
+    /// Adds a directory and some of its contents (recursively) to this archive
+    /// with the given path as the name of the directory in the archive. This
+    /// will only add entries for files which `filter` returns `true`.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all files have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs;
+    /// use tar::Builder;
+    ///
+    /// let mut ar = Builder::new(Vec::new());
+    ///
+    /// // Add the contents of the current directory (`.`), but insert it into
+    /// // the archive as `bardir`.
+    /// ar.append_dir_with_filter("bardir", ".", |path| path.ends_with(".rs")).unwrap();
+    /// ```
+    pub fn append_dir_with_filter<P, Q, F>(
+        &mut self,
+        path: P,
+        src_path: Q,
+        filter: F,
+    ) -> io::Result<()>
+    where
+        P: AsRef<Path>,
+        Q: AsRef<Path>,
+        F: FnMut(&Path) -> bool,
+    {
+        let mode = self.mode.clone();
+        let follow = self.follow;
+        append_dir_with_filter(
+            self.get_mut(),
+            path.as_ref(),
+            src_path.as_ref(),
+            mode,
+            follow,
+            filter,
         )
     }
 
@@ -617,12 +664,13 @@ fn append_fs(
     append(dst, &header, read)
 }
 
-fn append_dir_all(
+fn append_dir_with_filter<F: FnMut(&Path) -> bool>(
     dst: &mut dyn Write,
     path: &Path,
     src_path: &Path,
     mode: HeaderMode,
     follow: bool,
+    mut filter: F,
 ) -> io::Result<()> {
     let mut stack = vec![(src_path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
@@ -637,6 +685,8 @@ fn append_dir_all(
             if dest != Path::new("") {
                 append_dir(dst, &dest, &src, mode)?;
             }
+        } else if !filter(&src) {
+            continue;
         } else if !follow && is_symlink {
             let stat = fs::symlink_metadata(&src)?;
             let link_name = fs::read_link(&src)?;
