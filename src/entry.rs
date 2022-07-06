@@ -824,7 +824,7 @@ impl<'a> EntryFields<'a> {
             mode: u32,
             _preserve: bool,
         ) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
+            Ok(())
         }
 
         #[cfg(all(unix, feature = "xattr"))]
