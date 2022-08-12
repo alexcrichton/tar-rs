@@ -9,9 +9,10 @@ use std::path::Path;
 
 use crate::entry::{EntryFields, EntryIo};
 use crate::error::TarError;
+use crate::header::{SparseEntry, BLOCK_SIZE};
 use crate::other;
 use crate::pax::pax_extensions_size;
-use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
+use crate::{Entry, GnuExtSparseHeader, Header};
 
 /// A top-level representation of an archive file.
 ///
@@ -256,6 +257,7 @@ impl<'a, R: Read> Iterator for Entries<'a, R> {
     }
 }
 
+#[allow(unused_assignments)] // https://github.com/rust-lang/rust/issues/22630
 impl<'a> EntriesFields<'a> {
     fn next_entry_raw(
         &mut self,
@@ -277,14 +279,14 @@ impl<'a> EntriesFields<'a> {
             // Otherwise, check if we are ignoring zeros and continue, or break as if this is the
             // end of the archive.
             if !header.as_bytes().iter().all(|i| *i == 0) {
-                self.next += 512;
+                self.next += BLOCK_SIZE as u64;
                 break;
             }
 
             if !self.archive.inner.ignore_zeros {
                 return Ok(None);
             }
-            self.next += 512;
+            self.next += BLOCK_SIZE as u64;
             header_pos = self.next;
         }
 
@@ -325,11 +327,11 @@ impl<'a> EntriesFields<'a> {
         // Store where the next entry is, rounding up by 512 bytes (the size of
         // a header);
         let size = size
-            .checked_add(511)
+            .checked_add(BLOCK_SIZE as u64 - 1)
             .ok_or_else(|| other("size overflow"))?;
         self.next = self
             .next
-            .checked_add(size & !(512 - 1))
+            .checked_add(size & !(BLOCK_SIZE as u64 - 1))
             .ok_or_else(|| other("size overflow"))?;
 
         Ok(Some(ret.into_entry()))
@@ -394,26 +396,65 @@ impl<'a> EntriesFields<'a> {
                 if let Some(pax_extensions_ref) = &pax_extensions {
                     pax_size = pax_extensions_size(pax_extensions_ref);
                 }
+                // Not an entry
+                // Keep pax_extensions for the next ustar header
+                processed -= 1;
                 continue;
             }
 
             let mut fields = EntryFields::from(entry);
+            fields.pax_extensions = pax_extensions;
+            pax_extensions = None; // Reset pax_extensions after use
+            if is_recognized_header && fields.is_pax_sparse() {
+                gnu_longname = fields.pax_sparse_name();
+            }
             fields.long_pathname = gnu_longname;
             fields.long_linkname = gnu_longlink;
-            fields.pax_extensions = pax_extensions;
             self.parse_sparse_header(&mut fields)?;
             return Ok(Some(fields.into_entry()));
         }
     }
 
     fn parse_sparse_header(&mut self, entry: &mut EntryFields<'a>) -> io::Result<()> {
-        if !entry.header.entry_type().is_gnu_sparse() {
+        if !entry.is_pax_sparse() && !entry.header.entry_type().is_gnu_sparse() {
             return Ok(());
         }
-        let gnu = match entry.header.as_gnu() {
-            Some(gnu) => gnu,
-            None => return Err(other("sparse entry type listed but not GNU header")),
-        };
+        let mut sparse_map = Vec::<SparseEntry>::new();
+        let mut real_size = 0;
+        if entry.is_pax_sparse() {
+            real_size = entry.pax_sparse_realsize()?;
+            let mut num_bytes_read = 0;
+            let mut reader = io::BufReader::with_capacity(BLOCK_SIZE, &self.archive.inner);
+            let mut read_decimal_line = || -> io::Result<u64> {
+                let mut str = String::new();
+                num_bytes_read += reader.read_line(&mut str)?;
+                str.strip_suffix("\n")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .ok_or_else(|| other("failed to read a decimal line"))
+            };
+
+            let num_entries = read_decimal_line()?;
+            for _ in 0..num_entries {
+                let offset = read_decimal_line()?;
+                let size = read_decimal_line()?;
+                sparse_map.push(SparseEntry { offset, size });
+            }
+            let rem = BLOCK_SIZE - (num_bytes_read % BLOCK_SIZE);
+            entry.size -= (num_bytes_read + rem) as u64;
+        } else if entry.header.entry_type().is_gnu_sparse() {
+            let gnu = match entry.header.as_gnu() {
+                Some(gnu) => gnu,
+                None => return Err(other("sparse entry type listed but not GNU header")),
+            };
+            real_size = gnu.real_size()?;
+            for block in gnu.sparse.iter() {
+                if !block.is_empty() {
+                    let offset = block.offset()?;
+                    let size = block.length()?;
+                    sparse_map.push(SparseEntry { offset, size });
+                }
+            }
+        }
 
         // Sparse files are represented internally as a list of blocks that are
         // read. Blocks are either a bunch of 0's or they're data from the
@@ -442,13 +483,10 @@ impl<'a> EntriesFields<'a> {
             let data = &mut entry.data;
             let reader = &self.archive.inner;
             let size = entry.size;
-            let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
-                if block.is_empty() {
-                    return Ok(());
-                }
-                let off = block.offset()?;
-                let len = block.length()?;
-                if len != 0 && (size - remaining) % 512 != 0 {
+            let mut add_block = |block: &SparseEntry| -> io::Result<_> {
+                let off = block.offset;
+                let len = block.size;
+                if len != 0 && (size - remaining) % BLOCK_SIZE as u64 != 0 {
                     return Err(other(
                         "previous block in sparse file was not \
                          aligned to 512-byte boundary",
@@ -474,10 +512,10 @@ impl<'a> EntriesFields<'a> {
                 data.push(EntryIo::Data(reader.take(len)));
                 Ok(())
             };
-            for block in gnu.sparse.iter() {
-                add_block(block)?
+            for block in sparse_map {
+                add_block(&block)?
             }
-            if gnu.is_extended() {
+            if entry.header.as_gnu().map(|gnu| gnu.is_extended()) == Some(true) {
                 let mut ext = GnuExtSparseHeader::new();
                 ext.isextended[0] = 1;
                 while ext.is_extended() {
@@ -485,14 +523,19 @@ impl<'a> EntriesFields<'a> {
                         return Err(other("failed to read extension"));
                     }
 
-                    self.next += 512;
+                    self.next += BLOCK_SIZE as u64;
                     for block in ext.sparse.iter() {
-                        add_block(block)?;
+                        if !block.is_empty() {
+                            add_block(&SparseEntry {
+                                offset: block.offset()?,
+                                size: block.length()?,
+                            })?;
+                        }
                     }
                 }
             }
         }
-        if cur != gnu.real_size()? {
+        if cur != real_size {
             return Err(other(
                 "mismatch in sparse file chunks and \
                  size in header",

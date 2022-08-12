@@ -1090,6 +1090,19 @@ fn sparse_with_trailing() {
 }
 
 #[test]
+fn pax_sparse() {
+    let rdr = Cursor::new(tar!("pax_sparse.tar"));
+    let mut ar = Archive::new(rdr);
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    t!(ar.unpack(td.path()));
+
+    let mut s = String::new();
+    t!(t!(File::open(td.path().join("sparse_begin.txt"))).read_to_string(&mut s));
+    assert_eq!(&s[..5], "test\n");
+    assert!(s[5..].chars().all(|x| x == '\u{0}'));
+}
+
+#[test]
 fn path_separators() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
