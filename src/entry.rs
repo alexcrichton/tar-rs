@@ -286,7 +286,12 @@ impl<'a> EntryFields<'a> {
     }
 
     fn path(&self) -> io::Result<Cow<Path>> {
-        bytes2path(self.path_bytes())
+        let mut path = self.path_lossy();
+        if cfg!(windows) && path.starts_with("//") {
+            // Avoid being parsed as UNC
+            path.insert_str(0, "./");
+        }
+        Ok(Cow::Owned(PathBuf::from(path)))
     }
 
     fn path_bytes(&self) -> Cow<[u8]> {
