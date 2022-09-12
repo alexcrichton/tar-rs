@@ -257,7 +257,7 @@ impl<'a, R: Read> Iterator for Entries<'a, R> {
     }
 }
 
-#[allow(unused_assignments)] // https://github.com/rust-lang/rust/issues/22630
+#[allow(unused_assignments)]
 impl<'a> EntriesFields<'a> {
     fn next_entry_raw(
         &mut self,
@@ -404,11 +404,14 @@ impl<'a> EntriesFields<'a> {
 
             let mut fields = EntryFields::from(entry);
             fields.pax_extensions = pax_extensions;
+            // False positive: unused assignment
+            // https://github.com/rust-lang/rust/issues/22630
             pax_extensions = None; // Reset pax_extensions after use
-            if is_recognized_header && fields.is_pax_sparse() {
-                gnu_longname = fields.pax_sparse_name();
-            }
-            fields.long_pathname = gnu_longname;
+            fields.long_pathname = if is_recognized_header && fields.is_pax_sparse() {
+                fields.pax_sparse_name()
+            } else {
+                gnu_longname
+            };
             fields.long_linkname = gnu_longlink;
             self.parse_sparse_header(&mut fields)?;
             return Ok(Some(fields.into_entry()));
@@ -483,9 +486,7 @@ impl<'a> EntriesFields<'a> {
             let data = &mut entry.data;
             let reader = &self.archive.inner;
             let size = entry.size;
-            let mut add_block = |block: &SparseEntry| -> io::Result<_> {
-                let off = block.offset;
-                let len = block.size;
+            let mut add_block = |off: u64, len: u64| -> io::Result<_> {
                 if len != 0 && (size - remaining) % BLOCK_SIZE as u64 != 0 {
                     return Err(other(
                         "previous block in sparse file was not \
@@ -513,7 +514,7 @@ impl<'a> EntriesFields<'a> {
                 Ok(())
             };
             for block in sparse_map {
-                add_block(&block)?
+                add_block(block.offset, block.size)?
             }
             if entry.header.as_gnu().map(|gnu| gnu.is_extended()) == Some(true) {
                 let mut ext = GnuExtSparseHeader::new();
@@ -526,10 +527,7 @@ impl<'a> EntriesFields<'a> {
                     self.next += BLOCK_SIZE as u64;
                     for block in ext.sparse.iter() {
                         if !block.is_empty() {
-                            add_block(&SparseEntry {
-                                offset: block.offset()?,
-                                size: block.length()?,
-                            })?;
+                            add_block(block.offset()?, block.length()?)?;
                         }
                     }
                 }
