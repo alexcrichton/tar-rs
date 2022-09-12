@@ -396,8 +396,8 @@ impl<'a> EntriesFields<'a> {
                 if let Some(pax_extensions_ref) = &pax_extensions {
                     pax_size = pax_extensions_size(pax_extensions_ref);
                 }
-                // Not an entry
-                // Keep pax_extensions for the next ustar header
+                // This entry has two headers.
+                // Keep pax_extensions for the next ustar header.
                 processed -= 1;
                 continue;
             }
