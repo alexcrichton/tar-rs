@@ -289,7 +289,7 @@ impl<'a> EntryFields<'a> {
         let mut path = self.path_lossy();
         if cfg!(windows) && path.starts_with("//") {
             // Avoid being parsed as UNC
-            path.insert_str(0, "./");
+            path.insert(0, '.');
         }
         Ok(Cow::Owned(PathBuf::from(path)))
     }
