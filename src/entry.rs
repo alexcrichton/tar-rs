@@ -569,20 +569,17 @@ impl<'a> EntryFields<'a> {
             }
             return Ok(Unpacked::__Nonexhaustive);
 
-            #[cfg(target_arch = "wasm32")]
-            #[allow(unused_variables)]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
-                Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
-            }
-
-            #[cfg(windows)]
-            fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
-                ::std::os::windows::fs::symlink_file(src, dst)
-            }
-
-            #[cfg(unix)]
-            fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
-                ::std::os::unix::fs::symlink(src, dst)
+                cfg_if::cfg_if! {
+                    if #[cfg(unix)] {
+                        ::std::os::unix::fs::symlink(src, dst)
+                    } else if #[cfg(windows)] {
+                        ::std::os::windows::fs::symlink_file(src, dst)
+                    } else {
+                        let _ = (src, dst);
+                        Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
+                    }
+                }
             }
         } else if kind.is_pax_global_extensions()
             || kind.is_pax_local_extensions()
@@ -746,7 +743,7 @@ impl<'a> EntryFields<'a> {
         }
 
         // Windows does not support posix numeric ownership IDs
-        #[cfg(any(windows, target_arch = "wasm32"))]
+        #[cfg(not(unix))]
         fn _set_ownerships(
             _: &Path,
             _: &Option<&mut std::fs::File>,
@@ -775,103 +772,92 @@ impl<'a> EntryFields<'a> {
             })
         }
 
-        #[cfg(unix)]
         fn _set_perms(
             dst: &Path,
             f: Option<&mut std::fs::File>,
             mode: u32,
             preserve: bool,
         ) -> io::Result<()> {
-            use std::os::unix::prelude::*;
+            cfg_if::cfg_if! {
+                if #[cfg(unix)] {
+                    use std::os::unix::prelude::*;
 
-            let mode = if preserve { mode } else { mode & 0o777 };
-            let perm = fs::Permissions::from_mode(mode as _);
-            match f {
-                Some(f) => f.set_permissions(perm),
-                None => fs::set_permissions(dst, perm),
-            }
-        }
-
-        #[cfg(windows)]
-        fn _set_perms(
-            dst: &Path,
-            f: Option<&mut std::fs::File>,
-            mode: u32,
-            _preserve: bool,
-        ) -> io::Result<()> {
-            if mode & 0o200 == 0o200 {
-                return Ok(());
-            }
-            match f {
-                Some(f) => {
-                    let mut perm = f.metadata()?.permissions();
-                    perm.set_readonly(true);
-                    f.set_permissions(perm)
-                }
-                None => {
-                    let mut perm = fs::metadata(dst)?.permissions();
-                    perm.set_readonly(true);
-                    fs::set_permissions(dst, perm)
-                }
-            }
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        #[allow(unused_variables)]
-        fn _set_perms(
-            dst: &Path,
-            f: Option<&mut std::fs::File>,
-            mode: u32,
-            _preserve: bool,
-        ) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
-        }
-
-        #[cfg(all(unix, feature = "xattr"))]
-        fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
-            use std::ffi::OsStr;
-            use std::os::unix::prelude::*;
-
-            let exts = match me.pax_extensions() {
-                Ok(Some(e)) => e,
-                _ => return Ok(()),
-            };
-            let exts = exts
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let key = e.key_bytes();
-                    let prefix = b"SCHILY.xattr.";
-                    if key.starts_with(prefix) {
-                        Some((&key[prefix.len()..], e))
-                    } else {
-                        None
+                    let mode = if preserve { mode } else { mode & 0o777 };
+                    let perm = fs::Permissions::from_mode(mode as _);
+                    match f {
+                        Some(f) => f.set_permissions(perm),
+                        None => fs::set_permissions(dst, perm),
                     }
-                })
-                .map(|(key, e)| (OsStr::from_bytes(key), e.value_bytes()));
-
-            for (key, value) in exts {
-                xattr::set(dst, key, value).map_err(|e| {
-                    TarError::new(
-                        format!(
-                            "failed to set extended \
-                             attributes to {}. \
-                             Xattrs: key={:?}, value={:?}.",
-                            dst.display(),
-                            key,
-                            String::from_utf8_lossy(value)
-                        ),
-                        e,
-                    )
-                })?;
+                } else if #[cfg(windows)] {
+                    if mode & 0o200 == 0o200 {
+                        return Ok(());
+                    }
+                    match f {
+                        Some(f) => {
+                            let mut perm = f.metadata()?.permissions();
+                            perm.set_readonly(true);
+                            f.set_permissions(perm)
+                        }
+                        None => {
+                            let mut perm = fs::metadata(dst)?.permissions();
+                            perm.set_readonly(true);
+                            fs::set_permissions(dst, perm)
+                        }
+                    }
+                } else {
+                    let _ = (dst, f, mode, preserve);
+                    Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
+                }
             }
-
-            Ok(())
         }
-        // Windows does not completely support posix xattrs
-        // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
-        #[cfg(any(windows, not(feature = "xattr"), target_arch = "wasm32"))]
-        fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
-            Ok(())
+
+        fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
+            cfg_if::cfg_if! {
+                if #[cfg(all(unix, feature = "xattr"))] {
+                    use std::ffi::OsStr;
+                    use std::os::unix::prelude::*;
+
+                    let exts = match me.pax_extensions() {
+                        Ok(Some(e)) => e,
+                        _ => return Ok(()),
+                    };
+                    let exts = exts
+                        .filter_map(|e| e.ok())
+                        .filter_map(|e| {
+                            let key = e.key_bytes();
+                            let prefix = b"SCHILY.xattr.";
+                            if key.starts_with(prefix) {
+                                Some((&key[prefix.len()..], e))
+                            } else {
+                                None
+                            }
+                        })
+                    .map(|(key, e)| (OsStr::from_bytes(key), e.value_bytes()));
+
+                    for (key, value) in exts {
+                        xattr::set(dst, key, value).map_err(|e| {
+                            TarError::new(
+                                format!(
+                                    "failed to set extended \
+                                     attributes to {}. \
+                                     Xattrs: key={:?}, value={:?}.",
+                                    dst.display(),
+                                    key,
+                                    String::from_utf8_lossy(value)
+                                ),
+                                e,
+                            )
+                        })?;
+                    }
+
+                    Ok(())
+                } else {
+                    // Windows does not completely support posix xattrs
+                    // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
+                    let _ = (me, dst);
+                    Ok(())
+                }
+            }
         }
     }
 
