@@ -20,6 +20,7 @@ contents are never required to be entirely resident in memory all at once.
 
 [dependencies]
 filetime = "0.2.8"
+cfg-if = "1.0.0"
 
 [dev-dependencies]
 tempfile = "3"

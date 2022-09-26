@@ -732,115 +732,117 @@ impl Header {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    #[allow(unused_variables)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        unimplemented!();
-    }
-
-    #[cfg(unix)]
-    fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        match mode {
-            HeaderMode::Complete => {
-                self.set_mtime(meta.mtime() as u64);
-                self.set_uid(meta.uid() as u64);
-                self.set_gid(meta.gid() as u64);
-                self.set_mode(meta.mode() as u32);
-            }
-            HeaderMode::Deterministic => {
-                // We could in theory set the mtime to zero here, but not all
-                // tools seem to behave well when ingesting files with a 0
-                // timestamp. For example rust-lang/cargo#9512 shows that lldb
-                // doesn't ingest files with a zero timestamp correctly.
-                //
-                // We just need things to be deterministic here so just pick
-                // something that isn't zero. This time, chosen after careful
-                // deliberation, corresponds to Jul 23, 2006 -- the date of the
-                // first commit for what would become Rust.
-                self.set_mtime(1153704088);
-
-                self.set_uid(0);
-                self.set_gid(0);
-
-                // Use a default umask value, but propagate the (user) execute bit.
-                let fs_mode = if meta.is_dir() || (0o100 & meta.mode() == 0o100) {
-                    0o755
-                } else {
-                    0o644
-                };
-                self.set_mode(fs_mode);
-            }
-        }
-
-        // Note that if we are a GNU header we *could* set atime/ctime, except
-        // the `tar` utility doesn't do that by default and it causes problems
-        // with 7-zip [1].
-        //
-        // It's always possible to fill them out manually, so we just don't fill
-        // it out automatically here.
-        //
-        // [1]: https://github.com/alexcrichton/tar-rs/issues/70
-
-        // TODO: need to bind more file types
-        self.set_entry_type(entry_type(meta.mode()));
-
-        fn entry_type(mode: u32) -> EntryType {
-            match mode as libc::mode_t & libc::S_IFMT {
-                libc::S_IFREG => EntryType::file(),
-                libc::S_IFLNK => EntryType::symlink(),
-                libc::S_IFCHR => EntryType::character_special(),
-                libc::S_IFBLK => EntryType::block_special(),
-                libc::S_IFDIR => EntryType::dir(),
-                libc::S_IFIFO => EntryType::fifo(),
-                _ => EntryType::new(b' '),
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        // There's no concept of a file mode on Windows, so do a best approximation here.
-        match mode {
-            HeaderMode::Complete => {
-                self.set_uid(0);
-                self.set_gid(0);
-                // The dates listed in tarballs are always seconds relative to
-                // January 1, 1970. On Windows, however, the timestamps are returned as
-                // dates relative to January 1, 1601 (in 100ns intervals), so we need to
-                // add in some offset for those dates.
-                let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
-                self.set_mtime(mtime);
-                let fs_mode = {
-                    const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
-                    let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
-                    match (meta.is_dir(), readonly != 0) {
-                        (true, false) => 0o755,
-                        (true, true) => 0o555,
-                        (false, false) => 0o644,
-                        (false, true) => 0o444,
+        cfg_if::cfg_if! {
+            if #[cfg(unix)] {
+                match mode {
+                    HeaderMode::Complete => {
+                        self.set_mtime(meta.mtime() as u64);
+                        self.set_uid(meta.uid() as u64);
+                        self.set_gid(meta.gid() as u64);
+                        self.set_mode(meta.mode() as u32);
                     }
-                };
-                self.set_mode(fs_mode);
-            }
-            HeaderMode::Deterministic => {
-                self.set_uid(0);
-                self.set_gid(0);
-                self.set_mtime(123456789); // see above in unix
-                let fs_mode = if meta.is_dir() { 0o755 } else { 0o644 };
-                self.set_mode(fs_mode);
+                    HeaderMode::Deterministic => {
+                        // We could in theory set the mtime to zero here, but
+                        // not all tools seem to behave well when ingesting
+                        // files with a 0 timestamp. For example
+                        // rust-lang/cargo#9512 shows that lldb doesn't ingest
+                        // files with a zero timestamp correctly.
+                        //
+                        // We just need things to be deterministic here so just
+                        // pick something that isn't zero. This time, chosen
+                        // after careful deliberation, corresponds to Jul 23,
+                        // 2006 -- the date of the first commit for what would
+                        // become Rust.
+                        self.set_mtime(1153704088);
+
+                        self.set_uid(0);
+                        self.set_gid(0);
+
+                        // Use a default umask value, but propagate the (user)
+                        // execute bit.
+                        let fs_mode = if meta.is_dir() || (0o100 & meta.mode() == 0o100) {
+                            0o755
+                        } else {
+                            0o644
+                        };
+                        self.set_mode(fs_mode);
+                    }
+                }
+
+                // Note that if we are a GNU header we *could* set atime/ctime,
+                // except the `tar` utility doesn't do that by default and it
+                // causes problems with 7-zip [1].
+                //
+                // It's always possible to fill them out manually, so we just
+                // don't fill it out automatically here.
+                //
+                // [1]: https://github.com/alexcrichton/tar-rs/issues/70
+
+                // TODO: need to bind more file types
+                self.set_entry_type(entry_type(meta.mode()));
+
+                fn entry_type(mode: u32) -> EntryType {
+                    match mode as libc::mode_t & libc::S_IFMT {
+                        libc::S_IFREG => EntryType::file(),
+                        libc::S_IFLNK => EntryType::symlink(),
+                        libc::S_IFCHR => EntryType::character_special(),
+                        libc::S_IFBLK => EntryType::block_special(),
+                        libc::S_IFDIR => EntryType::dir(),
+                        libc::S_IFIFO => EntryType::fifo(),
+                        _ => EntryType::new(b' '),
+                    }
+                }
+            } else if #[cfg(windows)] {
+                // There's no concept of a file mode on Windows, so do a best
+                // approximation here.
+                match mode {
+                    HeaderMode::Complete => {
+                        self.set_uid(0);
+                        self.set_gid(0);
+                        // The dates listed in tarballs are always seconds
+                        // relative to January 1, 1970. On Windows, however, the
+                        // timestamps are returned as dates relative to January
+                        // 1, 1601 (in 100ns intervals), so we need to add in
+                        // some offset for those dates.
+                        let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
+                        self.set_mtime(mtime);
+                        let fs_mode = {
+                            const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
+                            let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
+                            match (meta.is_dir(), readonly != 0) {
+                                (true, false) => 0o755,
+                                (true, true) => 0o555,
+                                (false, false) => 0o644,
+                                (false, true) => 0o444,
+                            }
+                        };
+                        self.set_mode(fs_mode);
+                    }
+                    HeaderMode::Deterministic => {
+                        self.set_uid(0);
+                        self.set_gid(0);
+                        self.set_mtime(123456789); // see above in unix
+                        let fs_mode = if meta.is_dir() { 0o755 } else { 0o644 };
+                        self.set_mode(fs_mode);
+                    }
+                }
+
+                let ft = meta.file_type();
+                self.set_entry_type(if ft.is_dir() {
+                    EntryType::dir()
+                } else if ft.is_file() {
+                    EntryType::file()
+                } else if ft.is_symlink() {
+                    EntryType::symlink()
+                } else {
+                    EntryType::new(b' ')
+                });
+            } else {
+                let _ = (meta, mode);
+                unimplemented!();
             }
         }
-
-        let ft = meta.file_type();
-        self.set_entry_type(if ft.is_dir() {
-            EntryType::dir()
-        } else if ft.is_file() {
-            EntryType::file()
-        } else if ft.is_symlink() {
-            EntryType::symlink()
-        } else {
-            EntryType::new(b' ')
-        });
     }
 
     fn debug_fields(&self, b: &mut fmt::DebugStruct) {
@@ -1546,23 +1548,20 @@ fn copy_path_into(mut slot: &mut [u8], path: &Path, is_link_name: bool) -> io::R
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn ends_with_slash(p: &Path) -> bool {
-    p.to_string_lossy().ends_with('/')
+    cfg_if::cfg_if! {
+        if #[cfg(unix)] {
+            p.as_os_str().as_bytes().ends_with(&[b'/'])
+        } else if #[cfg(windows)] {
+            let last = p.as_os_str().encode_wide().last();
+            last == Some(b'/' as u16) || last == Some(b'\\' as u16)
+        } else {
+            p.to_string_lossy().ends_with('/')
+        }
+    }
 }
 
-#[cfg(windows)]
-fn ends_with_slash(p: &Path) -> bool {
-    let last = p.as_os_str().encode_wide().last();
-    last == Some(b'/' as u16) || last == Some(b'\\' as u16)
-}
-
-#[cfg(unix)]
-fn ends_with_slash(p: &Path) -> bool {
-    p.as_os_str().as_bytes().ends_with(&[b'/'])
-}
-
-#[cfg(any(windows, target_arch = "wasm32"))]
+#[cfg(not(unix))]
 pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     p.as_os_str()
         .to_str()
@@ -1590,53 +1589,50 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     Ok(p.as_os_str().as_bytes()).map(Cow::Borrowed)
 }
 
-#[cfg(windows)]
-/// On windows we cannot accept non-Unicode bytes because it
-/// is impossible to convert it to UTF-16.
 pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
-    return match bytes {
-        Cow::Borrowed(bytes) => {
-            let s = str::from_utf8(bytes).map_err(|_| not_unicode(bytes))?;
-            Ok(Cow::Borrowed(Path::new(s)))
-        }
-        Cow::Owned(bytes) => {
-            let s = String::from_utf8(bytes).map_err(|uerr| not_unicode(&uerr.into_bytes()))?;
-            Ok(Cow::Owned(PathBuf::from(s)))
-        }
-    };
+    cfg_if::cfg_if! {
+        if #[cfg(unix)] {
+            // On unix this operation can never fail.
+            use std::ffi::{OsStr, OsString};
 
-    fn not_unicode(v: &[u8]) -> io::Error {
-        other(&format!(
-            "only Unicode paths are supported on Windows: {}",
-            String::from_utf8_lossy(v)
-        ))
+            Ok(match bytes {
+                Cow::Borrowed(bytes) => Cow::Borrowed(Path::new(OsStr::from_bytes(bytes))),
+                Cow::Owned(bytes) => Cow::Owned(PathBuf::from(OsString::from_vec(bytes))),
+            })
+        } else if #[cfg(windows)] {
+            // On windows we cannot accept non-Unicode bytes because it
+            // is impossible to convert it to UTF-16.
+            return match bytes {
+                Cow::Borrowed(bytes) => {
+                    let s = str::from_utf8(bytes).map_err(|_| not_unicode(bytes))?;
+                    Ok(Cow::Borrowed(Path::new(s)))
+                }
+                Cow::Owned(bytes) => {
+                    let s =
+                        String::from_utf8(bytes).map_err(|uerr| not_unicode(&uerr.into_bytes()))?;
+                    Ok(Cow::Owned(PathBuf::from(s)))
+                }
+            };
+
+            fn not_unicode(v: &[u8]) -> io::Error {
+                other(&format!(
+                    "only Unicode paths are supported on Windows: {}",
+                    String::from_utf8_lossy(v)
+                ))
+            }
+        } else {
+            fn invalid_utf8<T>(_: T) -> io::Error {
+                io::Error::new(io::ErrorKind::InvalidData, "Invalid utf-8")
+            }
+
+            Ok(match bytes {
+                Cow::Borrowed(bytes) => {
+                    Cow::Borrowed(Path::new(str::from_utf8(bytes).map_err(invalid_utf8)?))
+                }
+                Cow::Owned(bytes) => Cow::Owned(PathBuf::from(
+                    String::from_utf8(bytes).map_err(invalid_utf8)?,
+                )),
+            })
+        }
     }
-}
-
-#[cfg(unix)]
-/// On unix this operation can never fail.
-pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
-    use std::ffi::{OsStr, OsString};
-
-    Ok(match bytes {
-        Cow::Borrowed(bytes) => Cow::Borrowed(Path::new(OsStr::from_bytes(bytes))),
-        Cow::Owned(bytes) => Cow::Owned(PathBuf::from(OsString::from_vec(bytes))),
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
-    Ok(match bytes {
-        Cow::Borrowed(bytes) => {
-            Cow::Borrowed({ Path::new(str::from_utf8(bytes).map_err(invalid_utf8)?) })
-        }
-        Cow::Owned(bytes) => {
-            Cow::Owned({ PathBuf::from(String::from_utf8(bytes).map_err(invalid_utf8)?) })
-        }
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn invalid_utf8<T>(_: T) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, "Invalid utf-8")
 }
