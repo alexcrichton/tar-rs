@@ -822,9 +822,14 @@ impl<'a> EntryFields<'a> {
             dst: &Path,
             f: Option<&mut std::fs::File>,
             mode: u32,
-            _preserve: bool,
+            preserve: bool,
         ) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
+            if preserve {
+                Err(io::Error::new(io::ErrorKind::Other, "Permission not yet supported on wasm target, use `Archive::set_preserve_permissions(false)` to ignore."))
+            } else {
+                // Silently ignore permissions
+                Ok(())
+            }
         }
 
         #[cfg(all(unix, feature = "xattr"))]
