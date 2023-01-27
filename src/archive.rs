@@ -103,6 +103,7 @@ impl<R: Read> Archive<R> {
     /// let mut ar = Archive::new(File::open("foo.tar").unwrap());
     /// ar.unpack("foo").unwrap();
     /// ```
+    #[cfg(feature = "fs")]
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
         let me: &mut Archive<dyn Read> = self;
         me._unpack(dst.as_ref())
@@ -197,6 +198,7 @@ impl Archive<dyn Read + '_> {
         })
     }
 
+    #[cfg(feature = "fs")]
     fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
         if dst.symlink_metadata().is_err() {
             fs::create_dir_all(&dst)
