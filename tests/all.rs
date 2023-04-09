@@ -4,6 +4,7 @@ extern crate tempfile;
 #[cfg(all(unix, feature = "xattr"))]
 extern crate xattr;
 
+use std::convert::TryInto;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{self, Cursor};
@@ -1027,6 +1028,211 @@ fn encoded_long_name_has_trailing_nul() {
 
     let header_name = &e.header().as_gnu().unwrap().name;
     assert!(header_name.starts_with(b"././@LongLink\x00"));
+}
+
+#[test]
+fn write_sparse_to_vec_and_read_again() {
+    let rdr = Cursor::new(tar!("sparse.tar"));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+
+    let mut tar = tar::Builder::new(Vec::new());
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_begin.txt");
+    assert_eq!(std::str::from_utf8(&bytes[..5]).unwrap(), "test\n");
+    let mut b = String::new();
+    a.read_to_string(&mut b).unwrap();
+    let data = String::from("test\n");
+    tar.append(&mut a.header().to_owned(), data.as_bytes())
+        .unwrap();
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_end.txt");
+    assert_eq!(
+        std::str::from_utf8(&bytes[bytes.len() - 9..]).unwrap(),
+        "test_end\n"
+    );
+    let data = String::from("test_end\n");
+    tar.append(&mut a.header().to_owned(), data.as_bytes())
+        .unwrap();
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_ext.txt");
+    assert!(std::str::from_utf8(&bytes[..0x1000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x1000..0x1000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x1000 + 5..0x3000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x3000..0x3000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x3000 + 5..0x5000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x5000..0x5000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x5000 + 5..0x7000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x7000..0x7000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x7000 + 5..0x9000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x9000..0x9000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x9000 + 5..0xb000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0xb000..0xb000 + 5]).unwrap(),
+        "text\n"
+    );
+    let data = String::from("text\n");
+    tar.append(&mut a.header().to_owned(), data.as_bytes())
+        .unwrap();
+    tar.append(&mut a.header().to_owned(), data.as_bytes())
+        .unwrap();
+    tar.append(&mut a.header().to_owned(), data.as_bytes())
+        .unwrap();
+    tar.append(&mut a.header().to_owned(), data.as_bytes())
+        .unwrap();
+    tar.append(&mut a.header().to_owned(), data.as_bytes())
+        .unwrap();
+    tar.append(&mut a.header().to_owned(), data.as_bytes())
+        .unwrap();
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse.txt");
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x1000..0x1000 + 6]).unwrap(),
+        "hello\n"
+    );
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x2fa0..0x2fa0 + 6]).unwrap(),
+        "world\n"
+    );
+    tar.append(&mut a.header().to_owned(), &*bytes).unwrap();
+
+    assert!(entries.next().is_none());
+
+    let rdr = Cursor::new(t!(tar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_begin.txt");
+    assert_eq!(std::str::from_utf8(&bytes[..5]).unwrap(), "test\n");
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_end.txt");
+    assert!(std::str::from_utf8(&bytes[..bytes.len() - 9])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[bytes.len() - 9..]).unwrap(),
+        "test_end\n"
+    );
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_ext.txt");
+    assert!(std::str::from_utf8(&bytes[..0x1000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x1000..0x1000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x1000 + 5..0x3000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x3000..0x3000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x3000 + 5..0x5000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x5000..0x5000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x5000 + 5..0x7000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x7000..0x7000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x7000 + 5..0x9000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x9000..0x9000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x9000 + 5..0xb000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0xb000..0xb000 + 5]).unwrap(),
+        "text\n"
+    );
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse.txt");
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x1000..0x1000 + 6]).unwrap(),
+        "hello\n"
+    );
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x2fa0..0x2fa0 + 6]).unwrap(),
+        "world\n"
+    );
+
+    assert!(entries.next().is_none());
 }
 
 #[test]
