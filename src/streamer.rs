@@ -1,23 +1,23 @@
+use crate::other;
 #[cfg(unix)]
 use std::os::unix::prelude::*;
-use crate::other;
 
 #[cfg(windows)]
 use std::os::windows::prelude::*;
 
-use std::io::{self, Read, Result, SeekFrom, Seek};
-use std::path::{PathBuf, Path};
-use std::str;
 use std::collections::HashMap;
 use std::fs::{self};
+use std::io::{self, Read, Result, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::str;
 
+use crate::header::{prepare_header, Header, HeaderMode};
 #[cfg(windows)]
 use crate::other;
-use crate::header::{HeaderMode, Header, prepare_header};
-use crate::{EntryType};
+use crate::EntryType;
 
 struct StreamFile {
-	path: PathBuf,
+    path: PathBuf,
     alternative_name: Option<PathBuf>,
     follow: bool,
     mode: HeaderMode,
@@ -27,26 +27,27 @@ struct StreamFile {
 }
 
 impl StreamFile {
-	fn new(
+    fn new(
         path: PathBuf,
         alternative_name: Option<PathBuf>,
         follow: bool,
-        mode: HeaderMode) -> Self {
-		Self {
-			path,
-			alternative_name,
-			follow,
+        mode: HeaderMode,
+    ) -> Self {
+        Self {
+            path,
+            alternative_name,
+            follow,
             mode,
             cached_header_bytes: None, //will be encoded while reading (to save memory)
             read_bytes: 0,
-            padding_bytes: None //will be calculated while using io::Read implementation.
-		}
-	}
+            padding_bytes: None, //will be calculated while using io::Read implementation.
+        }
+    }
 }
 
 struct StreamData {
-	encoded_header: Vec<u8>,
-	data: Box<dyn Read>,
+    encoded_header: Vec<u8>,
+    data: Box<dyn Read>,
     padding_bytes: Option<Vec<u8>>,
     read_bytes: usize, //needed to calculate padding;
 }
@@ -76,7 +77,7 @@ struct StreamSpecialFile {
     cached_header_bytes: Option<Vec<u8>>,
     path: PathBuf,
     mode: HeaderMode,
-    follow: bool
+    follow: bool,
 }
 
 #[cfg(unix)]
@@ -97,9 +98,7 @@ struct StreamLink {
 
 impl StreamLink {
     fn new_with_encoded_header(encoded_header: Vec<u8>) -> Self {
-        Self {
-            encoded_header,
-        }
+        Self { encoded_header }
     }
 }
 
@@ -132,7 +131,7 @@ impl Default for StreamerReadMetadata {
 /// use std::fs;
 /// use tar::Streamer;
 /// use std::io;
-/// 
+///
 ///  let mut streamer = Streamer::new();
 ///  // Use the directory at one location, but insert it into the archive
 ///  // with a different name.
@@ -143,14 +142,14 @@ impl Default for StreamerReadMetadata {
 ///  io::copy(&mut streamer, &mut target_archive).unwrap();
 ///  ```
 pub struct Streamer {
-	mode: HeaderMode,
-	follow: bool,
-	streamer_metadata: StreamerReadMetadata,
+    mode: HeaderMode,
+    follow: bool,
+    streamer_metadata: StreamerReadMetadata,
     index_counter: usize,
-	stream_files: HashMap<usize, StreamFile>, // <index_counter, StreamFile>
-	stream_data: HashMap<usize, StreamData>, // <index_counter, StreamData>
+    stream_files: HashMap<usize, StreamFile>, // <index_counter, StreamFile>
+    stream_data: HashMap<usize, StreamData>,  // <index_counter, StreamData>
     stream_special_file: HashMap<usize, StreamSpecialFile>, //<index_counter, StreamSpecialFile>
-    stream_link: HashMap<usize, StreamLink>, // <index_counter, StreamLink>
+    stream_link: HashMap<usize, StreamLink>,  // <index_counter, StreamLink>
 }
 
 impl Default for Streamer {
@@ -160,22 +159,22 @@ impl Default for Streamer {
 }
 
 impl Streamer {
-	/// Creates a new empty archive streamer. The streamer will use
+    /// Creates a new empty archive streamer. The streamer will use
     /// `HeaderMode::Complete` by default.
-	pub fn new() -> Streamer {
-		Self {
-			mode: HeaderMode::Complete,
-			follow: true,
-			streamer_metadata: StreamerReadMetadata::default(),
+    pub fn new() -> Streamer {
+        Self {
+            mode: HeaderMode::Complete,
+            follow: true,
+            streamer_metadata: StreamerReadMetadata::default(),
             index_counter: 0,
-			stream_files: HashMap::new(),
-			stream_data: HashMap::new(),
+            stream_files: HashMap::new(),
+            stream_data: HashMap::new(),
             stream_special_file: HashMap::new(),
             stream_link: HashMap::new(),
-		}
-	}
+        }
+    }
 
-	/// Changes the HeaderMode that will be used when reading fs Metadata for
+    /// Changes the HeaderMode that will be used when reading fs Metadata for
     /// methods that implicitly read metadata for an input Path. Notably, this
     /// does _not_ apply to `append(Header)`.
     pub fn mode(&mut self, mode: HeaderMode) {
@@ -257,7 +256,12 @@ impl Streamer {
     /// let mut output_file = fs::File::create("my_archive.tar").unwrap();
     /// io::copy(&mut ar, &mut output_file);
     /// ```
-    pub fn append_data<P: AsRef<Path>, R: Read + 'static>(&mut self, header: &mut Header, path: P, data: R) -> Result<()> {
+    pub fn append_data<P: AsRef<Path>, R: Read + 'static>(
+        &mut self,
+        header: &mut Header,
+        path: P,
+        data: R,
+    ) -> Result<()> {
         let mut encoded_header = Vec::new();
         if let Some(mut long_name_extension_entry) = prepare_header_path(header, path.as_ref())? {
             encoded_header.append(&mut long_name_extension_entry);
@@ -319,7 +323,10 @@ impl Streamer {
         };
         header.set_cksum();
         encoded_header.append(&mut header.as_bytes().to_vec());
-        self.stream_link.insert(self.index_counter, StreamLink::new_with_encoded_header(encoded_header));
+        self.stream_link.insert(
+            self.index_counter,
+            StreamLink::new_with_encoded_header(encoded_header),
+        );
         self.index_counter += 1;
         Ok(())
     }
@@ -330,7 +337,7 @@ impl Streamer {
     /// to the archive. Any I/O error which orrcurs while opening the file
     /// or reading the appropriate metadata will be returning while using
     /// an reading the archive.  
-    /// The path name for the file inside of this archive will be the same as `path`, 
+    /// The path name for the file inside of this archive will be the same as `path`,
     /// and it is required that the path is a relative path.
     ///
     /// # Examples
@@ -369,10 +376,13 @@ impl Streamer {
     /// // "bar/foo.txt".
     /// ar.append_path_with_name("foo/bar.txt", "bar/foo.txt").unwrap();
     /// ```
-    pub fn append_path_with_name<P: AsRef<Path>, N: AsRef<Path>>(&mut self, path: P, name: N) -> Result<()> {
+    pub fn append_path_with_name<P: AsRef<Path>, N: AsRef<Path>>(
+        &mut self,
+        path: P,
+        name: N,
+    ) -> Result<()> {
         self.append_stream_file(path.as_ref(), Some(name.as_ref()))
     }
-
 
     /// Adds a file to this archive with the given path as the name of the file
     /// in the archive.
@@ -397,14 +407,19 @@ impl Streamer {
         let stat = file.metadata()?;
         let mut header = Header::new_gnu();
         let mut encoded_header = Vec::new();
-        if let Some(mut long_name_extension_entry) = prepare_header_path(&mut header, path.as_ref())? {
+        if let Some(mut long_name_extension_entry) =
+            prepare_header_path(&mut header, path.as_ref())?
+        {
             encoded_header.append(&mut long_name_extension_entry);
             //self.long_name_extension_entries.insert(self.index_counter, long_name_extension_entry);
         }
         header.set_metadata_in_mode(&stat, self.mode);
         header.set_cksum();
         encoded_header.append(&mut header.as_bytes().to_vec());
-        self.append_stream_data(StreamData::new_with_encoded_header(encoded_header, file.try_clone()?));
+        self.append_stream_data(StreamData::new_with_encoded_header(
+            encoded_header,
+            file.try_clone()?,
+        ));
         Ok(())
     }
 
@@ -453,7 +468,11 @@ impl Streamer {
     /// let mut target_archive = fs::File::create("/home/user/my_archive.tar").unwrap();
     /// io::copy(&mut streamer, &mut target_archive).unwrap();
     /// ```
-    pub fn append_dir_all<P: AsRef<Path>, S: AsRef<Path>>(&mut self, path: P, src_path: S) -> io::Result<()> {
+    pub fn append_dir_all<P: AsRef<Path>, S: AsRef<Path>>(
+        &mut self,
+        path: P,
+        src_path: S,
+    ) -> io::Result<()> {
         let mut stack = vec![(src_path.as_ref().to_path_buf(), true, false)];
         while let Some((src, is_dir, is_symlink)) = stack.pop() {
             let dest = path.as_ref().join(src.strip_prefix(&src_path).unwrap());
@@ -490,8 +509,11 @@ impl Streamer {
     #[cfg(unix)]
     fn append_special(&mut self, path: &Path) -> io::Result<()> {
         prepare_special_header(path, self.mode, self.follow)?;
-        self.stream_special_file.insert(self.index_counter, StreamSpecialFile::new(path, self.mode, self.follow));
-        self.index_counter +=1;
+        self.stream_special_file.insert(
+            self.index_counter,
+            StreamSpecialFile::new(path, self.mode, self.follow),
+        );
+        self.index_counter += 1;
 
         Ok(())
     }
@@ -499,11 +521,11 @@ impl Streamer {
     fn append_stream_file(&mut self, path: &Path, name: Option<&Path>) -> Result<()> {
         prepare_file_header(path, name, self.mode, self.follow)?;
         let stream_file = StreamFile::new(
-            path.to_path_buf(), 
-            name.map(|x| x.to_path_buf()), 
+            path.to_path_buf(),
+            name.map(|x| x.to_path_buf()),
             self.follow,
             self.mode,
-            );
+        );
         self.stream_files.insert(self.index_counter, stream_file);
         self.index_counter += 1;
         Ok(())
@@ -514,46 +536,55 @@ impl Read for Streamer {
     fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<usize, std::io::Error> {
         let mut read_bytes = 0;
         'outer: loop {
-          // end of archive reached, if there are remaining finish bytes, we should read them :)
+            // end of archive reached, if there are remaining finish bytes, we should read them :)
             if self.streamer_metadata.current_index > self.index_counter {
                 if self.streamer_metadata.finish_bytes_remaining > 0 {
                     if buffer[read_bytes..].len() > self.streamer_metadata.finish_bytes_remaining {
-                        let finishing_bytes = vec![0u8; self.streamer_metadata.finish_bytes_remaining];
+                        let finishing_bytes =
+                            vec![0u8; self.streamer_metadata.finish_bytes_remaining];
                         self.streamer_metadata.finish_bytes_remaining -= finishing_bytes.len();
-                        buffer[read_bytes..read_bytes+finishing_bytes.len()].copy_from_slice(&finishing_bytes);
+                        buffer[read_bytes..read_bytes + finishing_bytes.len()]
+                            .copy_from_slice(&finishing_bytes);
                         read_bytes += finishing_bytes.len();
                     } else {
                         self.streamer_metadata.finish_bytes_remaining -= buffer[read_bytes..].len();
                         let finishing_bytes = vec![0u8; buffer[read_bytes..].len()];
-                        buffer[read_bytes..read_bytes+finishing_bytes.len()].copy_from_slice(&finishing_bytes);
+                        buffer[read_bytes..read_bytes + finishing_bytes.len()]
+                            .copy_from_slice(&finishing_bytes);
                         read_bytes += finishing_bytes.len();
                     }
                 }
                 break;
             }
-            
-            if let Some(stream_file) = self.stream_files.get_mut(&self.streamer_metadata.current_index) {
+
+            if let Some(stream_file) = self
+                .stream_files
+                .get_mut(&self.streamer_metadata.current_index)
+            {
                 //build and read the header first...
                 if stream_file.cached_header_bytes.is_none() {
                     stream_file.cached_header_bytes = Some(prepare_file_header(
                         &stream_file.path,
                         stream_file.alternative_name.as_deref(),
-                        stream_file.mode, 
-                        stream_file.follow)?)
+                        stream_file.mode,
+                        stream_file.follow,
+                    )?)
                 }
                 if let Some(ref mut encoded_header) = stream_file.cached_header_bytes {
                     if encoded_header.len() > buffer[read_bytes..].len() {
-                        let drained_bytes: Vec<u8> = encoded_header.drain(..buffer[read_bytes..].len()).collect();
-                        buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                        let drained_bytes: Vec<u8> =
+                            encoded_header.drain(..buffer[read_bytes..].len()).collect();
+                        buffer[read_bytes..read_bytes + drained_bytes.len()]
+                            .copy_from_slice(&drained_bytes);
                         read_bytes += drained_bytes.len();
                         break;
                     } else {
                         let drained_bytes: Vec<u8> = encoded_header.drain(..).collect();
-                        buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                        buffer[read_bytes..read_bytes + drained_bytes.len()]
+                            .copy_from_slice(&drained_bytes);
                         read_bytes += drained_bytes.len();
                     }
                 }
-    
 
                 //...then read the appropriate data
                 loop {
@@ -563,13 +594,16 @@ impl Read for Streamer {
                     }
                     if let Some(ref mut padding_bytes) = stream_file.padding_bytes {
                         if padding_bytes.len() > buffer[read_bytes..].len() {
-                            let drained_bytes: Vec<u8> = padding_bytes.drain(..buffer[read_bytes..].len()).collect();
-                            buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                            let drained_bytes: Vec<u8> =
+                                padding_bytes.drain(..buffer[read_bytes..].len()).collect();
+                            buffer[read_bytes..read_bytes + drained_bytes.len()]
+                                .copy_from_slice(&drained_bytes);
                             read_bytes += drained_bytes.len();
                             break 'outer;
                         } else {
                             let drained_bytes: Vec<u8> = padding_bytes.drain(..).collect();
-                            buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                            buffer[read_bytes..read_bytes + drained_bytes.len()]
+                                .copy_from_slice(&drained_bytes);
                             read_bytes += drained_bytes.len();
                             break;
                         }
@@ -594,20 +628,28 @@ impl Read for Streamer {
                             }
                         }
                         read_bytes += r;
-                    }     
+                    }
                 }
             }
 
-            if let Some(stream_data) = self.stream_data.get_mut(&self.streamer_metadata.current_index) {
+            if let Some(stream_data) = self
+                .stream_data
+                .get_mut(&self.streamer_metadata.current_index)
+            {
                 //read the header first...
                 if stream_data.encoded_header.len() > buffer[read_bytes..].len() {
-                    let drained_bytes: Vec<u8> = stream_data.encoded_header.drain(..buffer[read_bytes..].len()).collect();
-                    buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                    let drained_bytes: Vec<u8> = stream_data
+                        .encoded_header
+                        .drain(..buffer[read_bytes..].len())
+                        .collect();
+                    buffer[read_bytes..read_bytes + drained_bytes.len()]
+                        .copy_from_slice(&drained_bytes);
                     read_bytes += drained_bytes.len();
                     break;
                 } else {
                     let drained_bytes: Vec<u8> = stream_data.encoded_header.drain(..).collect();
-                    buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                    buffer[read_bytes..read_bytes + drained_bytes.len()]
+                        .copy_from_slice(&drained_bytes);
                     read_bytes += drained_bytes.len();
                 }
 
@@ -619,13 +661,16 @@ impl Read for Streamer {
                     }
                     if let Some(ref mut padding_bytes) = stream_data.padding_bytes {
                         if padding_bytes.len() > buffer[read_bytes..].len() {
-                            let drained_bytes: Vec<u8> = padding_bytes.drain(..buffer[read_bytes..].len()).collect();
-                            buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                            let drained_bytes: Vec<u8> =
+                                padding_bytes.drain(..buffer[read_bytes..].len()).collect();
+                            buffer[read_bytes..read_bytes + drained_bytes.len()]
+                                .copy_from_slice(&drained_bytes);
                             read_bytes += drained_bytes.len();
                             break 'outer;
                         } else {
                             let drained_bytes: Vec<u8> = padding_bytes.drain(..).collect();
-                            buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                            buffer[read_bytes..read_bytes + drained_bytes.len()]
+                                .copy_from_slice(&drained_bytes);
                             read_bytes += drained_bytes.len();
                             break;
                         }
@@ -644,42 +689,57 @@ impl Read for Streamer {
                             }
                         }
                         read_bytes += r;
-                    }     
+                    }
                 }
             }
 
-            if let Some(stream_special_file) = self.stream_special_file.get_mut(&self.streamer_metadata.current_index) {
+            if let Some(stream_special_file) = self
+                .stream_special_file
+                .get_mut(&self.streamer_metadata.current_index)
+            {
                 //Zero padding should not necessary here.
                 if stream_special_file.cached_header_bytes.is_none() {
                     stream_special_file.cached_header_bytes = Some(prepare_special_header(
                         &stream_special_file.path,
                         stream_special_file.mode,
-                        stream_special_file.follow)?);
+                        stream_special_file.follow,
+                    )?);
                 }
                 if let Some(ref mut encoded_header) = stream_special_file.cached_header_bytes {
                     if encoded_header.len() > buffer[read_bytes..].len() {
-                        let drained_bytes: Vec<u8> = encoded_header.drain(..buffer[read_bytes..].len()).collect();
-                        buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                        let drained_bytes: Vec<u8> =
+                            encoded_header.drain(..buffer[read_bytes..].len()).collect();
+                        buffer[read_bytes..read_bytes + drained_bytes.len()]
+                            .copy_from_slice(&drained_bytes);
                         read_bytes += drained_bytes.len();
                         break;
                     } else {
                         let drained_bytes: Vec<u8> = encoded_header.drain(..).collect();
-                        buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                        buffer[read_bytes..read_bytes + drained_bytes.len()]
+                            .copy_from_slice(&drained_bytes);
                         read_bytes += drained_bytes.len();
                     }
                 }
             }
 
-            if let Some(stream_link) = self.stream_link.get_mut(&self.streamer_metadata.current_index) {
+            if let Some(stream_link) = self
+                .stream_link
+                .get_mut(&self.streamer_metadata.current_index)
+            {
                 //Zero padding should not necessary here.
                 if stream_link.encoded_header.len() > buffer[read_bytes..].len() {
-                    let drained_bytes: Vec<u8> = stream_link.encoded_header.drain(..buffer[read_bytes..].len()).collect();
-                    buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                    let drained_bytes: Vec<u8> = stream_link
+                        .encoded_header
+                        .drain(..buffer[read_bytes..].len())
+                        .collect();
+                    buffer[read_bytes..read_bytes + drained_bytes.len()]
+                        .copy_from_slice(&drained_bytes);
                     read_bytes += drained_bytes.len();
                     break;
                 } else {
                     let drained_bytes: Vec<u8> = stream_link.encoded_header.drain(..).collect();
-                    buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                    buffer[read_bytes..read_bytes + drained_bytes.len()]
+                        .copy_from_slice(&drained_bytes);
                     read_bytes += drained_bytes.len();
                 }
             }
@@ -690,7 +750,12 @@ impl Read for Streamer {
     }
 }
 
-fn prepare_file_header(path: &Path, name: Option<&Path>, mode: HeaderMode, follow: bool) -> io::Result<Vec<u8>> {
+fn prepare_file_header(
+    path: &Path,
+    name: Option<&Path>,
+    mode: HeaderMode,
+    follow: bool,
+) -> io::Result<Vec<u8>> {
     let stat = get_stat(path, follow)?;
     let ar_name = name.unwrap_or(path);
 
@@ -713,30 +778,36 @@ fn prepare_file_header(path: &Path, name: Option<&Path>, mode: HeaderMode, follo
     Ok(encoded_header)
 }
 
-
 fn get_stat<P: AsRef<Path>>(path: P, follow: bool) -> io::Result<fs::Metadata> {
     if follow {
         fs::metadata(path.as_ref()).map_err(|err| {
             io::Error::new(
                 err.kind(),
-                format!("{} when getting metadata for {}", err, path.as_ref().display()),
+                format!(
+                    "{} when getting metadata for {}",
+                    err,
+                    path.as_ref().display()
+                ),
             )
         })
     } else {
         fs::symlink_metadata(path.as_ref()).map_err(|err| {
             io::Error::new(
                 err.kind(),
-                format!("{} when getting metadata for {}", err, path.as_ref().display()),
+                format!(
+                    "{} when getting metadata for {}",
+                    err,
+                    path.as_ref().display()
+                ),
             )
         })
     }
 }
 
-
 #[cfg(unix)]
 fn prepare_special_header(path: &Path, mode: HeaderMode, follow: bool) -> io::Result<Vec<u8>> {
     let stat = get_stat(path, follow)?;
-    
+
     let file_type = stat.file_type();
     let entry_type;
     if file_type.is_socket() {
@@ -803,7 +874,7 @@ fn prepare_header_path(header: &mut Header, path: &Path) -> Result<Option<Vec<u8
         let mut entry_data = header2.as_bytes().to_vec();
         entry_data.append(&mut data2);
         extra_entry = Some(entry_data);
-        
+
         // Truncate the path to store in the header we're about to emit to
         // ensure we've got something at least mentioned. Note that we use
         // `str`-encoding to be compatible with Windows, but in general the
@@ -842,9 +913,6 @@ fn prepare_header_link(header: &mut Header, link_name: &Path) -> Result<Option<V
     Ok(extra_entry)
 }
 
-
-
-
 #[cfg(any(windows, target_arch = "wasm32"))]
 fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
     p.as_os_str()
@@ -866,7 +934,6 @@ fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
             }
         })
 }
-
 
 #[cfg(unix)]
 fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
