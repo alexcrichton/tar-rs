@@ -18,7 +18,7 @@
 //     all just super thin wrappers (e.g. easy to codegen).
 
 #![doc(html_root_url = "https://docs.rs/tar/0.4")]
-//#![deny(missing_docs)]
+#![deny(missing_docs)]
 
 use std::io::{Error, ErrorKind};
 

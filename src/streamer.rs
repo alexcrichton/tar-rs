@@ -27,19 +27,19 @@ struct StreamFile {
 }
 
 impl StreamFile {
-	fn new_with_encoded_header(
+	fn new(
         path: PathBuf,
         alternative_name: Option<PathBuf>,
         follow: bool,
-        mode: HeaderMode) -> StreamFile {
+        mode: HeaderMode) -> Self {
 		Self {
 			path,
 			alternative_name,
 			follow,
             mode,
-            cached_header_bytes: None,
+            cached_header_bytes: None, //will be encoded while reading (to save memory)
             read_bytes: 0,
-            padding_bytes: None
+            padding_bytes: None //will be calculated while using io::Read implementation.
 		}
 	}
 }
@@ -52,17 +52,16 @@ struct StreamData {
 }
 
 impl StreamData {
-    fn new<R: Read + 'static>(header: Header, data: R) -> StreamData {
+    fn new<R: Read + 'static>(header: Header, data: R) -> Self {
         Self {
             encoded_header: header.as_bytes().to_vec(),
             data: Box::new(data),
-            padding_bytes: None,
+            padding_bytes: None, //will be calculated while using io::Read implementation.
             read_bytes: 0,
         }
     }
 
-    // This method may be used with long name extension entries.
-    fn new_with_encoded_header<R: Read + 'static>(encoded_header: Vec<u8>, data: R) -> StreamData {
+    fn new_with_encoded_header<R: Read + 'static>(encoded_header: Vec<u8>, data: R) -> Self {
         Self {
             encoded_header,
             data: Box::new(data),
@@ -73,7 +72,7 @@ impl StreamData {
 }
 
 #[cfg(unix)]
-pub struct StreamSpecialFile {
+struct StreamSpecialFile {
     cached_header_bytes: Option<Vec<u8>>,
     path: PathBuf,
     mode: HeaderMode,
@@ -92,7 +91,7 @@ impl StreamSpecialFile {
     }
 }
 
-pub struct StreamLink {
+struct StreamLink {
     encoded_header: Vec<u8>,
 }
 
@@ -104,7 +103,7 @@ impl StreamLink {
     }
 }
 
-pub struct StreamerReadMetadata {
+struct StreamerReadMetadata {
     read_bytes: usize,
     current_index: usize,
     finish_bytes_remaining: usize,
@@ -120,9 +119,28 @@ impl Default for StreamerReadMetadata {
     }
 }
 
-/// A structure for building and streaming archives
+/// A structure for building and streaming archives.
 ///
-/// This structure has methods for building up an archive and implements [std::io::Read] for this archive.
+/// This structure has methods for building up an archive from scratch and implements [std::io::Read] for this archive.
+/// You have not to provide an [io::Write]r, you can just read directly from the [Streamer].
+/// It works like a [Builder], just as a [io::Read]er.
+/// The archive will "auto-finish" while reading.
+///
+/// # Example usage
+/// ```
+/// use std::path::PathBuf;
+/// use std::fs;
+/// use tar::Streamer;
+/// use std::io;
+/// 
+///  let mut streamer = Streamer::new();
+///  // Use the directory at one location, but insert it into the archive
+///  // with a different name.
+///  streamer.append_dir_all(&PathBuf::from("my_download_dir"), &PathBuf::from("/home/ph0llux/Downloads")).unwrap();
+///  // Write the archive to the given path.
+///  let mut target_archive = fs::File::create("/home/ph0llux/my_downloads.tar").unwrap();
+///  io::copy(&mut streamer, &mut target_archive).unwrap();
+///  ```
 pub struct Streamer {
 	mode: HeaderMode,
 	follow: bool,
@@ -141,7 +159,7 @@ impl Default for Streamer {
 }
 
 impl Streamer {
-	/// Create a new empty archive streamer.The streamer will use
+	/// Creates a new empty archive streamer. The streamer will use
     /// `HeaderMode::Complete` by default.
 	pub fn new() -> Streamer {
 		Self {
@@ -169,6 +187,122 @@ impl Streamer {
         self.follow = follow;
     }
 
+    /// Adds a new entry to the archive.
+    ///
+    /// This function will append the header specified, followed by contents of
+    /// the stream specified by `data`. To produce a valid archive the `size`
+    /// field of `header` must be the same as the length of the stream that's
+    /// being written. Additionally the checksum for the header should have been
+    /// set via the `set_cksum` method.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tar::{Streamer, Header};
+    /// use std::io;
+    /// use std::fs;
+    ///
+    /// let mut header = Header::new_gnu();
+    /// header.set_path("foo").unwrap();
+    /// header.set_size(4);
+    /// header.set_cksum();
+    ///
+    /// let mut data: &[u8] = &[1, 2, 3, 4];
+    ///
+    /// let mut ar = Streamer::new();
+    /// ar.append(&header, data).unwrap();
+    /// let output_file = fs::File::open("my_archive.tar");
+    /// io::copy(&mut ar, &mut output_file);
+    /// ```
+    pub fn append<R: Read + 'static>(&mut self, header: Header, data: R) {
+        let stream_data = StreamData::new(header, data);
+        self.stream_data.insert(self.index_counter, stream_data);
+        self.index_counter += 1;
+    }
+
+    /// Adds a new entry to this archive with the specified path.
+    ///
+    /// This function will set the specified path in the given header, which may
+    /// require appending a GNU long-name extension entry to the archive first.
+    /// The checksum for the header will be automatically updated via the
+    /// `set_cksum` method after setting the path. No other metadata in the
+    /// header will be modified.
+    ///
+    /// Then it will append the header, followed by contents of the stream
+    /// specified by `data`. To produce a valid archive the `size` field of
+    /// `header` must be the same as the length of the stream that's being
+    /// read.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs while trying to add new streams to the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tar::{Streamer, Header};
+    /// use std::io;
+    /// use std::fs;
+    ///
+    /// let mut header = Header::new_gnu();
+    /// header.set_size(4);
+    /// header.set_cksum();
+    ///
+    /// let mut data: &[u8] = &[1, 2, 3, 4];
+    ///
+    /// let mut ar = Streamer::new(Vec::new());
+    /// ar.append_data(&mut header, "really/long/path/to/foo", data).unwrap();
+    /// let output_file = fs::File::open("my_archive.tar");
+    /// io::copy(&mut ar, &mut output_file);
+    /// ```
+    pub fn append_data<P: AsRef<Path>, R: Read + 'static>(&mut self, header: &mut Header, path: P, data: R) -> Result<()> {
+        let mut encoded_header = Vec::new();
+        if let Some(mut long_name_extension_entry) = prepare_header_path(header, path.as_ref())? {
+            encoded_header.append(&mut long_name_extension_entry);
+            //self.long_name_extension_entries.insert(self.index_counter, long_name_extension_entry);
+        }
+        header.set_cksum();
+        encoded_header.append(&mut header.as_bytes().to_vec());
+        self.append_stream_data(StreamData::new_with_encoded_header(encoded_header, data));
+        Ok(())
+    }
+
+    /// Adds a new link (symbolic or hard) entry to this archive with the specified path and target.
+    ///
+    /// This function is similar to [`Self::append_data`] which supports long filenames,
+    /// but also supports long link targets using GNU extensions if necessary.
+    /// You must set the entry type to either [`EntryType::Link`] or [`EntryType::Symlink`].
+    /// The `set_cksum` method will be invoked after setting the path. No other metadata in the
+    /// header will be modified.
+    ///
+    /// If you are intending to use GNU extensions, you must use this method over calling
+    /// [`Header::set_link_name`] because that function will fail on long links.
+    ///
+    /// Similar constraints around the position of the archive and completion
+    /// apply as with [`Self::append_data`].
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when trying to add the link to the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tar::{Streamer, Header, EntryType};
+    /// use std::io;
+    /// use std::fs;
+    ///
+    /// let mut ar = Streamer::new();
+    /// let mut header = Header::new_gnu();
+    /// header.set_username("foo");
+    /// header.set_entry_type(EntryType::Symlink);
+    /// header.set_size(0);
+    /// ar.append_link(&mut header, "really/long/path/to/foo", "other/really/long/target").unwrap();
+    /// let output_file = fs::File::open("my_archive.tar");
+    /// io::copy(&mut ar, &mut output_file);
+    /// ```
     pub fn append_link<P: AsRef<Path>, T: AsRef<Path>>(
         &mut self,
         header: &mut Header,
@@ -189,37 +323,108 @@ impl Streamer {
         Ok(())
     }
 
-    pub fn append<R: Read + 'static>(&mut self, header: Header, data: R) {
-        let stream_data = StreamData::new(header, data);
-        self.stream_data.insert(self.index_counter, stream_data);
-        self.index_counter += 1;
-    }
-
-    pub fn append_data<P: AsRef<Path>, R: Read + 'static>(&mut self, header: &mut Header, path: P, data: R) -> Result<()> {
-        let mut encoded_header = Vec::new();
-        if let Some(mut long_name_extension_entry) = prepare_header_path(header, path.as_ref())? {
-            encoded_header.append(&mut long_name_extension_entry);
-            //self.long_name_extension_entries.insert(self.index_counter, long_name_extension_entry);
-        }
-        header.set_cksum();
-        encoded_header.append(&mut header.as_bytes().to_vec());
-        self.append_stream_data(StreamData::new_with_encoded_header(encoded_header, data));
-        Ok(())
-    }
-
-    fn append_stream_data(&mut self, stream_data: StreamData) {
-    	self.stream_data.insert(self.index_counter, stream_data);
-        self.index_counter += 1;
-    }
-
+    /// Adds a file on the local filesystem to this archive.
+    ///
+    /// This function will only add the given path of the file specified by `path`
+    /// to the archive. Any I/O error which orrcurs while opening the file
+    /// or reading the appropriate metadata will be returning while using
+    /// an reading the archive.  
+    /// The path name for the file inside of this archive will be the same as `path`, 
+    /// and it is required that the path is a relative path.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tar::Streamer;
+    ///
+    /// let mut ar = Streamer::new();
+    ///
+    /// ar.append_path("foo/bar.txt").unwrap();
+    /// ```
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         self.append_stream_file(path.as_ref(), None)
     }
 
+    /// Adds a file on the local filesystem to this archive under another name.
+    ///
+    /// This function will only add the given path of the file specified by `path`
+    /// to the archive. Any I/O error which orrcurs while opening the file
+    /// or reading the appropriate metadata will be returning while using
+    /// an reading the archive.  
+    /// The path name for the file inside of this archive will be `name` is required
+    /// to be a relative path.
+    ///
+    /// Note if the `path` is a directory. This will just add an entry to the archive,
+    /// rather than contents of the directory.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use tar::Streamer;
+    ///
+    /// let mut ar = Streamer::new();
+    ///
+    /// // Insert the local file "foo/bar.txt" in the archive but with the name
+    /// // "bar/foo.txt".
+    /// ar.append_path_with_name("foo/bar.txt", "bar/foo.txt").unwrap();
+    /// ```
     pub fn append_path_with_name<P: AsRef<Path>, N: AsRef<Path>>(&mut self, path: P, name: N) -> Result<()> {
         self.append_stream_file(path.as_ref(), Some(name.as_ref()))
     }
 
+
+    /// Adds a file to this archive with the given path as the name of the file
+    /// in the archive.
+    ///
+    /// This will use the metadata of `file` to populate a `Header`, and it will
+    /// then append the file to the archive with the name `path`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use tar::Streamer;
+    ///
+    /// let mut ar = Streamer::new();
+    ///
+    /// // Open the file at one location, but insert it into the archive with a
+    /// // different name.
+    /// let mut f = File::open("foo/bar/baz.txt").unwrap();
+    /// ar.append_file("bar/baz.txt", &mut f).unwrap();
+    /// ```
+    pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File) -> io::Result<()> {
+        let stat = file.metadata()?;
+        let mut header = Header::new_gnu();
+        let mut encoded_header = Vec::new();
+        if let Some(mut long_name_extension_entry) = prepare_header_path(&mut header, path.as_ref())? {
+            encoded_header.append(&mut long_name_extension_entry);
+            //self.long_name_extension_entries.insert(self.index_counter, long_name_extension_entry);
+        }
+        header.set_metadata_in_mode(&stat, self.mode);
+        header.set_cksum();
+        encoded_header.append(&mut header.as_bytes().to_vec());
+        self.append_stream_data(StreamData::new_with_encoded_header(encoded_header, file.try_clone()?));
+        Ok(())
+    }
+
+    /// Adds a directory to this archive with the given path as the name of the
+    /// directory in the archive.
+    ///
+    /// Note this will not add the contents of the directory to the archive.
+    /// See `append_dir_all` for recusively adding the contents of the directory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs;
+    /// use tar::Streamer;
+    ///
+    /// let mut ar = Streamer::new();
+    ///
+    /// // Use the directory at one location, but insert it into the archive
+    /// // with a different name.
+    /// ar.append_dir("bardir", ".").unwrap();
+    /// ```
     pub fn append_dir<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
     where
         P: AsRef<Path>,
@@ -228,10 +433,28 @@ impl Streamer {
         self.append_stream_file(src_path.as_ref(), Some(path.as_ref()))
     }
 
-    pub fn append_dir_all(&mut self, path: &Path, src_path: &Path) -> io::Result<()> {
-        let mut stack = vec![(src_path.to_path_buf(), true, false)];
+    /// Adds a directory and all of its contents (recursively) to this archive
+    /// with the given path as the name of the directory in the archive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs;
+    /// use tar::Streamer;
+    /// use std::io;
+    /// let mut streamer = Streamer::new();
+    ///
+    /// // Use the directory at one location, but insert it into the archive
+    /// // with a different name.
+    /// ar.append_dir_all("bardir", ".").unwrap();
+    /// // Write the archive to the given path.
+    /// let target_archive = fs::File::create("/home/user/my_archive.tar").unwrap();
+    /// io::copy(&mut streamer, &mut target_archive).unwrap();
+    /// ```
+    pub fn append_dir_all<P: AsRef<Path>, S: AsRef<Path>>(&mut self, path: P, src_path: S) -> io::Result<()> {
+        let mut stack = vec![(src_path.as_ref().to_path_buf(), true, false)];
         while let Some((src, is_dir, is_symlink)) = stack.pop() {
-            let dest = path.join(src.strip_prefix(src_path).unwrap());
+            let dest = path.as_ref().join(src.strip_prefix(&src_path).unwrap());
             // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
             if is_dir || (is_symlink && self.follow && src.is_dir()) {
                 for entry in fs::read_dir(&src)? {
@@ -240,21 +463,26 @@ impl Streamer {
                     stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
                 }
                 if dest != Path::new("") {
-                    self.append_dir(&src, &dest)?;
+                    self.append_dir(&dest, &src)?;
                 }
             } else {
                 #[cfg(unix)]
                 {
                     let stat = fs::metadata(&src)?;
                     if !stat.is_file() {
-                        self.append_special(&dest)?;
+                        self.append_special(&src)?;
                         continue;
                     }
                 }
-                self.append_stream_file(&dest, Some(&src))?;
+                self.append_stream_file(&src, Some(&dest))?;
             }
         }
         Ok(())
+    }
+
+    fn append_stream_data(&mut self, stream_data: StreamData) {
+        self.stream_data.insert(self.index_counter, stream_data);
+        self.index_counter += 1;
     }
 
     #[cfg(unix)]
@@ -268,7 +496,7 @@ impl Streamer {
 
     fn append_stream_file(&mut self, path: &Path, name: Option<&Path>) -> Result<()> {
         prepare_file_header(path, name, self.mode, self.follow)?;
-        let stream_file = StreamFile::new_with_encoded_header(
+        let stream_file = StreamFile::new(
             path.to_path_buf(), 
             name.map(|x| x.to_path_buf()), 
             self.follow,
@@ -561,10 +789,15 @@ fn prepare_header_path(header: &mut Header, path: &Path) -> Result<Option<Vec<u8
         if data.len() < max {
             return Err(e);
         }
-        let header2 = prepare_header(data.len() as u64, b'K');
+        let header2 = prepare_header(data.len() as u64, b'L');
         // null-terminated string
         let mut data2 = data.to_vec();
         data2.push(0);
+        //pad zeros if necessary
+        let remaining = 512 - (data2.len() % 512);
+        if remaining < 512 {
+            data2.append(&mut vec![0u8; remaining]);
+        }
         let mut entry_data = header2.as_bytes().to_vec();
         entry_data.append(&mut data2);
         extra_entry = Some(entry_data);
@@ -591,10 +824,15 @@ fn prepare_header_link(header: &mut Header, link_name: &Path) -> Result<Option<V
         if data.len() < header.as_old().linkname.len() {
             return Err(e);
         }
-        let header2 = prepare_header(data.len() as u64, b'L');
+        let header2 = prepare_header(data.len() as u64, b'K');
         // null-terminated string
         let mut data2 = data.to_vec();
         data2.push(0);
+        //pad zeros if necessary
+        let remaining = 512 - (data2.len() % 512);
+        if remaining < 512 {
+            data2.append(&mut vec![0u8; remaining]);
+        }
         let mut entry_data = header2.as_bytes().to_vec();
         entry_data.append(&mut data2);
         extra_entry = Some(entry_data);
@@ -606,7 +844,7 @@ fn prepare_header_link(header: &mut Header, link_name: &Path) -> Result<Option<V
 
 
 #[cfg(any(windows, target_arch = "wasm32"))]
-pub fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
+fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
     p.as_os_str()
         .to_str()
         .map(|s| s.as_bytes())
@@ -629,6 +867,6 @@ pub fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
 
 
 #[cfg(unix)]
-pub fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
+fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
     Ok(p.as_os_str().as_bytes())
 }
