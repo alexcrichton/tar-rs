@@ -210,8 +210,8 @@ impl Streamer {
     /// let mut data: &[u8] = &[1, 2, 3, 4];
     ///
     /// let mut ar = Streamer::new();
-    /// ar.append(&header, data).unwrap();
-    /// let output_file = fs::File::open("my_archive.tar");
+    /// ar.append(header, data);
+    /// let mut output_file = fs::File::create("my_archive.tar").unwrap();
     /// io::copy(&mut ar, &mut output_file);
     /// ```
     pub fn append<R: Read + 'static>(&mut self, header: Header, data: R) {
@@ -251,9 +251,9 @@ impl Streamer {
     ///
     /// let mut data: &[u8] = &[1, 2, 3, 4];
     ///
-    /// let mut ar = Streamer::new(Vec::new());
+    /// let mut ar = Streamer::new();
     /// ar.append_data(&mut header, "really/long/path/to/foo", data).unwrap();
-    /// let output_file = fs::File::open("my_archive.tar");
+    /// let mut output_file = fs::File::create("my_archive.tar").unwrap();
     /// io::copy(&mut ar, &mut output_file);
     /// ```
     pub fn append_data<P: AsRef<Path>, R: Read + 'static>(&mut self, header: &mut Header, path: P, data: R) -> Result<()> {
@@ -300,7 +300,7 @@ impl Streamer {
     /// header.set_entry_type(EntryType::Symlink);
     /// header.set_size(0);
     /// ar.append_link(&mut header, "really/long/path/to/foo", "other/really/long/target").unwrap();
-    /// let output_file = fs::File::open("my_archive.tar");
+    /// let mut output_file = fs::File::create("my_archive.tar").unwrap();
     /// io::copy(&mut ar, &mut output_file);
     /// ```
     pub fn append_link<P: AsRef<Path>, T: AsRef<Path>>(
@@ -446,9 +446,10 @@ impl Streamer {
     ///
     /// // Use the directory at one location, but insert it into the archive
     /// // with a different name.
+    /// let mut ar = Streamer::new();
     /// ar.append_dir_all("bardir", ".").unwrap();
     /// // Write the archive to the given path.
-    /// let target_archive = fs::File::create("/home/user/my_archive.tar").unwrap();
+    /// let mut target_archive = fs::File::create("/home/user/my_archive.tar").unwrap();
     /// io::copy(&mut streamer, &mut target_archive).unwrap();
     /// ```
     pub fn append_dir_all<P: AsRef<Path>, S: AsRef<Path>>(&mut self, path: P, src_path: S) -> io::Result<()> {
