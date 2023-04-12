@@ -13,30 +13,38 @@ use std::fs::{self};
 
 #[cfg(windows)]
 use crate::other;
-use crate::header::{HeaderMode, Header};
+use crate::header::{HeaderMode, Header, prepare_header};
 use crate::{EntryType};
 
-pub struct StreamFile {
-    encoded_header: Vec<u8>,
-	follow: bool,
+struct StreamFile {
 	path: PathBuf,
+    alternative_name: Option<PathBuf>,
+    follow: bool,
+    mode: HeaderMode,
+    cached_header_bytes: Option<Vec<u8>>,
     read_bytes: usize, //needed to calculate padding;
     padding_bytes: Option<Vec<u8>>,
 }
 
 impl StreamFile {
-	pub fn new_with_encoded_header(path: PathBuf, encoded_header: Vec<u8>, follow: bool) -> StreamFile {
+	fn new_with_encoded_header(
+        path: PathBuf,
+        alternative_name: Option<PathBuf>,
+        follow: bool,
+        mode: HeaderMode) -> StreamFile {
 		Self {
 			path,
-			encoded_header,
+			alternative_name,
 			follow,
+            mode,
+            cached_header_bytes: None,
             read_bytes: 0,
             padding_bytes: None
 		}
 	}
 }
 
-pub struct StreamData {
+struct StreamData {
 	encoded_header: Vec<u8>,
 	data: Box<dyn Read>,
     padding_bytes: Option<Vec<u8>>,
@@ -66,14 +74,20 @@ impl StreamData {
 
 #[cfg(unix)]
 pub struct StreamSpecialFile {
-    encoded_header: Vec<u8>,
+    cached_header_bytes: Option<Vec<u8>>,
+    path: PathBuf,
+    mode: HeaderMode,
+    follow: bool
 }
 
 #[cfg(unix)]
 impl StreamSpecialFile {
-    fn new_with_encoded_header(encoded_header: Vec<u8>) -> Self {
+    fn new<P: AsRef<Path>>(path: P, mode: HeaderMode, follow: bool) -> Self {
         Self {
-            encoded_header,
+            cached_header_bytes: None,
+            path: path.as_ref().into(),
+            mode,
+            follow,
         }
     }
 }
@@ -126,6 +140,146 @@ impl Default for Streamer {
     }
 }
 
+impl Streamer {
+	/// Create a new empty archive streamer.The streamer will use
+    /// `HeaderMode::Complete` by default.
+	pub fn new() -> Streamer {
+		Self {
+			mode: HeaderMode::Complete,
+			follow: true,
+			streamer_metadata: StreamerReadMetadata::default(),
+            index_counter: 0,
+			stream_files: HashMap::new(),
+			stream_data: HashMap::new(),
+            stream_special_file: HashMap::new(),
+            stream_link: HashMap::new(),
+		}
+	}
+
+	/// Changes the HeaderMode that will be used when reading fs Metadata for
+    /// methods that implicitly read metadata for an input Path. Notably, this
+    /// does _not_ apply to `append(Header)`.
+    pub fn mode(&mut self, mode: HeaderMode) {
+        self.mode = mode;
+    }
+
+    /// Follow symlinks, archiving the contents of the file they point to rather
+    /// than adding a symlink to the archive. Defaults to true.
+    pub fn follow_symlinks(&mut self, follow: bool) {
+        self.follow = follow;
+    }
+
+    pub fn append_link<P: AsRef<Path>, T: AsRef<Path>>(
+        &mut self,
+        header: &mut Header,
+        path: P,
+        target: T,
+    ) -> io::Result<()> {
+        let mut encoded_header = Vec::new();
+        if let Some(mut long_name_extension_entry) = prepare_header_path(header, path.as_ref())? {
+            encoded_header.append(&mut long_name_extension_entry);
+        }
+        if let Some(mut long_name_extension_entry) = prepare_header_link(header, target.as_ref())? {
+            encoded_header.append(&mut long_name_extension_entry)
+        };
+        header.set_cksum();
+        encoded_header.append(&mut header.as_bytes().to_vec());
+        self.stream_link.insert(self.index_counter, StreamLink::new_with_encoded_header(encoded_header));
+        self.index_counter += 1;
+        Ok(())
+    }
+
+    pub fn append<R: Read + 'static>(&mut self, header: Header, data: R) {
+        let stream_data = StreamData::new(header, data);
+        self.stream_data.insert(self.index_counter, stream_data);
+        self.index_counter += 1;
+    }
+
+    pub fn append_data<P: AsRef<Path>, R: Read + 'static>(&mut self, header: &mut Header, path: P, data: R) -> Result<()> {
+        let mut encoded_header = Vec::new();
+        if let Some(mut long_name_extension_entry) = prepare_header_path(header, path.as_ref())? {
+            encoded_header.append(&mut long_name_extension_entry);
+            //self.long_name_extension_entries.insert(self.index_counter, long_name_extension_entry);
+        }
+        header.set_cksum();
+        encoded_header.append(&mut header.as_bytes().to_vec());
+        self.append_stream_data(StreamData::new_with_encoded_header(encoded_header, data));
+        Ok(())
+    }
+
+    fn append_stream_data(&mut self, stream_data: StreamData) {
+    	self.stream_data.insert(self.index_counter, stream_data);
+        self.index_counter += 1;
+    }
+
+    pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
+        self.append_stream_file(path.as_ref(), None)
+    }
+
+    pub fn append_path_with_name<P: AsRef<Path>, N: AsRef<Path>>(&mut self, path: P, name: N) -> Result<()> {
+        self.append_stream_file(path.as_ref(), Some(name.as_ref()))
+    }
+
+    pub fn append_dir<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
+    where
+        P: AsRef<Path>,
+        Q: AsRef<Path>,
+    {
+        self.append_stream_file(src_path.as_ref(), Some(path.as_ref()))
+    }
+
+    pub fn append_dir_all(&mut self, path: &Path, src_path: &Path) -> io::Result<()> {
+        let mut stack = vec![(src_path.to_path_buf(), true, false)];
+        while let Some((src, is_dir, is_symlink)) = stack.pop() {
+            let dest = path.join(src.strip_prefix(src_path).unwrap());
+            // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
+            if is_dir || (is_symlink && self.follow && src.is_dir()) {
+                for entry in fs::read_dir(&src)? {
+                    let entry = entry?;
+                    let file_type = entry.file_type()?;
+                    stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
+                }
+                if dest != Path::new("") {
+                    self.append_dir(&src, &dest)?;
+                }
+            } else {
+                #[cfg(unix)]
+                {
+                    let stat = fs::metadata(&src)?;
+                    if !stat.is_file() {
+                        self.append_special(&dest)?;
+                        continue;
+                    }
+                }
+                self.append_stream_file(&dest, Some(&src))?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn append_special(&mut self, path: &Path) -> io::Result<()> {
+        prepare_special_header(path, self.mode, self.follow)?;
+        self.stream_special_file.insert(self.index_counter, StreamSpecialFile::new(path, self.mode, self.follow));
+        self.index_counter +=1;
+
+        Ok(())
+    }
+
+    fn append_stream_file(&mut self, path: &Path, name: Option<&Path>) -> Result<()> {
+        prepare_file_header(path, name, self.mode, self.follow)?;
+        let stream_file = StreamFile::new_with_encoded_header(
+            path.to_path_buf(), 
+            name.map(|x| x.to_path_buf()), 
+            self.follow,
+            self.mode,
+            );
+        self.stream_files.insert(self.index_counter, stream_file);
+        self.index_counter += 1;
+        Ok(())
+    }
+}
+
 impl Read for Streamer {
     fn read(&mut self, buffer: &mut [u8]) -> std::result::Result<usize, std::io::Error> {
         let mut read_bytes = 0;
@@ -149,17 +303,27 @@ impl Read for Streamer {
             }
             
             if let Some(stream_file) = self.stream_files.get_mut(&self.streamer_metadata.current_index) {
-                //read the header first...
-                if stream_file.encoded_header.len() > buffer[read_bytes..].len() {
-                    let drained_bytes: Vec<u8> = stream_file.encoded_header.drain(..buffer[read_bytes..].len()).collect();
-                    buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
-                    read_bytes += drained_bytes.len();
-                    break;
-                } else {
-                    let drained_bytes: Vec<u8> = stream_file.encoded_header.drain(..).collect();
-                    buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
-                    read_bytes += drained_bytes.len();
+                //build and read the header first...
+                if stream_file.cached_header_bytes.is_none() {
+                    stream_file.cached_header_bytes = Some(prepare_file_header(
+                        &stream_file.path,
+                        stream_file.alternative_name.as_deref(),
+                        stream_file.mode, 
+                        stream_file.follow)?)
                 }
+                if let Some(ref mut encoded_header) = stream_file.cached_header_bytes {
+                    if encoded_header.len() > buffer[read_bytes..].len() {
+                        let drained_bytes: Vec<u8> = encoded_header.drain(..buffer[read_bytes..].len()).collect();
+                        buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                        read_bytes += drained_bytes.len();
+                        break;
+                    } else {
+                        let drained_bytes: Vec<u8> = encoded_header.drain(..).collect();
+                        buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                        read_bytes += drained_bytes.len();
+                    }
+                }
+    
 
                 //...then read the appropriate data
                 loop {
@@ -256,15 +420,23 @@ impl Read for Streamer {
 
             if let Some(stream_special_file) = self.stream_special_file.get_mut(&self.streamer_metadata.current_index) {
                 //Zero padding should not necessary here.
-                if stream_special_file.encoded_header.len() > buffer[read_bytes..].len() {
-                    let drained_bytes: Vec<u8> = stream_special_file.encoded_header.drain(..buffer[read_bytes..].len()).collect();
-                    buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
-                    read_bytes += drained_bytes.len();
-                    break;
-                } else {
-                    let drained_bytes: Vec<u8> = stream_special_file.encoded_header.drain(..).collect();
-                    buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
-                    read_bytes += drained_bytes.len();
+                if stream_special_file.cached_header_bytes.is_none() {
+                    stream_special_file.cached_header_bytes = Some(prepare_special_header(
+                        &stream_special_file.path,
+                        stream_special_file.mode,
+                        stream_special_file.follow)?);
+                }
+                if let Some(ref mut encoded_header) = stream_special_file.cached_header_bytes {
+                    if encoded_header.len() > buffer[read_bytes..].len() {
+                        let drained_bytes: Vec<u8> = encoded_header.drain(..buffer[read_bytes..].len()).collect();
+                        buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                        read_bytes += drained_bytes.len();
+                        break;
+                    } else {
+                        let drained_bytes: Vec<u8> = encoded_header.drain(..).collect();
+                        buffer[read_bytes..read_bytes+drained_bytes.len()].copy_from_slice(&drained_bytes);
+                        read_bytes += drained_bytes.len();
+                    }
                 }
             }
 
@@ -288,194 +460,27 @@ impl Read for Streamer {
     }
 }
 
+fn prepare_file_header(path: &Path, name: Option<&Path>, mode: HeaderMode, follow: bool) -> io::Result<Vec<u8>> {
+    let stat = get_stat(path, follow)?;
+    let ar_name = name.unwrap_or(path);
 
+    //generate and prepare appropriate header
+    let mut encoded_header = Vec::new();
+    let mut header = Header::new_gnu();
 
-impl Streamer {
-	/// Create a new empty archive streamer.The streamer will use
-    /// `HeaderMode::Complete` by default.
-	pub fn new() -> Streamer {
-		Self {
-			mode: HeaderMode::Complete,
-			follow: true,
-			streamer_metadata: StreamerReadMetadata::default(),
-            index_counter: 0,
-			stream_files: HashMap::new(),
-			stream_data: HashMap::new(),
-            stream_special_file: HashMap::new(),
-            stream_link: HashMap::new(),
-		}
-	}
-
-	/// Changes the HeaderMode that will be used when reading fs Metadata for
-    /// methods that implicitly read metadata for an input Path. Notably, this
-    /// does _not_ apply to `append(Header)`.
-    pub fn mode(&mut self, mode: HeaderMode) {
-        self.mode = mode;
+    if let Some(mut long_name_extension_entry) = prepare_header_path(&mut header, ar_name)? {
+        encoded_header.append(&mut long_name_extension_entry);
     }
-
-    /// Follow symlinks, archiving the contents of the file they point to rather
-    /// than adding a symlink to the archive. Defaults to true.
-    pub fn follow_symlinks(&mut self, follow: bool) {
-        self.follow = follow;
-    }
-
-    pub fn append_link<P: AsRef<Path>, T: AsRef<Path>>(
-        &mut self,
-        header: &mut Header,
-        path: P,
-        target: T,
-    ) -> io::Result<()> {
-        let mut encoded_header = Vec::new();
-        if let Some(mut long_name_extension_entry) = prepare_header_path(header, path.as_ref())? {
+    header.set_metadata_in_mode(&stat, mode);
+    if stat.file_type().is_symlink() {
+        let link_name = fs::read_link(path)?;
+        if let Some(mut long_name_extension_entry) = prepare_header_link(&mut header, &link_name)? {
             encoded_header.append(&mut long_name_extension_entry);
         }
-        if let Some(mut long_name_extension_entry) = prepare_header_link(header, target.as_ref())? {
-            encoded_header.append(&mut long_name_extension_entry)
-        };
-        header.set_cksum();
-        encoded_header.append(&mut header.as_bytes().to_vec());
-        self.stream_link.insert(self.index_counter, StreamLink::new_with_encoded_header(encoded_header));
-        self.index_counter += 1;
-        Ok(())
     }
-
-    pub fn append<R: Read + 'static>(&mut self, header: Header, data: R) {
-        let stream_data = StreamData::new(header, data);
-        self.stream_data.insert(self.index_counter, stream_data);
-        self.index_counter += 1;
-    }
-
-    pub fn append_data<P: AsRef<Path>, R: Read + 'static>(&mut self, header: &mut Header, path: P, data: R) -> Result<()> {
-        let mut encoded_header = Vec::new();
-        if let Some(mut long_name_extension_entry) = prepare_header_path(header, path.as_ref())? {
-            encoded_header.append(&mut long_name_extension_entry);
-            //self.long_name_extension_entries.insert(self.index_counter, long_name_extension_entry);
-        }
-        header.set_cksum();
-        encoded_header.append(&mut header.as_bytes().to_vec());
-        self.stream_data.insert(self.index_counter, StreamData::new_with_encoded_header(encoded_header, data));
-        self.index_counter += 1;
-        Ok(())
-    }
-
-    pub fn append_stream_data(&mut self, stream_data: StreamData) {
-    	self.stream_data.insert(self.index_counter, stream_data);
-        self.index_counter += 1;
-    }
-
-    pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
-        self.append_stream_file(path.as_ref(), None)
-    }
-
-    pub fn append_path_with_name<P: AsRef<Path>, N: AsRef<Path>>(&mut self, path: P, name: N) -> Result<()> {
-        self.append_stream_file(path.as_ref(), Some(name.as_ref()))
-    }
-
-    pub fn append_dir<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
-    where
-        P: AsRef<Path>,
-        Q: AsRef<Path>,
-    {
-        self.append_stream_file(src_path.as_ref(), Some(path.as_ref()))
-    }
-
-    pub fn append_dir_all(&mut self, path: &Path, src_path: &Path) -> io::Result<()> {
-        let mut stack = vec![(src_path.to_path_buf(), true, false)];
-        while let Some((src, is_dir, is_symlink)) = stack.pop() {
-            let dest = path.join(src.strip_prefix(src_path).unwrap());
-            // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
-            if is_dir || (is_symlink && self.follow && src.is_dir()) {
-                for entry in fs::read_dir(&src)? {
-                    let entry = entry?;
-                    let file_type = entry.file_type()?;
-                    stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
-                }
-                if dest != Path::new("") {
-                    self.append_dir(&src, &dest)?;
-                }
-            } else {
-                #[cfg(unix)]
-                {
-                    let stat = fs::metadata(&src)?;
-                    if !stat.is_file() {
-                        self.append_special(&dest)?;
-                        continue;
-                    }
-                }
-                self.append_stream_file(&dest, Some(&src))?;
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    fn append_special(&mut self, path: &Path) -> io::Result<()> {
-        let stat = get_stat(path, self.follow)?;
-        
-        let file_type = stat.file_type();
-        let entry_type;
-        if file_type.is_socket() {
-            // sockets can't be archived
-            return Err(other(&format!(
-                "{}: socket can not be archived",
-                path.display()
-            )));
-        } else if file_type.is_fifo() {
-            entry_type = EntryType::Fifo;
-        } else if file_type.is_char_device() {
-            entry_type = EntryType::Char;
-        } else if file_type.is_block_device() {
-            entry_type = EntryType::Block;
-        } else {
-            return Err(other(&format!("{} has unknown file type", path.display())));
-        }
-
-        let mut encoded_header = Vec::new();
-        let mut header = Header::new_gnu();
-        header.set_metadata_in_mode(&stat, self.mode);
-        if let Some(mut long_name_extension_entry) = prepare_header_path(&mut header, path)? {
-            encoded_header.append(&mut long_name_extension_entry);
-        }
-        header.set_entry_type(entry_type);
-        let dev_id = stat.rdev();
-        let dev_major = ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
-        let dev_minor = ((dev_id >> 12) & 0xffff_ff00) | ((dev_id) & 0x0000_00ff);
-        header.set_device_major(dev_major as u32)?;
-        header.set_device_minor(dev_minor as u32)?;
-
-        header.set_cksum();
-        encoded_header.append(&mut header.as_bytes().to_vec());
-        self.stream_special_file.insert(self.index_counter, StreamSpecialFile::new_with_encoded_header(encoded_header));
-        self.index_counter +=1;
-
-        Ok(())
-    }
-
-    fn append_stream_file(&mut self, path: &Path, name: Option<&Path>) -> Result<()> {
-        let stat = get_stat(path, self.follow)?;
-        let ar_name = name.unwrap_or(path);
-
-        //generate and prepare appropriate header
-        let mut encoded_header = Vec::new();
-        let mut header = Header::new_gnu();
-
-        if let Some(mut long_name_extension_entry) = prepare_header_path(&mut header, ar_name)? {
-            encoded_header.append(&mut long_name_extension_entry);
-        }
-        header.set_metadata_in_mode(&stat, self.mode);
-        if stat.file_type().is_symlink() {
-            let link_name = fs::read_link(path)?;
-            if let Some(mut long_name_extension_entry) = prepare_header_link(&mut header, &link_name)? {
-                encoded_header.append(&mut long_name_extension_entry);
-            }
-        }
-        header.set_cksum();
-        encoded_header.append(&mut header.as_bytes().to_vec());
-        let stream_file = StreamFile::new_with_encoded_header(path.to_path_buf(), encoded_header, self.follow);
-        self.stream_files.insert(self.index_counter, stream_file);
-        self.index_counter += 1;
-        Ok(())
-    }
+    header.set_cksum();
+    encoded_header.append(&mut header.as_bytes().to_vec());
+    Ok(encoded_header)
 }
 
 
@@ -495,6 +500,48 @@ fn get_stat<P: AsRef<Path>>(path: P, follow: bool) -> io::Result<fs::Metadata> {
             )
         })
     }
+}
+
+
+#[cfg(unix)]
+fn prepare_special_header(path: &Path, mode: HeaderMode, follow: bool) -> io::Result<Vec<u8>> {
+    let stat = get_stat(path, follow)?;
+    
+    let file_type = stat.file_type();
+    let entry_type;
+    if file_type.is_socket() {
+        // sockets can't be archived
+        return Err(other(&format!(
+            "{}: socket can not be archived",
+            path.display()
+        )));
+    } else if file_type.is_fifo() {
+        entry_type = EntryType::Fifo;
+    } else if file_type.is_char_device() {
+        entry_type = EntryType::Char;
+    } else if file_type.is_block_device() {
+        entry_type = EntryType::Block;
+    } else {
+        return Err(other(&format!("{} has unknown file type", path.display())));
+    }
+
+    let mut encoded_header = Vec::new();
+    let mut header = Header::new_gnu();
+    header.set_metadata_in_mode(&stat, mode);
+    if let Some(mut long_name_extension_entry) = prepare_header_path(&mut header, path)? {
+        encoded_header.append(&mut long_name_extension_entry);
+    }
+    header.set_entry_type(entry_type);
+    let dev_id = stat.rdev();
+    let dev_major = ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
+    let dev_minor = ((dev_id >> 12) & 0xffff_ff00) | ((dev_id) & 0x0000_00ff);
+    header.set_device_major(dev_major as u32)?;
+    header.set_device_minor(dev_minor as u32)?;
+
+    header.set_cksum();
+    encoded_header.append(&mut header.as_bytes().to_vec());
+
+    Ok(encoded_header)
 }
 
 // function tries to encode the path directly in header.
@@ -555,22 +602,9 @@ fn prepare_header_link(header: &mut Header, link_name: &Path) -> Result<Option<V
     Ok(extra_entry)
 }
 
-fn prepare_header(size: u64, entry_type: u8) -> Header {
-    let mut header = Header::new_gnu();
-    let name = b"././@LongLink";
-    header.as_gnu_mut().unwrap().name[..name.len()].clone_from_slice(&name[..]);
-    header.set_mode(0o644);
-    header.set_uid(0);
-    header.set_gid(0);
-    header.set_mtime(0);
-    // + 1 to be compliant with GNU tar
-    header.set_size(size + 1);
-    header.set_entry_type(EntryType::new(entry_type));
-    header.set_cksum();
-    header
-}
 
-//TODO
+
+
 #[cfg(any(windows, target_arch = "wasm32"))]
 pub fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
     p.as_os_str()
@@ -595,7 +629,6 @@ pub fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
 
 
 #[cfg(unix)]
-/// On unix this will never fail
 pub fn path2bytes(p: &Path) -> std::io::Result<&[u8]> {
     Ok(p.as_os_str().as_bytes())
 }
