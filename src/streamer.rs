@@ -136,7 +136,8 @@ impl Default for StreamerReadMetadata {
 ///  let mut streamer = Streamer::new();
 ///  // Use the directory at one location, but insert it into the archive
 ///  // with a different name.
-///  streamer.append_dir_all(&PathBuf::from("my_download_dir"), &PathBuf::from("/home/ph0llux/Downloads")).unwrap();
+///  streamer.append_dir_all(&PathBuf::from("my_download_dir"),
+///  &PathBuf::from("/home/ph0llux/Downloads")).unwrap();
 ///  // Write the archive to the given path.
 ///  let mut target_archive = fs::File::create("/home/ph0llux/my_downloads.tar").unwrap();
 ///  io::copy(&mut streamer, &mut target_archive).unwrap();
