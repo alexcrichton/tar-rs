@@ -19,6 +19,7 @@
 
 #![doc(html_root_url = "https://docs.rs/tar/0.4")]
 #![deny(missing_docs)]
+#![cfg_attr(test, deny(warnings))]
 
 use std::io::{Error, ErrorKind};
 
@@ -29,7 +30,7 @@ pub use crate::entry_type::EntryType;
 pub use crate::header::GnuExtSparseHeader;
 pub use crate::header::{GnuHeader, GnuSparseHeader, Header, HeaderMode, OldHeader, UstarHeader};
 pub use crate::pax::{PaxExtension, PaxExtensions};
-pub use crate::streamer::{Streamer};
+pub use crate::streamer::Streamer;
 
 mod archive;
 mod builder;
