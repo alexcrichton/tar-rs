@@ -1317,6 +1317,32 @@ fn read_only_directory_containing_files() {
     assert!(ar.unpack(td.path()).is_ok());
 }
 
+#[test]
+fn read_only_directory_containing_empty_directory() {
+    let test_dirs_with_modes: Box<dyn Fn(&[(&str, u32)])> = Box::new(|dirs| {
+        let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+        let mut b = Builder::new(Vec::<u8>::new());
+
+        for (path, mode) in dirs {
+            let mut h = Header::new_gnu();
+            t!(h.set_path(path));
+            h.set_size(0);
+            h.set_entry_type(EntryType::dir());
+            h.set_mode(*mode);
+            h.set_cksum();
+            t!(b.append(&h, "".as_bytes()));
+        }
+
+        let contents = t!(b.into_inner());
+        let mut ar = Archive::new(&contents[..]);
+        assert!(ar.unpack(td.path()).is_ok());
+    });
+
+    test_dirs_with_modes(&[("dir/", 0o444), ("dir/subdir", 0o755)]);
+    test_dirs_with_modes(&[("dir/subdir", 0o755), ("dir/", 0o444)]);
+}
+
 // This test was marked linux only due to macOS CI can't handle `set_current_dir` correctly
 #[test]
 #[cfg(target_os = "linux")]
