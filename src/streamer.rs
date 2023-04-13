@@ -47,13 +47,13 @@ impl StreamFile {
 
 struct StreamData {
     encoded_header: Vec<u8>,
-    data: Box<dyn Read>,
+    data: Box<dyn Read + Send>,
     padding_bytes: Option<Vec<u8>>,
     read_bytes: usize, //needed to calculate padding;
 }
 
 impl StreamData {
-    fn new<R: Read + 'static>(header: Header, data: R) -> Self {
+    fn new<R: Read + 'static + Send>(header: Header, data: R) -> Self {
         Self {
             encoded_header: header.as_bytes().to_vec(),
             data: Box::new(data),
@@ -62,7 +62,7 @@ impl StreamData {
         }
     }
 
-    fn new_with_encoded_header<R: Read + 'static>(encoded_header: Vec<u8>, data: R) -> Self {
+    fn new_with_encoded_header<R: Read + 'static + Send>(encoded_header: Vec<u8>, data: R) -> Self {
         Self {
             encoded_header,
             data: Box::new(data),
@@ -214,7 +214,7 @@ impl Streamer {
     /// let mut output_file = fs::File::create("my_archive.tar").unwrap();
     /// io::copy(&mut ar, &mut output_file);
     /// ```
-    pub fn append<R: Read + 'static>(&mut self, header: Header, data: R) {
+    pub fn append<R: Read + 'static + Send>(&mut self, header: Header, data: R) {
         let stream_data = StreamData::new(header, data);
         self.stream_data.insert(self.index_counter, stream_data);
         self.index_counter += 1;
@@ -256,7 +256,7 @@ impl Streamer {
     /// let mut output_file = fs::File::create("my_archive.tar").unwrap();
     /// io::copy(&mut ar, &mut output_file);
     /// ```
-    pub fn append_data<P: AsRef<Path>, R: Read + 'static>(
+    pub fn append_data<P: AsRef<Path>, R: Read + 'static + Send>(
         &mut self,
         header: &mut Header,
         path: P,
