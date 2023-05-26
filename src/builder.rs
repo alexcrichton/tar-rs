@@ -5,6 +5,8 @@ use std::path::Path;
 use std::str;
 
 use crate::header::{path2bytes, HeaderMode};
+use crate::GnuExtSparseHeader;
+use crate::GnuSparseHeader;
 use crate::{other, EntryType, Header};
 
 /// A structure for building archives
@@ -69,6 +71,18 @@ impl<W: Write> Builder<W> {
             self.finish()?;
         }
         Ok(self.obj.take().unwrap())
+    }
+
+    /// BLbalblaa
+    ///
+    /// Blablabal
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if .
+    // TODO: documentation
+    pub fn append_sparse_all<R: Read>(&mut self, header: &Header, mut data: R) -> io::Result<()> {
+        append_sparse_all(self.get_mut(), header, &mut data)
     }
 
     /// Adds a new entry to this archive.
@@ -406,16 +420,123 @@ impl<W: Write> Builder<W> {
     }
 }
 
+fn append_sparse_all(
+    mut dst: &mut dyn Write,
+    header: &Header,
+    data: &mut dyn Read,
+) -> io::Result<()> {
+    if !header.entry_type().is_gnu_sparse() {
+        return Ok(());
+    }
+    let gnu = match header.as_gnu() {
+        Some(gnu) => gnu,
+        None => return Err(other("sparse entry type listed but not GNU header")),
+    };
+
+    dst.write_all(header.as_bytes())?;
+
+    let mut cur = 0;
+    let mut remaining = header.entry_size()?;
+    {
+        let size = header.entry_size()?;
+        let mut reader = data;
+        let mut add_block = |r: &mut dyn Read, block: &GnuSparseHeader| -> io::Result<_> {
+            if block.is_empty() {
+                return Ok(());
+            }
+            let off = block.offset()?;
+            let len = block.length()?;
+            if len != 0 && (size - remaining) % 512 != 0 {
+                return Err(other(
+                    "previous block in sparse file was not \
+                         aligned to 512-byte boundary",
+                ));
+            } else if off < cur {
+                return Err(other(
+                    "out of order or overlapping sparse \
+                         blocks",
+                ));
+            } else if cur < off {
+                let mut buf = vec![Default::default(); (off - cur) as usize];
+                r.read_exact(&mut buf)?;
+            }
+            cur = off
+                .checked_add(len)
+                .ok_or_else(|| other("more bytes listed in sparse file than u64 can hold"))?;
+            remaining = remaining.checked_sub(len).ok_or_else(|| {
+                other(
+                    "sparse file consumed more data than the header \
+                         listed",
+                )
+            })?;
+            let mut buf = vec![0; len as usize];
+            r.read_exact(&mut buf)?;
+            dst.write_all(&mut buf)?;
+
+            if len > 0 && len < 512 {
+                pad_with_zeroes(&mut dst, len)?;
+            }
+
+            Ok(())
+        };
+        for block in gnu.sparse.iter() {
+            add_block(&mut reader, block)?
+        }
+
+        if gnu.is_extended() {
+            let try_read_all = |r: &mut dyn Read, buf: &mut [u8]| -> io::Result<bool> {
+                let mut read = 0;
+                while read < buf.len() {
+                    match r.read(&mut buf[read..])? {
+                        0 => {
+                            if read == 0 {
+                                return Ok(false);
+                            }
+
+                            return Err(other("failed to read entire block"));
+                        }
+                        n => read += n,
+                    }
+                }
+                Ok(true)
+            };
+            let mut ext = GnuExtSparseHeader::new();
+            ext.isextended[0] = 1;
+            while ext.is_extended() {
+                if !try_read_all(&mut reader, ext.as_mut_bytes())? {
+                    return Err(other("failed to read extension"));
+                }
+
+                for block in ext.sparse.iter() {
+                    add_block(&mut reader, block)?;
+                }
+            }
+        }
+    }
+
+    if cur != gnu.real_size()? {
+        return Err(other(
+            "mismatch in sparse file chunks and \
+                 size in header",
+        ));
+    }
+
+    if remaining > 0 {
+        return Err(other(
+            "mismatch in sparse file chunks and \
+                 entry size in header",
+        ));
+    }
+
+    Ok(())
+}
+
 fn append(mut dst: &mut dyn Write, header: &Header, mut data: &mut dyn Read) -> io::Result<()> {
     dst.write_all(header.as_bytes())?;
     let len = io::copy(&mut data, &mut dst)?;
 
     // Pad with zeros if necessary.
-    let buf = [0; 512];
-    let remaining = 512 - (len % 512);
-    if remaining < 512 {
-        dst.write_all(&buf[..remaining as usize])?;
-    }
+    pad_with_zeroes(&mut dst, len)?;
 
     Ok(())
 }
@@ -531,6 +652,16 @@ fn append_dir(
 ) -> io::Result<()> {
     let stat = fs::metadata(src_path)?;
     append_fs(dst, path, &stat, &mut io::empty(), mode, None)
+}
+
+fn pad_with_zeroes(dst: &mut dyn Write, len: u64) -> io::Result<()> {
+    let buf = [0; 512];
+    let remaining = 512 - (len % 512);
+    if remaining < 512 {
+        dst.write_all(&buf[..remaining as usize])?;
+    }
+
+    Ok(())
 }
 
 fn prepare_header(size: u64, entry_type: u8) -> Header {
