@@ -3,6 +3,7 @@ use std::io;
 use std::io::prelude::*;
 use std::path::Path;
 use std::str;
+use std::vec;
 
 use crate::header::{path2bytes, HeaderMode};
 use crate::GnuExtSparseHeader;
@@ -73,16 +74,15 @@ impl<W: Write> Builder<W> {
         Ok(self.obj.take().unwrap())
     }
 
-    /// BLbalblaa
-    ///
-    /// Blablabal
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if .
     // TODO: documentation
-    pub fn append_sparse_all<R: Read>(&mut self, header: &Header, mut data: R) -> io::Result<()> {
-        append_sparse_all(self.get_mut(), header, &mut data)
+    #[allow(missing_docs)]
+    pub fn append_sparse_all<R: Read>(
+        &mut self,
+        header: &Header,
+        ext_header: &GnuExtSparseHeader,
+        mut data: R,
+    ) -> io::Result<()> {
+        append_sparse_all(self.get_mut(), header, ext_header, &mut data)
     }
 
     /// Adds a new entry to this archive.
@@ -423,6 +423,7 @@ impl<W: Write> Builder<W> {
 fn append_sparse_all(
     mut dst: &mut dyn Write,
     header: &Header,
+    ext_header: &GnuExtSparseHeader,
     data: &mut dyn Read,
 ) -> io::Result<()> {
     if !header.entry_type().is_gnu_sparse() {
@@ -434,6 +435,9 @@ fn append_sparse_all(
     };
 
     dst.write_all(header.as_bytes())?;
+    if gnu.is_extended() {
+        dst.write_all(ext_header.as_bytes())?;
+    }
 
     let mut cur = 0;
     let mut remaining = header.entry_size()?;
@@ -482,34 +486,9 @@ fn append_sparse_all(
         for block in gnu.sparse.iter() {
             add_block(&mut reader, block)?
         }
-
         if gnu.is_extended() {
-            let try_read_all = |r: &mut dyn Read, buf: &mut [u8]| -> io::Result<bool> {
-                let mut read = 0;
-                while read < buf.len() {
-                    match r.read(&mut buf[read..])? {
-                        0 => {
-                            if read == 0 {
-                                return Ok(false);
-                            }
-
-                            return Err(other("failed to read entire block"));
-                        }
-                        n => read += n,
-                    }
-                }
-                Ok(true)
-            };
-            let mut ext = GnuExtSparseHeader::new();
-            ext.isextended[0] = 1;
-            while ext.is_extended() {
-                if !try_read_all(&mut reader, ext.as_mut_bytes())? {
-                    return Err(other("failed to read extension"));
-                }
-
-                for block in ext.sparse.iter() {
-                    add_block(&mut reader, block)?;
-                }
+            for block in ext_header.sparse.iter() {
+                add_block(&mut reader, block)?;
             }
         }
     }

@@ -13,6 +13,7 @@ use crate::archive::ArchiveInner;
 use crate::error::TarError;
 use crate::header::bytes2path;
 use crate::other;
+use crate::GnuExtSparseHeader;
 use crate::{Archive, Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
@@ -32,6 +33,7 @@ pub struct EntryFields<'a> {
     pub long_linkname: Option<Vec<u8>>,
     pub pax_extensions: Option<Vec<u8>>,
     pub header: Header,
+    pub ext_header: GnuExtSparseHeader,
     pub size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
@@ -140,6 +142,11 @@ impl<'a, R: Read> Entry<'a, R> {
     /// This provides access to the metadata for this entry in the archive.
     pub fn header(&self) -> &Header {
         &self.fields.header
+    }
+
+    #[allow(missing_docs)]
+    pub fn ext_header(&self) -> &GnuExtSparseHeader {
+        &self.fields.ext_header
     }
 
     /// Returns access to the size of this entry in the archive.
