@@ -1043,7 +1043,8 @@ fn write_sparse_to_vec_and_read_again() {
     a.read_exact(&mut bytes).unwrap();
     assert_eq!(&*a.header().path_bytes(), b"sparse_begin.txt");
     assert_eq!(std::str::from_utf8(&bytes[..5]).unwrap(), "test\n");
-    tar.append_sparse_all(&a.header(), &*bytes).unwrap();
+    tar.append_sparse_all(&a.header(), a.ext_header(), &*bytes)
+        .unwrap();
 
     let mut a = t!(entries.next().unwrap());
     let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
@@ -1054,7 +1055,63 @@ fn write_sparse_to_vec_and_read_again() {
         std::str::from_utf8(&bytes[bytes.len() - 9..]).unwrap(),
         "test_end\n"
     );
-    tar.append_sparse_all(&a.header(), &*bytes).unwrap();
+    tar.append_sparse_all(&a.header(), a.ext_header(), &*bytes)
+        .unwrap();
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_ext.txt");
+    assert!(std::str::from_utf8(&bytes[..0x1000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x1000..0x1000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x1000 + 5..0x3000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x3000..0x3000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x3000 + 5..0x5000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x5000..0x5000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x5000 + 5..0x7000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x7000..0x7000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x7000 + 5..0x9000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x9000..0x9000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x9000 + 5..0xb000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0xb000..0xb000 + 5]).unwrap(),
+        "text\n"
+    );
+    tar.append_sparse_all(&a.header(), a.ext_header(), &*bytes)
+        .unwrap();
 
     let mut a = t!(entries.next().unwrap());
     let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
@@ -1070,7 +1127,8 @@ fn write_sparse_to_vec_and_read_again() {
         std::str::from_utf8(bytes.get(0x2fa0..0x2fa0 + 6).unwrap()).unwrap(),
         "world\n"
     );
-    tar.append_sparse_all(&a.header(), &*bytes).unwrap();
+    tar.append_sparse_all(&a.header(), a.ext_header(), &*bytes)
+        .unwrap();
 
     assert!(entries.next().is_none());
 
@@ -1096,6 +1154,60 @@ fn write_sparse_to_vec_and_read_again() {
     assert_eq!(
         std::str::from_utf8(&bytes[bytes.len() - 9..]).unwrap(),
         "test_end\n"
+    );
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+
+    assert_eq!(&*a.header().path_bytes(), b"sparse_ext.txt");
+    assert!(std::str::from_utf8(&bytes[..0x1000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x1000..0x1000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x1000 + 5..0x3000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x3000..0x3000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x3000 + 5..0x5000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x5000..0x5000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x5000 + 5..0x7000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x7000..0x7000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x7000 + 5..0x9000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x9000..0x9000 + 5]).unwrap(),
+        "text\n"
+    );
+    assert!(std::str::from_utf8(&bytes[0x9000 + 5..0xb000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0xb000..0xb000 + 5]).unwrap(),
+        "text\n"
     );
 
     let mut a = t!(entries.next().unwrap());
@@ -1167,7 +1279,7 @@ fn reading_sparse() {
 
 #[test]
 fn extract_sparse() {
-    let rdr = Cursor::new(tar!("sparse-ext.tar"));
+    let rdr = Cursor::new(tar!("sparse.tar"));
     let mut ar = Archive::new(rdr);
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     t!(ar.unpack(td.path()));

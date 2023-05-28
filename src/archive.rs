@@ -341,6 +341,7 @@ impl<'a> EntriesFields<'a> {
             file_pos: file_pos,
             data: vec![EntryIo::Data((&self.archive.inner).take(size))],
             header: header,
+            ext_header: GnuExtSparseHeader::new(),
             long_pathname: None,
             long_linkname: None,
             pax_extensions: None,
@@ -516,6 +517,7 @@ impl<'a> EntriesFields<'a> {
                         add_block(block)?;
                     }
                 }
+                entry.ext_header = ext;
             }
         }
         if cur != gnu.real_size()? {
