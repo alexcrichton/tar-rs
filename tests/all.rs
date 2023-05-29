@@ -12,7 +12,9 @@ use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
-use tar::{Archive, Builder, Entries, EntryType, Header, HeaderMode};
+use tar::{
+    Archive, Builder, Entries, EntryType, GnuExtSparseHeader, GnuSparseHeader, Header, HeaderMode,
+};
 use tempfile::{Builder as TempBuilder, TempDir};
 
 macro_rules! t {
@@ -1031,7 +1033,7 @@ fn encoded_long_name_has_trailing_nul() {
 }
 
 #[test]
-fn write_sparse_to_vec_and_read_again() {
+fn write_sparse_to_mem_and_read_again() {
     let rdr = Cursor::new(tar!("sparse.tar"));
     let mut ar = Archive::new(rdr);
     let mut entries = t!(ar.entries());
@@ -1043,7 +1045,7 @@ fn write_sparse_to_vec_and_read_again() {
     a.read_exact(&mut bytes).unwrap();
     assert_eq!(&*a.header().path_bytes(), b"sparse_begin.txt");
     assert_eq!(std::str::from_utf8(&bytes[..5]).unwrap(), "test\n");
-    tar.append_sparse_all(&a.header(), a.ext_header(), &*bytes)
+    tar.append_sparse(&a.header(), a.ext_header(), &*bytes)
         .unwrap();
 
     let mut a = t!(entries.next().unwrap());
@@ -1055,7 +1057,7 @@ fn write_sparse_to_vec_and_read_again() {
         std::str::from_utf8(&bytes[bytes.len() - 9..]).unwrap(),
         "test_end\n"
     );
-    tar.append_sparse_all(&a.header(), a.ext_header(), &*bytes)
+    tar.append_sparse(&a.header(), a.ext_header(), &*bytes)
         .unwrap();
 
     let mut a = t!(entries.next().unwrap());
@@ -1110,7 +1112,7 @@ fn write_sparse_to_vec_and_read_again() {
         std::str::from_utf8(&bytes[0xb000..0xb000 + 5]).unwrap(),
         "text\n"
     );
-    tar.append_sparse_all(&a.header(), a.ext_header(), &*bytes)
+    tar.append_sparse(&a.header(), a.ext_header(), &*bytes)
         .unwrap();
 
     let mut a = t!(entries.next().unwrap());
@@ -1127,7 +1129,7 @@ fn write_sparse_to_vec_and_read_again() {
         std::str::from_utf8(bytes.get(0x2fa0..0x2fa0 + 6).unwrap()).unwrap(),
         "world\n"
     );
-    tar.append_sparse_all(&a.header(), a.ext_header(), &*bytes)
+    tar.append_sparse(&a.header(), a.ext_header(), &*bytes)
         .unwrap();
 
     assert!(entries.next().is_none());
@@ -1225,6 +1227,279 @@ fn write_sparse_to_vec_and_read_again() {
     );
 
     assert!(entries.next().is_none());
+}
+
+#[test]
+fn sparse_builder_one() {
+    let mut sparse_1 = GnuSparseHeader::new();
+    sparse_1.set_offset(7680);
+    sparse_1.set_numbytes(425);
+
+    let mut sparse = Vec::new();
+    sparse.push(sparse_1);
+
+    let mut header = Header::new_gnu();
+    header.set_path("foo.dat").unwrap();
+    header.set_entry_type(EntryType::GNUSparse);
+    header.set_sparse(sparse).unwrap();
+    header.set_extended(false).unwrap();
+    header.set_cksum();
+
+    // TODO: add extended stuff to this testcase
+    let ext_header = GnuExtSparseHeader::new();
+
+    let mut data = Vec::new();
+    let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
+    nulls.read_to_end(&mut data).unwrap();
+
+    let payload = String::from("test_data\n");
+    for value in payload.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_1.length().unwrap() - payload.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(std::str::from_utf8(&data[..0x1E00])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&data[0x1E00..0x1E00 + payload.len()]).unwrap(),
+        payload.as_str()
+    );
+
+    let mut ar = Builder::new(Vec::new());
+    ar.append_sparse(&header, &ext_header, &*data).unwrap();
+
+    // read back data
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+
+    assert_eq!(&*a.header().path_bytes(), b"foo.dat");
+
+    assert!(std::str::from_utf8(&bytes[..0x1E00])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert_eq!(
+        std::str::from_utf8(&bytes[0x1E00..0x1E00 + payload.len()]).unwrap(),
+        payload.as_str()
+    );
+}
+
+#[test]
+fn sparse_builder_two() {
+    let mut sparse_1 = GnuSparseHeader::new();
+    sparse_1.set_offset(0);
+    sparse_1.set_numbytes(512);
+
+    let mut sparse_2 = GnuSparseHeader::new();
+    sparse_2.set_offset(8096);
+    sparse_2.set_numbytes(0);
+    let mut sparse = Vec::new();
+    sparse.push(sparse_1);
+    sparse.push(sparse_2);
+
+    let mut header = Header::new_gnu();
+    header.set_path("foo.dat").unwrap();
+    header.set_entry_type(EntryType::GNUSparse);
+    header.set_sparse(sparse).unwrap();
+    header.set_extended(false).unwrap();
+    header.set_cksum();
+
+    // TODO: add extended stuff to this testcase
+    let ext_header = GnuExtSparseHeader::new();
+
+    let mut data = Vec::new();
+    let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
+    nulls.read_to_end(&mut data).unwrap();
+
+    let payload = String::from("test_text\n");
+    for value in payload.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_1.length().unwrap() - payload.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert_eq!(
+        std::str::from_utf8(&data[..payload.len()]).unwrap(),
+        payload.as_str()
+    );
+    assert!(std::str::from_utf8(&data[payload.len()..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let mut nulls = io::repeat(0).take(sparse_2.offset().unwrap());
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(std::str::from_utf8(&data[0x1FA0..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let mut ar = Builder::new(Vec::new());
+    ar.append_sparse(&header, &ext_header, &*data).unwrap();
+
+    // read back data
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+
+    assert_eq!(&*a.header().path_bytes(), b"foo.dat");
+
+    assert_eq!(
+        std::str::from_utf8(&data[..payload.len()]).unwrap(),
+        payload.as_str()
+    );
+    assert!(std::str::from_utf8(&data[payload.len()..0x1FA0])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+    assert!(std::str::from_utf8(&data[0x1FA0..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+}
+
+#[test]
+fn sparse_builder_three() {
+    let mut sparse_1 = GnuSparseHeader::new();
+    sparse_1.set_offset(4096);
+    sparse_1.set_numbytes(512);
+
+    let mut sparse_2 = GnuSparseHeader::new();
+    sparse_2.set_offset(11776);
+    sparse_2.set_numbytes(512);
+
+    let mut sparse_3 = GnuSparseHeader::new();
+    sparse_3.set_offset(16384);
+    sparse_3.set_numbytes(0);
+
+    let mut sparse = Vec::new();
+    sparse.push(sparse_1);
+    sparse.push(sparse_2);
+    sparse.push(sparse_3);
+
+    let mut header = Header::new_gnu();
+    header.set_path("foo.dat").unwrap();
+    header.set_entry_type(EntryType::GNUSparse);
+    header.set_sparse(sparse).unwrap();
+    header.set_extended(false).unwrap();
+    header.set_cksum();
+
+    // TODO: add extended stuff to this testcase
+    let ext_header = GnuExtSparseHeader::new();
+
+    let mut data = Vec::new();
+    let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(std::str::from_utf8(&data[..0x1000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let payload_one = String::from("test_one\n");
+    for value in payload_one.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_1.length().unwrap() - payload_one.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x1000..0x1000 + payload_one.len()]).unwrap(),
+        payload_one.as_str()
+    );
+    assert!(std::str::from_utf8(&data[0x1000 + payload_one.len()..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let remaining = sparse_2.offset().unwrap() - data.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(
+        std::str::from_utf8(&data[0x1000 + payload_one.len()..0x2E00])
+            .unwrap()
+            .chars()
+            .all(|x| x == '\u{0}')
+    );
+
+    let payload_two = String::from("test_two\n");
+    for value in payload_two.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_2.length().unwrap() - payload_two.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x2E00..0x2E00 + payload_two.len()]).unwrap(),
+        payload_two.as_str()
+    );
+    assert!(std::str::from_utf8(&data[0x2E00 + payload_two.len()..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let mut nulls = io::repeat(0).take(sparse_3.offset().unwrap() - data.len() as u64);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(
+        std::str::from_utf8(&data[0x2E00 + payload_two.len()..0x4000])
+            .unwrap()
+            .chars()
+            .all(|x| x == '\u{0}')
+    );
+
+    let mut ar = Builder::new(Vec::new());
+    ar.append_sparse(&header, &ext_header, &*data).unwrap();
+
+    // read back data
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+
+    assert_eq!(&*a.header().path_bytes(), b"foo.dat");
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x1000..0x1000 + payload_one.len()]).unwrap(),
+        payload_one.as_str()
+    );
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x2E00..0x2E00 + payload_two.len()]).unwrap(),
+        payload_two.as_str()
+    );
+
+    assert!(
+        std::str::from_utf8(&data[0x2E00 + payload_two.len()..0x4000])
+            .unwrap()
+            .chars()
+            .all(|x| x == '\u{0}')
+    );
 }
 
 #[test]
