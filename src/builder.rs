@@ -74,15 +74,56 @@ impl<W: Write> Builder<W> {
         Ok(self.obj.take().unwrap())
     }
 
-    // TODO: documentation
-    #[allow(missing_docs)]
-    pub fn append_sparse_all<R: Read>(
+    /// Adds a new sparse entry to this archive.
+    ///
+    /// This function will append the header (and external headers if) specified,
+    /// followed by contents of the stream specified by `data`.
+    /// You must set the entry type to [`EntryType::GNUSparse`].
+    /// To produce a valid archive the `size` field of `header` must be the same
+    /// as the length of the stream that's being written.
+    /// Additionally the checksum for the header should have been set via
+    /// the `set_cksum` method.
+    ///
+    /// Note that this will not attempt to seek the archive to a valid position,
+    /// so if the archive is in the middle of a read or some other similar
+    /// operation then this may corrupt the archive.
+    ///
+    /// Also note that after all entries have been written to an archive the
+    /// `finish` function needs to be called to finish writing the archive.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when either reading or writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use tar::{Builder, GnuExtSparseHeader, Header};
+    ///
+    /// let mut header = Header::new_gnu();
+    /// header.set_path("foo").unwrap();
+    /// header.set_entry_type(EntryType::GNUSparse);
+    /// header.set_sparse(sparse).unwrap();
+    /// header.set_extended(false).unwrap();
+    /// header.set_cksum();
+    ///
+    /// let mut ext_header = GnuExtSparseHeader::new();
+    /// TODO: ext_header
+    ///
+    /// let mut data: &[u8] = &[1, 2, 3, 4];
+    ///
+    /// let mut ar = Builder::new(Vec::new());
+    /// ar.append_sparse(&header, &ext_header, data).unwrap();
+    /// let data = ar.into_inner().unwrap();
+    /// ```
+    pub fn append_sparse<R: Read>(
         &mut self,
         header: &Header,
         ext_header: &GnuExtSparseHeader,
         mut data: R,
     ) -> io::Result<()> {
-        append_sparse_all(self.get_mut(), header, ext_header, &mut data)
+        append_sparse(self.get_mut(), header, ext_header, &mut data)
     }
 
     /// Adds a new entry to this archive.
@@ -420,7 +461,7 @@ impl<W: Write> Builder<W> {
     }
 }
 
-fn append_sparse_all(
+fn append_sparse(
     mut dst: &mut dyn Write,
     header: &Header,
     ext_header: &GnuExtSparseHeader,
