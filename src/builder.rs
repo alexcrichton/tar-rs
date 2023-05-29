@@ -99,22 +99,27 @@ impl<W: Write> Builder<W> {
     /// # Examples
     ///
     /// ```
-    /// use tar::{Builder, GnuExtSparseHeader, Header};
+    /// use tar::{Builder, EntryType, GnuExtSparseHeader, GnuSparseHeader, Header};
     ///
     /// let mut header = Header::new_gnu();
+    ///
+    /// let mut sparse_header = GnuSparseHeader::new();
+    /// sparse_header.set_offset(512);
+    /// sparse_header.set_numbytes(0);
+    ///
+    /// let mut sparse = Vec::new();
+    /// sparse.push(sparse_header);
+    ///
     /// header.set_path("foo").unwrap();
     /// header.set_entry_type(EntryType::GNUSparse);
     /// header.set_sparse(sparse).unwrap();
     /// header.set_extended(false).unwrap();
     /// header.set_cksum();
     ///
-    /// let mut ext_header = GnuExtSparseHeader::new();
-    /// TODO: ext_header
-    ///
-    /// let mut data: &[u8] = &[1, 2, 3, 4];
+    /// let mut data: &[u8] = &[0; 512];
     ///
     /// let mut ar = Builder::new(Vec::new());
-    /// ar.append_sparse(&header, &ext_header, data).unwrap();
+    /// ar.append_sparse(&header, &GnuExtSparseHeader::default(), data).unwrap();
     /// let data = ar.into_inner().unwrap();
     /// ```
     pub fn append_sparse<R: Read>(

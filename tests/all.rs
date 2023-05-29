@@ -1245,9 +1245,6 @@ fn sparse_builder_one() {
     header.set_extended(false).unwrap();
     header.set_cksum();
 
-    // TODO: add extended stuff to this testcase
-    let ext_header = GnuExtSparseHeader::new();
-
     let mut data = Vec::new();
     let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
     nulls.read_to_end(&mut data).unwrap();
@@ -1271,7 +1268,8 @@ fn sparse_builder_one() {
     );
 
     let mut ar = Builder::new(Vec::new());
-    ar.append_sparse(&header, &ext_header, &*data).unwrap();
+    ar.append_sparse(&header, &GnuExtSparseHeader::default(), &*data)
+        .unwrap();
 
     // read back data
     let rdr = Cursor::new(t!(ar.into_inner()));
@@ -1314,9 +1312,6 @@ fn sparse_builder_two() {
     header.set_extended(false).unwrap();
     header.set_cksum();
 
-    // TODO: add extended stuff to this testcase
-    let ext_header = GnuExtSparseHeader::new();
-
     let mut data = Vec::new();
     let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
     nulls.read_to_end(&mut data).unwrap();
@@ -1348,7 +1343,8 @@ fn sparse_builder_two() {
         .all(|x| x == '\u{0}'));
 
     let mut ar = Builder::new(Vec::new());
-    ar.append_sparse(&header, &ext_header, &*data).unwrap();
+    ar.append_sparse(&header, &GnuExtSparseHeader::default(), &*data)
+        .unwrap();
 
     // read back data
     let rdr = Cursor::new(t!(ar.into_inner()));
@@ -1400,9 +1396,6 @@ fn sparse_builder_three() {
     header.set_sparse(sparse).unwrap();
     header.set_extended(false).unwrap();
     header.set_cksum();
-
-    // TODO: add extended stuff to this testcase
-    let ext_header = GnuExtSparseHeader::new();
 
     let mut data = Vec::new();
     let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
@@ -1471,7 +1464,8 @@ fn sparse_builder_three() {
     );
 
     let mut ar = Builder::new(Vec::new());
-    ar.append_sparse(&header, &ext_header, &*data).unwrap();
+    ar.append_sparse(&header, &GnuExtSparseHeader::default(), &*data)
+        .unwrap();
 
     // read back data
     let rdr = Cursor::new(t!(ar.into_inner()));

@@ -1,4 +1,3 @@
-use std::convert::TryInto;
 #[cfg(unix)]
 use std::os::unix::prelude::*;
 #[cfg(windows)]
@@ -1201,7 +1200,7 @@ impl GnuHeader {
 
     /// See `Header::set_extended`
     pub fn set_extended(&mut self, isextended: bool) -> io::Result<()> {
-        self.isextended[0] = isextended.try_into().unwrap(); // TODO: proper err handling
+        self.isextended[0] = isextended as u8;
 
         Ok(())
     }
