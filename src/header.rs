@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 #[cfg(unix)]
 use std::os::unix::prelude::*;
 #[cfg(windows)]
@@ -123,6 +124,7 @@ pub struct GnuHeader {
 /// Specifies the offset/number of bytes of a chunk of data in octal.
 #[repr(C)]
 #[allow(missing_docs)]
+#[derive(Copy)]
 pub struct GnuSparseHeader {
     pub offset: [u8; 12],
     pub numbytes: [u8; 12],
@@ -567,6 +569,27 @@ impl Header {
             gnu.set_username(name)
         } else {
             Err(other("not a ustar or gnu archive, cannot set username"))
+        }
+    }
+
+    /// Sets the sparse entries inside this header.
+    ///
+    /// This function will return an error if sparse entries are greater than
+    /// max allowed [GnuSparseHeader; 4]
+    pub fn set_sparse(&mut self, sparse: Vec<GnuSparseHeader>) -> io::Result<()> {
+        if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_sparse(sparse)
+        } else {
+            Err(other("not a gnu archive, cannot set sparse headers"))
+        }
+    }
+
+    /// Sets the extended sparse flag inside this header.
+    pub fn set_extended(&mut self, extended: bool) -> io::Result<()> {
+        if let Some(gnu) = self.as_gnu_mut() {
+            gnu.set_extended(extended)
+        } else {
+            Err(other("not a gnu archive, cannot set extended flag"))
         }
     }
 
@@ -1148,6 +1171,41 @@ impl GnuHeader {
         })
     }
 
+    /// See `Header::set_sparse`
+    pub fn set_sparse(&mut self, sparse: Vec<GnuSparseHeader>) -> io::Result<()> {
+        if sparse.len() > self.sparse.len() {
+            return Err(other(&format!(
+                "reached max allowed 4 sparse header size with: {}",
+                sparse.len()
+            )));
+        }
+        let mut sparse_index = 0;
+        let mut real_size = 0;
+        let mut length = 0;
+        octal_into(&mut self.realsize, 0);
+
+        let mut numbytes = 0;
+        for header in sparse.into_iter() {
+            numbytes = numbytes + header.length()?;
+            real_size = header.offset()?;
+            length = header.length()?;
+
+            self.sparse[sparse_index] = header;
+            sparse_index = sparse_index + 1;
+        }
+        octal_into(&mut self.realsize, real_size + length); // size
+        octal_into(&mut self.size, numbytes); // entry_size
+
+        Ok(())
+    }
+
+    /// See `Header::set_extended`
+    pub fn set_extended(&mut self, isextended: bool) -> io::Result<()> {
+        self.isextended[0] = isextended.try_into().unwrap(); // TODO: proper err handling
+
+        Ok(())
+    }
+
     /// See `Header::groupname_bytes`
     pub fn groupname_bytes(&self) -> &[u8] {
         truncate(&self.gname)
@@ -1313,6 +1371,21 @@ impl<'a> fmt::Debug for DebugSparseHeaders<'a> {
 }
 
 impl GnuSparseHeader {
+    /// Creates a new zero'd out sparse header entry.
+    pub fn new() -> GnuSparseHeader {
+        unsafe { mem::zeroed() }
+    }
+
+    /// Sets the offset field of this header.
+    pub fn set_offset(&mut self, offset: u64) {
+        octal_into(&mut self.offset, offset);
+    }
+
+    /// Sets the numbytes field of this header.
+    pub fn set_numbytes(&mut self, numbytes: u64) {
+        octal_into(&mut self.numbytes, numbytes);
+    }
+
     /// Returns true if block is empty
     pub fn is_empty(&self) -> bool {
         self.offset[0] == 0 || self.numbytes[0] == 0
@@ -1343,6 +1416,21 @@ impl GnuSparseHeader {
     }
 }
 
+impl Default for GnuSparseHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for GnuSparseHeader {
+    fn clone(&self) -> GnuSparseHeader {
+        GnuSparseHeader {
+            offset: self.offset,
+            numbytes: self.numbytes,
+        }
+    }
+}
+
 impl fmt::Debug for GnuSparseHeader {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut f = f.debug_struct("GnuSparseHeader");
@@ -1357,7 +1445,7 @@ impl fmt::Debug for GnuSparseHeader {
 }
 
 impl GnuExtSparseHeader {
-    /// Crates a new zero'd out sparse header entry.
+    /// Creates a new zero'd out sparse header entry.
     pub fn new() -> GnuExtSparseHeader {
         unsafe { mem::zeroed() }
     }
