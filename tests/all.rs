@@ -1249,7 +1249,7 @@ fn sparse_builder_one() {
     let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
     nulls.read_to_end(&mut data).unwrap();
 
-    let payload = String::from("test_data\n");
+    let payload = String::from("payload_data\n");
     for value in payload.bytes() {
         data.push(value);
     }
@@ -1316,7 +1316,7 @@ fn sparse_builder_two() {
     let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
     nulls.read_to_end(&mut data).unwrap();
 
-    let payload = String::from("test_text\n");
+    let payload = String::from("payload_data\n");
     for value in payload.bytes() {
         data.push(value);
     }
@@ -1406,7 +1406,7 @@ fn sparse_builder_three() {
         .chars()
         .all(|x| x == '\u{0}'));
 
-    let payload_one = String::from("test_one\n");
+    let payload_one = String::from("payload_one\n");
     for value in payload_one.bytes() {
         data.push(value);
     }
@@ -1435,7 +1435,7 @@ fn sparse_builder_three() {
             .all(|x| x == '\u{0}')
     );
 
-    let payload_two = String::from("test_two\n");
+    let payload_two = String::from("payload_two\n");
     for value in payload_two.bytes() {
         data.push(value);
     }
@@ -1494,6 +1494,239 @@ fn sparse_builder_three() {
             .chars()
             .all(|x| x == '\u{0}')
     );
+}
+
+#[test]
+fn sparse_builder_extended() {
+    let mut sparse_1 = GnuSparseHeader::new();
+    sparse_1.set_offset(4096);
+    sparse_1.set_numbytes(512);
+
+    let mut sparse_2 = GnuSparseHeader::new();
+    sparse_2.set_offset(12288);
+    sparse_2.set_numbytes(512);
+
+    let mut sparse_3 = GnuSparseHeader::new();
+    sparse_3.set_offset(20480);
+    sparse_3.set_numbytes(512);
+
+    let mut sparse_4 = GnuSparseHeader::new();
+    sparse_4.set_offset(28672);
+    sparse_4.set_numbytes(512);
+
+    let mut sparse_vec = Vec::new();
+    sparse_vec.push(sparse_1);
+    sparse_vec.push(sparse_2);
+    sparse_vec.push(sparse_3);
+    sparse_vec.push(sparse_4);
+
+    let mut sparse_ext = GnuSparseHeader::new();
+    sparse_ext.set_offset(30720);
+    sparse_ext.set_numbytes(512);
+
+    let mut sparse_ext_vec = Vec::new();
+    sparse_ext_vec.push(sparse_ext);
+
+    let mut extended_header = GnuExtSparseHeader::new();
+    extended_header.set_extended(true).unwrap();
+    extended_header.set_sparse(sparse_ext_vec).unwrap();
+
+    let mut header = Header::new_gnu();
+    header.set_path("foo.dat").unwrap();
+    header.set_entry_type(EntryType::GNUSparse);
+    header.set_sparse(sparse_vec).unwrap();
+    header.set_extended(true).unwrap();
+    header.set_cksum();
+
+    let mut data = Vec::new();
+    let mut nulls = io::repeat(0).take(sparse_1.offset().unwrap());
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(std::str::from_utf8(&data[..0x1000])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let payload_one = String::from("payload_one\n");
+    for value in payload_one.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_1.length().unwrap() - payload_one.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x1000..0x1000 + payload_one.len()]).unwrap(),
+        payload_one.as_str()
+    );
+    assert!(std::str::from_utf8(&data[0x1000 + payload_one.len()..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let remaining = sparse_2.offset().unwrap() - data.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(
+        std::str::from_utf8(&data[0x1000 + payload_one.len()..0x3000])
+            .unwrap()
+            .chars()
+            .all(|x| x == '\u{0}')
+    );
+
+    let payload_two = String::from("payload_two\n");
+    for value in payload_two.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_2.length().unwrap() - payload_two.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x3000..0x3000 + payload_two.len()]).unwrap(),
+        payload_two.as_str()
+    );
+    assert!(std::str::from_utf8(&data[0x3000 + payload_two.len()..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let remaining = sparse_3.offset().unwrap() - data.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(
+        std::str::from_utf8(&data[0x3000 + payload_two.len()..0x5000])
+            .unwrap()
+            .chars()
+            .all(|x| x == '\u{0}')
+    );
+
+    let payload_three = String::from("payload_three\n");
+    for value in payload_three.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_3.length().unwrap() - payload_three.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x5000..0x5000 + payload_three.len()]).unwrap(),
+        payload_three.as_str()
+    );
+
+    let mut nulls = io::repeat(0).take(sparse_4.offset().unwrap() - data.len() as u64);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(
+        std::str::from_utf8(&data[0x5000 + payload_three.len()..0x7000])
+            .unwrap()
+            .chars()
+            .all(|x| x == '\u{0}')
+    );
+
+    let remaining = sparse_4.offset().unwrap() - data.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(
+        std::str::from_utf8(&data[0x3000 + payload_two.len()..0x5000])
+            .unwrap()
+            .chars()
+            .all(|x| x == '\u{0}')
+    );
+
+    let payload_four = String::from("payload_four\n");
+    for value in payload_four.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_4.length().unwrap() - payload_four.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x7000..0x7000 + payload_four.len()]).unwrap(),
+        payload_four.as_str()
+    );
+
+    let mut nulls = io::repeat(0).take(sparse_ext.offset().unwrap() - data.len() as u64);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert!(
+        std::str::from_utf8(&data[0x7000 + payload_four.len()..0x7800])
+            .unwrap()
+            .chars()
+            .all(|x| x == '\u{0}')
+    );
+
+    let payload_ext = String::from("payload_ext\n");
+    for value in payload_ext.bytes() {
+        data.push(value);
+    }
+
+    let remaining = sparse_ext.length().unwrap() - payload_ext.len() as u64;
+    let mut nulls = io::repeat(0).take(remaining);
+    nulls.read_to_end(&mut data).unwrap();
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x7800..0x7800 + payload_ext.len()]).unwrap(),
+        payload_ext.as_str()
+    );
+
+    assert!(std::str::from_utf8(&data[0x7800 + payload_ext.len()..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
+
+    let mut ar = Builder::new(Vec::new());
+    ar.append_sparse(&header, &GnuExtSparseHeader::default(), &*data)
+        .unwrap();
+
+    // read back data
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+
+    let mut a = t!(entries.next().unwrap());
+    let mut bytes = vec![Default::default(); a.size().try_into().unwrap()];
+    a.read_exact(&mut bytes).unwrap();
+
+    assert_eq!(&*a.header().path_bytes(), b"foo.dat");
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x1000..0x1000 + payload_one.len()]).unwrap(),
+        payload_one.as_str()
+    );
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x3000..0x3000 + payload_two.len()]).unwrap(),
+        payload_two.as_str()
+    );
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x5000..0x5000 + payload_three.len()]).unwrap(),
+        payload_three.as_str()
+    );
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x7000..0x7000 + payload_four.len()]).unwrap(),
+        payload_four.as_str()
+    );
+
+    assert_eq!(
+        std::str::from_utf8(&data[0x7800..0x7800 + payload_ext.len()]).unwrap(),
+        payload_ext.as_str()
+    );
+
+    assert!(std::str::from_utf8(&data[0x7800 + payload_ext.len()..])
+        .unwrap()
+        .chars()
+        .all(|x| x == '\u{0}'));
 }
 
 #[test]

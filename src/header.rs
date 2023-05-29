@@ -1174,7 +1174,8 @@ impl GnuHeader {
     pub fn set_sparse(&mut self, sparse: Vec<GnuSparseHeader>) -> io::Result<()> {
         if sparse.len() > self.sparse.len() {
             return Err(other(&format!(
-                "reached max allowed 4 sparse header size with: {}",
+                "reached max allowed {} sparse header size with: {}",
+                self.sparse.len(),
                 sparse.len()
             )));
         }
@@ -1461,12 +1462,37 @@ impl GnuExtSparseHeader {
         unsafe { mem::transmute(self) }
     }
 
+    /// Sets extended sparse headers
+    pub fn set_sparse(&mut self, sparse: Vec<GnuSparseHeader>) -> io::Result<()> {
+        if sparse.len() > self.sparse.len() {
+            return Err(other(&format!(
+                "reached max allowed {} sparse header size with: {}",
+                self.sparse().len(),
+                sparse.len()
+            )));
+        }
+        let mut sparse_index = 0;
+
+        for header in sparse.into_iter() {
+            self.sparse[sparse_index] = header;
+            sparse_index = sparse_index + 1;
+        }
+
+        Ok(())
+    }
+
     /// Returns a slice of the underlying sparse headers.
     ///
     /// Some headers may represent empty chunks of both the offset and numbytes
     /// fields are 0.
     pub fn sparse(&self) -> &[GnuSparseHeader; 21] {
         &self.sparse
+    }
+
+    /// Sets the extended sparse flag inside this header.
+    pub fn set_extended(&mut self, isextended: bool) -> io::Result<()> {
+        self.isextended[0] = isextended as u8;
+        Ok(())
     }
 
     /// Indicates if another sparse header should be following this one.
