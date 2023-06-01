@@ -145,7 +145,9 @@ impl<'a, R: Read> Entry<'a, R> {
         &self.fields.header
     }
 
-    #[allow(missing_docs)]
+    /// Returns access to the extended header of this entry in the archive.
+    ///
+    /// This provides access to the underlying extended sparse headers.
     pub fn ext_header(&self) -> &GnuExtSparseHeader {
         &self.fields.ext_header
     }
