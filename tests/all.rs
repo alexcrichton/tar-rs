@@ -1341,10 +1341,7 @@ fn tar_directory_containing_special_files() {
     // append_path has a different logic for processing files, so we need to test it as well
     t!(ar.append_path("fifo"));
     t!(ar.append_dir_all("special", td.path()));
-    // unfortunately, block device file cannot be created by non-root users
-    // as a substitute, just test the file that exists on most Unix systems
     t!(env::set_current_dir("/dev/"));
-    t!(ar.append_path("loop0"));
     // CI systems seem to have issues with creating a chr device
     t!(ar.append_path("null"));
     t!(ar.finish());
