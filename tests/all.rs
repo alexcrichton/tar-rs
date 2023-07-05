@@ -579,10 +579,21 @@ fn extracting_malicious_tarball() {
             t!(a.append(&header, io::repeat(1).take(1)));
         };
         append("/tmp/abs_evil.txt");
-        append("//tmp/abs_evil2.txt");
+        // std parse `//` as UNC path, see rust-lang/rust#100833
+        append(
+            #[cfg(not(windows))]
+            "//tmp/abs_evil2.txt",
+            #[cfg(windows)]
+            "C://tmp/abs_evil2.txt",
+        );
         append("///tmp/abs_evil3.txt");
         append("/./tmp/abs_evil4.txt");
-        append("//./tmp/abs_evil5.txt");
+        append(
+            #[cfg(not(windows))]
+            "//./tmp/abs_evil5.txt",
+            #[cfg(windows)]
+            "C://./tmp/abs_evil5.txt",
+        );
         append("///./tmp/abs_evil6.txt");
         append("/../tmp/rel_evil.txt");
         append("../rel_evil2.txt");
