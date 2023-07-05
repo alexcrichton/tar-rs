@@ -768,6 +768,40 @@ fn backslash_treated_well() {
     assert!(fs::metadata(td.path().join("foo\\bar")).is_ok());
 }
 
+#[test]
+#[cfg(unix)]
+fn set_mask() {
+    use ::std::os::unix::fs::PermissionsExt;
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("foo"));
+    header.set_mode(0o777);
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("bar"));
+    header.set_mode(0o421);
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+    ar.set_mask(0o211);
+    t!(ar.unpack(td.path()));
+
+    let md = t!(fs::metadata(td.path().join("foo")));
+    assert_eq!(md.permissions().mode(), 0o100566);
+    let md = t!(fs::metadata(td.path().join("bar")));
+    assert_eq!(md.permissions().mode(), 0o100420);
+}
+
 #[cfg(unix)]
 #[test]
 fn nul_bytes_in_path() {
