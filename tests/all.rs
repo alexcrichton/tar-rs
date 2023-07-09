@@ -582,10 +582,21 @@ fn extracting_malicious_tarball() {
             t!(a.append(&header, io::repeat(1).take(1)));
         };
         append("/tmp/abs_evil.txt");
-        append("//tmp/abs_evil2.txt");
+        // std parse `//` as UNC path, see rust-lang/rust#100833
+        append(
+            #[cfg(not(windows))]
+            "//tmp/abs_evil2.txt",
+            #[cfg(windows)]
+            "C://tmp/abs_evil2.txt",
+        );
         append("///tmp/abs_evil3.txt");
         append("/./tmp/abs_evil4.txt");
-        append("//./tmp/abs_evil5.txt");
+        append(
+            #[cfg(not(windows))]
+            "//./tmp/abs_evil5.txt",
+            #[cfg(windows)]
+            "C://./tmp/abs_evil5.txt",
+        );
         append("///./tmp/abs_evil6.txt");
         append("/../tmp/rel_evil.txt");
         append("../rel_evil2.txt");
@@ -758,6 +769,40 @@ fn backslash_treated_well() {
     let mut ar = Archive::new(&data[..]);
     t!(ar.unpack(td.path()));
     assert!(fs::metadata(td.path().join("foo\\bar")).is_ok());
+}
+
+#[test]
+#[cfg(unix)]
+fn set_mask() {
+    use ::std::os::unix::fs::PermissionsExt;
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("foo"));
+    header.set_mode(0o777);
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("bar"));
+    header.set_mode(0o421);
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+    ar.set_mask(0o211);
+    t!(ar.unpack(td.path()));
+
+    let md = t!(fs::metadata(td.path().join("foo")));
+    assert_eq!(md.permissions().mode(), 0o100566);
+    let md = t!(fs::metadata(td.path().join("bar")));
+    assert_eq!(md.permissions().mode(), 0o100420);
 }
 
 #[cfg(unix)]
