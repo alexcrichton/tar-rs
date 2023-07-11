@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::entry::{EntryFields, EntryIo};
 use crate::error::TarError;
 use crate::other;
-use crate::pax::pax_extensions_size;
+use crate::pax::*;
 use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
 
 /// A top-level representation of an archive file.
@@ -409,7 +409,7 @@ impl<'a> EntriesFields<'a> {
                 }
                 pax_extensions = Some(EntryFields::from(entry).read_all()?);
                 if let Some(pax_extensions_ref) = &pax_extensions {
-                    pax_size = pax_extensions_size(pax_extensions_ref);
+                    pax_size = pax_extensions_value(pax_extensions_ref,"size");
                 }
                 continue;
             }

@@ -30,13 +30,13 @@ pub struct PaxExtension<'entry> {
     value: &'entry [u8],
 }
 
-pub fn pax_extensions_size(a: &[u8]) -> Option<u64> {
+pub fn pax_extensions_value(a: &[u8], key: &str) -> Option<u64> {
     for extension in PaxExtensions::new(a) {
         let current_extension = match extension {
             Ok(ext) => ext,
             Err(_) => return None,
         };
-        if current_extension.key() != Ok("size") {
+        if current_extension.key() != Ok(key) {
             continue;
         }
 
@@ -44,11 +44,11 @@ pub fn pax_extensions_size(a: &[u8]) -> Option<u64> {
             Ok(value) => value,
             Err(_) => return None,
         };
-        let size = match value.parse::<u64>() {
-            Ok(size) => size,
+        let result = match value.parse::<u64>() {
+            Ok(result) => result,
             Err(_) => return None,
         };
-        return Some(size);
+        return Some(result);
     }
     None
 }
