@@ -1,3 +1,4 @@
+#[cfg(feature = "filetime")]
 extern crate filetime;
 extern crate tar;
 extern crate tempfile;
@@ -7,11 +8,17 @@ extern crate xattr;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{self, Cursor};
+#[cfg(feature = "builder")]
 use std::iter::repeat;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "builder")]
+use std::path::PathBuf;
 
+#[cfg(feature = "filetime")]
 use filetime::FileTime;
-use tar::{Archive, Builder, Entries, EntryType, Header, HeaderMode};
+use tar::{Archive, Entries, Header};
+#[cfg(feature = "builder")]
+use tar::{Builder, EntryType, HeaderMode};
 use tempfile::{Builder as TempBuilder, TempDir};
 
 macro_rules! t {
@@ -130,6 +137,7 @@ fn reading_files() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn writing_files() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -154,6 +162,7 @@ fn writing_files() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn large_filename() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -403,6 +412,7 @@ fn no_xattrs() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn writing_and_extracting_directories() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -421,6 +431,7 @@ fn writing_and_extracting_directories() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn writing_directories_recursively() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -452,6 +463,7 @@ fn writing_directories_recursively() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn append_dir_all_blank_dest() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -483,6 +495,7 @@ fn append_dir_all_blank_dest() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn append_dir_all_does_not_work_on_non_directory() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("test");
@@ -505,6 +518,7 @@ fn extracting_duplicate_dirs() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn unpack_old_style_bsd_dir() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -531,6 +545,7 @@ fn unpack_old_style_bsd_dir() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn handling_incorrect_file_size() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -558,6 +573,7 @@ fn handling_incorrect_file_size() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn extracting_malicious_tarball() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -667,6 +683,7 @@ fn octal_spaces() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn extracting_malformed_tar_null_blocks() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -698,6 +715,7 @@ fn empty_filename() {
 }
 
 #[test]
+#[cfg(feature = "filetime")]
 fn file_times() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let rdr = Cursor::new(tar!("file_times.tar"));
@@ -714,6 +732,8 @@ fn file_times() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
+#[cfg(feature = "filetime")]
 fn zero_file_times() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -735,6 +755,7 @@ fn zero_file_times() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn backslash_treated_well() {
     // Insert a file into an archive with a backslash
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -804,6 +825,7 @@ fn set_mask() {
 
 #[cfg(unix)]
 #[test]
+#[cfg(feature = "builder")]
 fn nul_bytes_in_path() {
     use std::ffi::OsStr;
     use std::os::unix::prelude::*;
@@ -914,6 +936,7 @@ fn pax_linkpath() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn long_name_trailing_nul() {
     let mut b = Builder::new(Vec::<u8>::new());
 
@@ -939,6 +962,7 @@ fn long_name_trailing_nul() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn long_linkname_trailing_nul() {
     let mut b = Builder::new(Vec::<u8>::new());
 
@@ -964,6 +988,7 @@ fn long_linkname_trailing_nul() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn long_linkname_gnu() {
     for t in [tar::EntryType::Symlink, tar::EntryType::Link] {
         let mut b = Builder::new(Vec::<u8>::new());
@@ -985,6 +1010,7 @@ fn long_linkname_gnu() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn linkname_literal() {
     for t in [tar::EntryType::Symlink, tar::EntryType::Link] {
         let mut b = Builder::new(Vec::<u8>::new());
@@ -1007,6 +1033,7 @@ fn linkname_literal() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn encoded_long_name_has_trailing_nul() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("foo");
@@ -1135,6 +1162,7 @@ fn sparse_with_trailing() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn path_separators() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -1178,6 +1206,7 @@ fn path_separators() {
 
 #[test]
 #[cfg(unix)]
+#[cfg(feature = "builder")]
 fn append_path_symlink() {
     use std::borrow::Cow;
     use std::env;
@@ -1232,6 +1261,7 @@ fn append_path_symlink() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -1265,6 +1295,7 @@ fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn insert_local_file_different_name() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -1287,6 +1318,7 @@ fn insert_local_file_different_name() {
 
 #[test]
 #[cfg(unix)]
+#[cfg(feature = "builder")]
 fn tar_directory_containing_symlink_to_directory() {
     use std::os::unix::fs::symlink;
 
@@ -1324,6 +1356,7 @@ fn unpack_path_larger_than_windows_max_path() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn append_long_multibyte() {
     let mut x = tar::Builder::new(Vec::new());
     let mut name = String::new();
@@ -1337,6 +1370,7 @@ fn append_long_multibyte() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn read_only_directory_containing_files() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
@@ -1365,6 +1399,7 @@ fn read_only_directory_containing_files() {
 // This test was marked linux only due to macOS CI can't handle `set_current_dir` correctly
 #[test]
 #[cfg(target_os = "linux")]
+#[cfg(feature = "builder")]
 fn tar_directory_containing_special_files() {
     use std::env;
     use std::ffi::CString;
@@ -1396,6 +1431,7 @@ fn tar_directory_containing_special_files() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn header_size_overflow() {
     // maximal file size doesn't overflow anything
     let mut ar = Builder::new(Vec::new());

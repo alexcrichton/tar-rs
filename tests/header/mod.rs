@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "builder"), allow(unused_imports))]
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -177,6 +178,7 @@ fn set_ustar_path_hard() {
 }
 
 #[test]
+#[cfg(feature = "builder")]
 fn set_metadata_deterministic() {
     let td = t!(Builder::new().prefix("tar-rs").tempdir());
     let tmppath = td.path().join("tmpfile");
