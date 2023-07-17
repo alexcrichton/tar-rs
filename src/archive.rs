@@ -317,7 +317,15 @@ impl<'a> EntriesFields<'a> {
 
         let mut pax_size: Option<u64> = None;
         if let Some(pax_extensions_ref) = &pax_extensions {
-            pax_size = pax_extensions_value(pax_extensions_ref, "size");
+            pax_size = pax_extensions_value(pax_extensions_ref, PAX_SIZE);
+
+            if let Some(pax_uid) = pax_extensions_value(pax_extensions_ref, PAX_UID) {
+                header.set_uid(pax_uid);
+            }
+
+            if let Some(pax_gid) = pax_extensions_value(pax_extensions_ref, PAX_GID) {
+                header.set_gid(pax_gid);
+            }
         }
 
         let file_pos = self.next;
