@@ -1488,3 +1488,30 @@ fn ownership_preserving() {
         assert!(ar.unpack(td.path()).is_err());
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn pax_and_gnu_uid_gid() {
+    let tarlist = [tar!("biguid_gnu.tar"), tar!("biguid_pax.tar")];
+
+    for file in &tarlist {
+        let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+        let rdr = Cursor::new(file);
+        let mut ar = Archive::new(rdr);
+        ar.set_preserve_ownerships(true);
+
+        if unsafe { libc::getuid() } == 0 {
+            t!(ar.unpack(td.path()));
+            let meta = fs::metadata(td.path().join("test.txt")).unwrap();
+            let uid = std::os::unix::prelude::MetadataExt::uid(&meta);
+            let gid = std::os::unix::prelude::MetadataExt::gid(&meta);
+            // 4294967294 = u32::MAX - 1
+            assert_eq!(uid, 4294967294);
+            assert_eq!(gid, 4294967294);
+        } else {
+            // it's not possible to unpack tar while preserving ownership
+            // without root permissions
+            assert!(ar.unpack(td.path()).is_err());
+        }
+    }
+}
