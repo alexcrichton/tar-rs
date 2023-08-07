@@ -865,11 +865,7 @@ impl<'a> EntryFields<'a> {
                 .filter_map(|e| {
                     let key = e.key_bytes();
                     let prefix = b"SCHILY.xattr.";
-                    if key.starts_with(prefix) {
-                        Some((&key[prefix.len()..], e))
-                    } else {
-                        None
-                    }
+                    key.strip_prefix(prefix).map(|rest| (rest, e))
                 })
                 .map(|(key, e)| (OsStr::from_bytes(key), e.value_bytes()));
 
