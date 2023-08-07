@@ -25,7 +25,7 @@ filetime = "0.2.8"
 tempfile = "3"
 
 [target."cfg(unix)".dependencies]
-xattr = { version = "0.2", optional = true }
+xattr = { version = "1.0", optional = true }
 libc = "0.2"
 
 [features]
