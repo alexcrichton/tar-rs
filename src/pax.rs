@@ -1,8 +1,38 @@
+#![allow(dead_code)]
 use std::io;
 use std::slice;
 use std::str;
 
 use crate::other;
+
+// Keywords for PAX extended header records.
+pub const PAX_NONE: &str = ""; // Indicates that no PAX key is suitable
+pub const PAX_PATH: &str = "path";
+pub const PAX_LINKPATH: &str = "linkpath";
+pub const PAX_SIZE: &str = "size";
+pub const PAX_UID: &str = "uid";
+pub const PAX_GID: &str = "gid";
+pub const PAX_UNAME: &str = "uname";
+pub const PAX_GNAME: &str = "gname";
+pub const PAX_MTIME: &str = "mtime";
+pub const PAX_ATIME: &str = "atime";
+pub const PAX_CTIME: &str = "ctime"; // Removed from later revision of PAX spec, but was valid
+pub const PAX_CHARSET: &str = "charset"; // Currently unused
+pub const PAX_COMMENT: &str = "comment"; // Currently unused
+
+pub const PAX_SCHILYXATTR: &str = "SCHILY.xattr.";
+
+// Keywords for GNU sparse files in a PAX extended header.
+pub const PAX_GNUSPARSE: &str = "GNU.sparse.";
+pub const PAX_GNUSPARSENUMBLOCKS: &str = "GNU.sparse.numblocks";
+pub const PAX_GNUSPARSEOFFSET: &str = "GNU.sparse.offset";
+pub const PAX_GNUSPARSENUMBYTES: &str = "GNU.sparse.numbytes";
+pub const PAX_GNUSPARSEMAP: &str = "GNU.sparse.map";
+pub const PAX_GNUSPARSENAME: &str = "GNU.sparse.name";
+pub const PAX_GNUSPARSEMAJOR: &str = "GNU.sparse.major";
+pub const PAX_GNUSPARSEMINOR: &str = "GNU.sparse.minor";
+pub const PAX_GNUSPARSESIZE: &str = "GNU.sparse.size";
+pub const PAX_GNUSPARSEREALSIZE: &str = "GNU.sparse.realsize";
 
 /// An iterator over the pax extensions in an archive entry.
 ///
@@ -30,13 +60,13 @@ pub struct PaxExtension<'entry> {
     value: &'entry [u8],
 }
 
-pub fn pax_extensions_size(a: &[u8]) -> Option<u64> {
+pub fn pax_extensions_value(a: &[u8], key: &str) -> Option<u64> {
     for extension in PaxExtensions::new(a) {
         let current_extension = match extension {
             Ok(ext) => ext,
             Err(_) => return None,
         };
-        if current_extension.key() != Ok("size") {
+        if current_extension.key() != Ok(key) {
             continue;
         }
 
@@ -44,11 +74,11 @@ pub fn pax_extensions_size(a: &[u8]) -> Option<u64> {
             Ok(value) => value,
             Err(_) => return None,
         };
-        let size = match value.parse::<u64>() {
-            Ok(size) => size,
+        let result = match value.parse::<u64>() {
+            Ok(result) => result,
             Err(_) => return None,
         };
-        return Some(size);
+        return Some(result);
     }
     None
 }
