@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::str;
 
-use crate::header::{path2bytes, HeaderMode};
+use crate::header::{path2bytes, HeaderMode, prepare_header};
 use crate::{other, EntryType, Header};
 
 /// A structure for building archives
@@ -531,21 +531,6 @@ fn append_dir(
 ) -> io::Result<()> {
     let stat = fs::metadata(src_path)?;
     append_fs(dst, path, &stat, &mut io::empty(), mode, None)
-}
-
-fn prepare_header(size: u64, entry_type: u8) -> Header {
-    let mut header = Header::new_gnu();
-    let name = b"././@LongLink";
-    header.as_gnu_mut().unwrap().name[..name.len()].clone_from_slice(&name[..]);
-    header.set_mode(0o644);
-    header.set_uid(0);
-    header.set_gid(0);
-    header.set_mtime(0);
-    // + 1 to be compliant with GNU tar
-    header.set_size(size + 1);
-    header.set_entry_type(EntryType::new(entry_type));
-    header.set_cksum();
-    header
 }
 
 fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) -> io::Result<()> {

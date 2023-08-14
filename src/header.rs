@@ -1640,3 +1640,18 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
 fn invalid_utf8<T>(_: T) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid utf-8")
 }
+
+pub(crate) fn prepare_header(size: u64, entry_type: u8) -> Header {
+    let mut header = Header::new_gnu();
+    let name = b"././@LongLink";
+    header.as_gnu_mut().unwrap().name[..name.len()].clone_from_slice(&name[..]);
+    header.set_mode(0o644);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    // + 1 to be compliant with GNU tar
+    header.set_size(size + 1);
+    header.set_entry_type(EntryType::new(entry_type));
+    header.set_cksum();
+    header
+}
