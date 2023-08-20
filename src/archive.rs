@@ -233,12 +233,17 @@ impl Archive<dyn Read + '_> {
         for entry in self._entries(None)? {
             let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
             if file.header().entry_type() == crate::EntryType::Directory {
-                directories.push(file);
+                directories.push((file.path()?.components().count(), file));
             } else {
                 file.unpack_in(dst)?;
             }
         }
-        for mut dir in directories {
+
+        // Work from leaves up.  Otherwise when a parent directory has
+        // no write permission, any empty subdirectories beneath it
+        // cannot be created.
+        directories.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, mut dir) in directories {
             dir.unpack_in(dst)?;
         }
 
