@@ -188,7 +188,7 @@ fn set_metadata_deterministic() {
         perms.set_readonly(readonly);
         t!(fs::set_permissions(path, perms));
         let mut h = Header::new_ustar();
-        h.set_metadata_in_mode(&t!(path.metadata()), HeaderMode::Deterministic);
+        h.set_metadata_in_mode(&t!(path.metadata()), HeaderMode::Deterministic, None);
         Ok(h)
     }
 
