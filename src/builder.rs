@@ -16,6 +16,7 @@ pub struct Builder<W: Write> {
     follow: bool,
     finished: bool,
     obj: Option<W>,
+    force_mtime: Option<u64>,
 }
 
 impl<W: Write> Builder<W> {
@@ -28,6 +29,7 @@ impl<W: Write> Builder<W> {
             follow: true,
             finished: false,
             obj: Some(obj),
+            force_mtime: None,
         }
     }
 
@@ -42,6 +44,11 @@ impl<W: Write> Builder<W> {
     /// than adding a symlink to the archive. Defaults to true.
     pub fn follow_symlinks(&mut self, follow: bool) {
         self.follow = follow;
+    }
+
+    /// Force all files to have the specified mtime.
+    pub fn force_mtime(&mut self, mtime: u64) {
+        self.force_mtime = Some(mtime);
     }
 
     /// Gets shared reference to the underlying object.
@@ -237,7 +244,15 @@ impl<W: Write> Builder<W> {
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_path_with_name(self.get_mut(), path.as_ref(), None, mode, follow)
+        let force_mtime = self.force_mtime;
+        append_path_with_name(
+            self.get_mut(),
+            path.as_ref(),
+            None,
+            mode,
+            follow,
+            force_mtime,
+        )
     }
 
     /// Adds a file on the local filesystem to this archive under another name.
@@ -275,12 +290,14 @@ impl<W: Write> Builder<W> {
     ) -> io::Result<()> {
         let mode = self.mode.clone();
         let follow = self.follow;
+        let force_mtime = self.force_mtime;
         append_path_with_name(
             self.get_mut(),
             path.as_ref(),
             Some(name.as_ref()),
             mode,
             follow,
+            force_mtime,
         )
     }
 
@@ -312,7 +329,8 @@ impl<W: Write> Builder<W> {
     /// ```
     pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File) -> io::Result<()> {
         let mode = self.mode.clone();
-        append_file(self.get_mut(), path.as_ref(), file, mode)
+        let force_mtime = self.force_mtime;
+        append_file(self.get_mut(), path.as_ref(), file, mode, force_mtime)
     }
 
     /// Adds a directory to this archive with the given path as the name of the
@@ -349,7 +367,8 @@ impl<W: Write> Builder<W> {
         Q: AsRef<Path>,
     {
         let mode = self.mode.clone();
-        append_dir(self.get_mut(), path.as_ref(), src_path.as_ref(), mode)
+        let force_mtime = self.force_mtime;
+        append_dir(self.get_mut(), path.as_ref(), src_path.as_ref(), mode, force_mtime)
     }
 
     /// Adds a directory and all of its contents (recursively) to this archive
@@ -381,12 +400,14 @@ impl<W: Write> Builder<W> {
     {
         let mode = self.mode.clone();
         let follow = self.follow;
+        let force_mtime = self.force_mtime;
         append_dir_all(
             self.get_mut(),
             path.as_ref(),
             src_path.as_ref(),
             mode,
             follow,
+            force_mtime,
         )
     }
 
@@ -426,6 +447,7 @@ fn append_path_with_name(
     name: Option<&Path>,
     mode: HeaderMode,
     follow: bool,
+    force_mtime: Option<u64>,
 ) -> io::Result<()> {
     let stat = if follow {
         fs::metadata(path).map_err(|err| {
@@ -444,9 +466,25 @@ fn append_path_with_name(
     };
     let ar_name = name.unwrap_or(path);
     if stat.is_file() {
-        append_fs(dst, ar_name, &stat, &mut fs::File::open(path)?, mode, None)
+        append_fs(
+            dst,
+            ar_name,
+            &stat,
+            &mut fs::File::open(path)?,
+            mode,
+            None,
+            force_mtime,
+        )
     } else if stat.is_dir() {
-        append_fs(dst, ar_name, &stat, &mut io::empty(), mode, None)
+        append_fs(
+            dst,
+            ar_name,
+            &stat,
+            &mut io::empty(),
+            mode,
+            None,
+            force_mtime,
+        )
     } else if stat.file_type().is_symlink() {
         let link_name = fs::read_link(path)?;
         append_fs(
@@ -456,11 +494,12 @@ fn append_path_with_name(
             &mut io::empty(),
             mode,
             Some(&link_name),
+            force_mtime,
         )
     } else {
         #[cfg(unix)]
         {
-            append_special(dst, path, &stat, mode)
+            append_special(dst, path, &stat, mode, force_mtime)
         }
         #[cfg(not(unix))]
         {
@@ -475,6 +514,7 @@ fn append_special(
     path: &Path,
     stat: &fs::Metadata,
     mode: HeaderMode,
+    force_mtime: Option<u64>,
 ) -> io::Result<()> {
     use ::std::os::unix::fs::{FileTypeExt, MetadataExt};
 
@@ -497,7 +537,7 @@ fn append_special(
     }
 
     let mut header = Header::new_gnu();
-    header.set_metadata_in_mode(stat, mode);
+    header.set_metadata_in_mode(stat, mode, force_mtime);
     prepare_header_path(dst, &mut header, path)?;
 
     header.set_entry_type(entry_type);
@@ -518,9 +558,10 @@ fn append_file(
     path: &Path,
     file: &mut fs::File,
     mode: HeaderMode,
+    force_mtime: Option<u64>,
 ) -> io::Result<()> {
     let stat = file.metadata()?;
-    append_fs(dst, path, &stat, file, mode, None)
+    append_fs(dst, path, &stat, file, mode, None, force_mtime)
 }
 
 fn append_dir(
@@ -528,9 +569,10 @@ fn append_dir(
     path: &Path,
     src_path: &Path,
     mode: HeaderMode,
+    force_mtime: Option<u64>,
 ) -> io::Result<()> {
     let stat = fs::metadata(src_path)?;
-    append_fs(dst, path, &stat, &mut io::empty(), mode, None)
+    append_fs(dst, path, &stat, &mut io::empty(), mode, None, force_mtime)
 }
 
 fn prepare_header(size: u64, entry_type: u8) -> Header {
@@ -605,11 +647,12 @@ fn append_fs(
     read: &mut dyn Read,
     mode: HeaderMode,
     link_name: Option<&Path>,
+    force_mtime: Option<u64>,
 ) -> io::Result<()> {
     let mut header = Header::new_gnu();
 
     prepare_header_path(dst, &mut header, path)?;
-    header.set_metadata_in_mode(meta, mode);
+    header.set_metadata_in_mode(meta, mode, force_mtime);
     if let Some(link_name) = link_name {
         prepare_header_link(dst, &mut header, link_name)?;
     }
@@ -623,6 +666,7 @@ fn append_dir_all(
     src_path: &Path,
     mode: HeaderMode,
     follow: bool,
+    force_mtime: Option<u64>,
 ) -> io::Result<()> {
     let mut stack = vec![(src_path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
@@ -635,22 +679,22 @@ fn append_dir_all(
                 stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
             }
             if dest != Path::new("") {
-                append_dir(dst, &dest, &src, mode)?;
+                append_dir(dst, &dest, &src, mode, force_mtime)?;
             }
         } else if !follow && is_symlink {
             let stat = fs::symlink_metadata(&src)?;
             let link_name = fs::read_link(&src)?;
-            append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name))?;
+            append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name), force_mtime)?;
         } else {
             #[cfg(unix)]
             {
                 let stat = fs::metadata(&src)?;
                 if !stat.is_file() {
-                    append_special(dst, &dest, &stat, mode)?;
+                    append_special(dst, &dest, &stat, mode, force_mtime)?;
                     continue;
                 }
             }
-            append_file(dst, &dest, &mut fs::File::open(src)?, mode)?;
+            append_file(dst, &dest, &mut fs::File::open(src)?, mode, force_mtime)?;
         }
     }
     Ok(())
