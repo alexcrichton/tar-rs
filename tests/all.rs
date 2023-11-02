@@ -23,6 +23,15 @@ macro_rules! t {
     };
 }
 
+macro_rules! te {
+    ($e:expr) => {
+        match $e {
+            Err(e) => e,
+            Ok(_) => panic!("{} was expected to return with error", stringify!($e)),
+        }
+    };
+}
+
 macro_rules! tar {
     ($e:expr) => {
         &include_bytes!(concat!("archives/", $e))[..]
@@ -1368,6 +1377,7 @@ fn read_only_directory_containing_files() {
 fn tar_directory_containing_special_files() {
     use std::env;
     use std::ffi::CString;
+    use std::os::unix::net::UnixListener;
 
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let fifo = td.path().join("fifo");
@@ -1381,10 +1391,21 @@ fn tar_directory_containing_special_files() {
         }
     }
 
+    let socket = td.path().join("socket");
+    match UnixListener::bind(socket) {
+        Ok(_) => {}
+        Err(e) => panic!("Failed to create and bind to a UNIX named socket: {}", e),
+    }
+
     t!(env::set_current_dir(td.path()));
     let mut ar = Builder::new(Vec::new());
+    // Default behavior is expected to reject UNIX named sockets, so we need to test it first.
     // append_path has a different logic for processing files, so we need to test it as well
+    te!(ar.append_path("socket"));
+    te!(ar.append_dir_all("special", td.path()));
+    ar.skip_unsupported_file_types(true);
     t!(ar.append_path("fifo"));
+    t!(ar.append_path("socket"));
     t!(ar.append_dir_all("special", td.path()));
     // unfortunately, block device file cannot be created by non-root users
     // as a substitute, just test the file that exists on most Unix systems
