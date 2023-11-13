@@ -825,7 +825,7 @@ impl Header {
             HeaderMode::Deterministic => {
                 self.set_uid(0);
                 self.set_gid(0);
-                self.set_mtime(123456789); // see above in unix
+                self.set_mtime(1153704088); // see above in unix
                 let fs_mode = if meta.is_dir() { 0o755 } else { 0o644 };
                 self.set_mode(fs_mode);
             }
