@@ -7,7 +7,7 @@ use std::io::{self, SeekFrom};
 use std::marker;
 use std::path::Path;
 
-use crate::entry::{EntryFields, EntryIo};
+use crate::entry::{DefaultUnpacker, EntryFields, EntryIo, Unpacker};
 use crate::error::TarError;
 use crate::other;
 use crate::pax::*;
@@ -106,8 +106,21 @@ impl<R: Read> Archive<R> {
     /// ar.unpack("foo").unwrap();
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
+        self.unpack_with(dst, &mut DefaultUnpacker::new())
+    }
+
+    /// Unpacks the contents tarball into the specified `dst`, using a custom
+    /// [Unpacker].
+    ///
+    /// This function is similar to [Archive::unpack], but allows the caller to
+    /// specify a custom [Unpacker].
+    pub fn unpack_with<P: AsRef<Path>, U: Unpacker>(
+        &mut self,
+        dst: P,
+        unpacker: &mut U,
+    ) -> io::Result<()> {
         let me: &mut Archive<dyn Read> = self;
-        me._unpack(dst.as_ref())
+        me._unpack(dst.as_ref(), unpacker)
     }
 
     /// Set the mask of the permission bits when unpacking this entry.
@@ -213,7 +226,7 @@ impl Archive<dyn Read + '_> {
         })
     }
 
-    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+    fn _unpack<U: Unpacker>(&mut self, dst: &Path, unpacker: &mut U) -> io::Result<()> {
         if dst.symlink_metadata().is_err() {
             fs::create_dir_all(&dst)
                 .map_err(|e| TarError::new(format!("failed to create `{}`", dst.display()), e))?;
@@ -235,7 +248,7 @@ impl Archive<dyn Read + '_> {
             if file.header().entry_type() == crate::EntryType::Directory {
                 directories.push(file);
             } else {
-                file.unpack_in(dst)?;
+                file.unpack_in_with(dst, unpacker)?;
             }
         }
         for mut dir in directories {
