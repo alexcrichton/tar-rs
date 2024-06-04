@@ -7,7 +7,7 @@ use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
 use std::path::{Component, Path, PathBuf};
 
-use filetime::{self, FileTime};
+use filetime::FileTime;
 
 use crate::archive::ArchiveInner;
 use crate::error::TarError;
@@ -201,7 +201,19 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<Unpacked> {
-        self.fields.unpack(None, dst.as_ref())
+        self.unpack_with(dst.as_ref(), &mut DefaultUnpacker::new())
+    }
+
+    /// Writes this file to the specified location, using a custom unpacker.
+    ///
+    /// This function is similar to [Entry::unpack], but allows you to specify a
+    /// custom [Unpacker].
+    pub fn unpack_with<P: AsRef<Path>, U: Unpacker>(
+        &mut self,
+        dst: P,
+        unpacker: &mut U,
+    ) -> io::Result<Unpacked> {
+        self.fields.unpack_with(None, dst.as_ref(), unpacker)
     }
 
     /// Extracts this file under the specified path, avoiding security issues.
@@ -229,7 +241,20 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<bool> {
-        self.fields.unpack_in(dst.as_ref())
+        self.unpack_in_with(dst.as_ref(), &mut DefaultUnpacker::new())
+    }
+
+    /// Extracts this file under the specified path, avoiding security issues,
+    /// using a custom unpacker.
+    ///
+    /// This function is similar to [Entry::unpack_in], but allows you to
+    /// specify a custom [Unpacker].
+    pub fn unpack_in_with<P: AsRef<Path>, U: Unpacker>(
+        &mut self,
+        dst: P,
+        unpacker: &mut U,
+    ) -> io::Result<bool> {
+        self.fields.unpack_in_with(dst.as_ref(), unpacker)
     }
 
     /// Set the mask of the permission bits when unpacking this entry.
@@ -378,7 +403,7 @@ impl<'a> EntryFields<'a> {
         )))
     }
 
-    fn unpack_in(&mut self, dst: &Path) -> io::Result<bool> {
+    fn unpack_in_with<U: Unpacker>(&mut self, dst: &Path, unpacker: &mut U) -> io::Result<bool> {
         // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
         // * Leading '/'s are trimmed. For example, `///test` is treated as
         //   `test`.
@@ -435,7 +460,7 @@ impl<'a> EntryFields<'a> {
 
         let canon_target = self.validate_inside_dst(&dst, parent)?;
 
-        self.unpack(Some(&canon_target), &file_dst)
+        self.unpack_with(Some(&canon_target), &file_dst, unpacker)
             .map_err(|e| TarError::new(format!("failed to unpack `{}`", file_dst.display()), e))?;
 
         Ok(true)
@@ -459,10 +484,16 @@ impl<'a> EntryFields<'a> {
     }
 
     /// Returns access to the header of this entry in the archive.
-    fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<Unpacked> {
-        fn set_perms_ownerships(
+    fn unpack_with<U: Unpacker>(
+        &mut self,
+        target_base: Option<&Path>,
+        dst: &Path,
+        unpacker: &mut U,
+    ) -> io::Result<Unpacked> {
+        fn set_perms_ownerships<U: Unpacker>(
+            unpacker: &mut U,
             dst: &Path,
-            f: Option<&mut std::fs::File>,
+            f: Option<&mut U::File>,
             header: &Header,
             mask: u32,
             perms: bool,
@@ -470,17 +501,40 @@ impl<'a> EntryFields<'a> {
         ) -> io::Result<()> {
             // ownerships need to be set first to avoid stripping SUID bits in the permissions ...
             if ownerships {
-                set_ownerships(dst, &f, header.uid()?, header.gid()?)?;
+                let uid = header.uid()?;
+                let gid = header.gid()?;
+                unpacker.set_ownerships(dst, &f, uid, gid).map_err(|e| {
+                    TarError::new(
+                        format!(
+                            "failed to set ownerships to uid={:?}, gid={:?} \
+                             for `{}`",
+                            uid,
+                            gid,
+                            dst.display()
+                        ),
+                        e,
+                    )
+                })?;
             }
             // ... then set permissions, SUID bits set here is kept
             if let Ok(mode) = header.mode() {
-                set_perms(dst, f, mode, mask, perms)?;
+                unpacker.set_perms(dst, f, mode, mask, perms).map_err(|e| {
+                    TarError::new(
+                        format!(
+                            "failed to set permissions to {:o} \
+                     for `{}`",
+                            mode,
+                            dst.display()
+                        ),
+                        e,
+                    )
+                })?;
             }
 
             Ok(())
         }
 
-        fn get_mtime(header: &Header) -> Option<FileTime> {
+        fn get_mtime(header: &Header) -> Option<u64> {
             header.mtime().ok().map(|mtime| {
                 // For some more information on this see the comments in
                 // `Header::fill_platform_from`, but the general idea is that
@@ -488,8 +542,11 @@ impl<'a> EntryFields<'a> {
                 // since some tools don't ingest them well. Perhaps one day
                 // when Cargo stops working with 0-mtime archives we can remove
                 // this.
-                let mtime = if mtime == 0 { 1 } else { mtime };
-                FileTime::from_unix_time(mtime as i64, 0)
+                if mtime == 0 {
+                    1
+                } else {
+                    mtime
+                }
             })
         }
 
@@ -498,6 +555,7 @@ impl<'a> EntryFields<'a> {
         if kind.is_dir() {
             self.unpack_dir(dst)?;
             set_perms_ownerships(
+                unpacker,
                 dst,
                 None,
                 &self.header,
@@ -578,6 +636,7 @@ impl<'a> EntryFields<'a> {
                     })?;
                 if self.preserve_mtime {
                     if let Some(mtime) = get_mtime(&self.header) {
+                        let mtime = FileTime::from_unix_time(mtime as i64, 0);
                         filetime::set_symlink_file_times(dst, mtime, mtime).map_err(|e| {
                             TarError::new(format!("failed to set mtime for `{}`", dst.display()), e)
                         })?;
@@ -615,6 +674,7 @@ impl<'a> EntryFields<'a> {
         if self.header.as_ustar().is_none() && self.path_bytes().ends_with(b"/") {
             self.unpack_dir(dst)?;
             set_perms_ownerships(
+                unpacker,
                 dst,
                 None,
                 &self.header,
@@ -634,39 +694,17 @@ impl<'a> EntryFields<'a> {
         // As a result if we don't recognize the kind we just write out the file
         // as we would normally.
 
-        // Ensure we write a new file rather than overwriting in-place which
-        // is attackable; if an existing file is found unlink it.
-        fn open(dst: &Path) -> io::Result<std::fs::File> {
-            OpenOptions::new().write(true).create_new(true).open(dst)
-        }
-        let mut f = (|| -> io::Result<std::fs::File> {
-            let mut f = open(dst).or_else(|err| {
-                if err.kind() != ErrorKind::AlreadyExists {
-                    Err(err)
-                } else if self.overwrite {
-                    match fs::remove_file(dst) {
-                        Ok(()) => open(dst),
-                        Err(ref e) if e.kind() == io::ErrorKind::NotFound => open(dst),
-                        Err(e) => Err(e),
-                    }
-                } else {
-                    Err(err)
-                }
-            })?;
+        let mut f = (|| -> io::Result<U::File> {
+            let mut f = unpacker.open(dst, self.overwrite)?;
             for io in self.data.drain(..) {
                 match io {
                     EntryIo::Data(mut d) => {
                         let expected = d.limit();
-                        if io::copy(&mut d, &mut f)? != expected {
+                        if unpacker.copy(&mut d, &mut f, expected)? != expected {
                             return Err(other("failed to write entire file"));
                         }
                     }
-                    EntryIo::Pad(d) => {
-                        // TODO: checked cast to i64
-                        let to = SeekFrom::Current(d.limit() as i64);
-                        let size = f.seek(to)?;
-                        f.set_len(size)?;
-                    }
+                    EntryIo::Pad(d) => unpacker.pad(&mut f, d.limit() as usize)?,
                 }
             }
             Ok(f)
@@ -685,12 +723,16 @@ impl<'a> EntryFields<'a> {
 
         if self.preserve_mtime {
             if let Some(mtime) = get_mtime(&self.header) {
-                filetime::set_file_handle_times(&f, Some(mtime), Some(mtime)).map_err(|e| {
-                    TarError::new(format!("failed to set mtime for `{}`", dst.display()), e)
-                })?;
+                unpacker
+                    .set_file_handle_times(&mut f, Some(mtime), Some(mtime))
+                    .map_err(|e| {
+                        TarError::new(format!("failed to set mtime for `{}`", dst.display()), e)
+                    })?;
             }
         }
+
         set_perms_ownerships(
+            unpacker,
             dst,
             Some(&mut f),
             &self.header,
@@ -698,158 +740,12 @@ impl<'a> EntryFields<'a> {
             self.preserve_permissions,
             self.preserve_ownerships,
         )?;
+
         if self.unpack_xattrs {
             set_xattrs(self, dst)?;
         }
-        return Ok(Unpacked::File(f));
 
-        fn set_ownerships(
-            dst: &Path,
-            f: &Option<&mut std::fs::File>,
-            uid: u64,
-            gid: u64,
-        ) -> Result<(), TarError> {
-            _set_ownerships(dst, f, uid, gid).map_err(|e| {
-                TarError::new(
-                    format!(
-                        "failed to set ownerships to uid={:?}, gid={:?} \
-                         for `{}`",
-                        uid,
-                        gid,
-                        dst.display()
-                    ),
-                    e,
-                )
-            })
-        }
-
-        #[cfg(unix)]
-        fn _set_ownerships(
-            dst: &Path,
-            f: &Option<&mut std::fs::File>,
-            uid: u64,
-            gid: u64,
-        ) -> io::Result<()> {
-            use std::convert::TryInto;
-            use std::os::unix::prelude::*;
-
-            let uid: libc::uid_t = uid.try_into().map_err(|_| {
-                io::Error::new(io::ErrorKind::Other, format!("UID {} is too large!", uid))
-            })?;
-            let gid: libc::gid_t = gid.try_into().map_err(|_| {
-                io::Error::new(io::ErrorKind::Other, format!("GID {} is too large!", gid))
-            })?;
-            match f {
-                Some(f) => unsafe {
-                    let fd = f.as_raw_fd();
-                    if libc::fchown(fd, uid, gid) != 0 {
-                        Err(io::Error::last_os_error())
-                    } else {
-                        Ok(())
-                    }
-                },
-                None => unsafe {
-                    let path = std::ffi::CString::new(dst.as_os_str().as_bytes()).map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("path contains null character: {:?}", e),
-                        )
-                    })?;
-                    if libc::lchown(path.as_ptr(), uid, gid) != 0 {
-                        Err(io::Error::last_os_error())
-                    } else {
-                        Ok(())
-                    }
-                },
-            }
-        }
-
-        // Windows does not support posix numeric ownership IDs
-        #[cfg(any(windows, target_arch = "wasm32"))]
-        fn _set_ownerships(
-            _: &Path,
-            _: &Option<&mut std::fs::File>,
-            _: u64,
-            _: u64,
-        ) -> io::Result<()> {
-            Ok(())
-        }
-
-        fn set_perms(
-            dst: &Path,
-            f: Option<&mut std::fs::File>,
-            mode: u32,
-            mask: u32,
-            preserve: bool,
-        ) -> Result<(), TarError> {
-            _set_perms(dst, f, mode, mask, preserve).map_err(|e| {
-                TarError::new(
-                    format!(
-                        "failed to set permissions to {:o} \
-                         for `{}`",
-                        mode,
-                        dst.display()
-                    ),
-                    e,
-                )
-            })
-        }
-
-        #[cfg(unix)]
-        fn _set_perms(
-            dst: &Path,
-            f: Option<&mut std::fs::File>,
-            mode: u32,
-            mask: u32,
-            preserve: bool,
-        ) -> io::Result<()> {
-            use std::os::unix::prelude::*;
-
-            let mode = if preserve { mode } else { mode & 0o777 };
-            let mode = mode & !mask;
-            let perm = fs::Permissions::from_mode(mode as _);
-            match f {
-                Some(f) => f.set_permissions(perm),
-                None => fs::set_permissions(dst, perm),
-            }
-        }
-
-        #[cfg(windows)]
-        fn _set_perms(
-            dst: &Path,
-            f: Option<&mut std::fs::File>,
-            mode: u32,
-            _mask: u32,
-            _preserve: bool,
-        ) -> io::Result<()> {
-            if mode & 0o200 == 0o200 {
-                return Ok(());
-            }
-            match f {
-                Some(f) => {
-                    let mut perm = f.metadata()?.permissions();
-                    perm.set_readonly(true);
-                    f.set_permissions(perm)
-                }
-                None => {
-                    let mut perm = fs::metadata(dst)?.permissions();
-                    perm.set_readonly(true);
-                    fs::set_permissions(dst, perm)
-                }
-            }
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        #[allow(unused_variables)]
-        fn _set_perms(
-            dst: &Path,
-            f: Option<&mut std::fs::File>,
-            mode: u32,
-            mask: u32,
-            _preserve: bool,
-        ) -> io::Result<()> {
-            Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
-        }
+        return unpacker.result(f);
 
         #[cfg(all(unix, feature = "xattr"))]
         fn set_xattrs(me: &mut EntryFields, dst: &Path) -> io::Result<()> {
@@ -965,4 +861,244 @@ impl<'a> Read for EntryIo<'a> {
             EntryIo::Data(ref mut io) => io.read(into),
         }
     }
+}
+
+/// A trait for unpacking files.
+pub trait Unpacker {
+    /// The type of file handle returned by this unpacker.
+    type File;
+
+    /// Open a file for writing.
+    ///
+    /// If the destination file already exists, it must be overwritten if
+    /// `overwrite` is `true`, else an error must be returned.
+    fn open(&mut self, dst: &Path, overwrite: bool) -> io::Result<Self::File>;
+
+    /// Copy `len` bytes from `src` into the given `dst` file.
+    fn copy(&mut self, src: &mut dyn Read, dst: &mut Self::File, len: u64) -> io::Result<u64>;
+
+    /// Pad the `dst` file with `amount` bytes.
+    fn pad(&mut self, dst: &mut Self::File, amount: usize) -> io::Result<()>;
+
+    /// Set the ownerships of a file.
+    ///
+    /// `file` is `Some` if `dst` resolves to a file and it has already been opened.
+    fn set_ownerships(
+        &mut self,
+        dst: &Path,
+        file: &Option<&mut Self::File>,
+        uid: u64,
+        gid: u64,
+    ) -> io::Result<()>;
+
+    /// Set the permissions of a file.
+    ///
+    /// `file` is `Some` if `dst` resolves to a file and it has already been opened.
+    fn set_perms(
+        &mut self,
+        dst: &Path,
+        f: Option<&mut Self::File>,
+        mode: u32,
+        mask: u32,
+        preserve: bool,
+    ) -> io::Result<()>;
+
+    /// Set the access and modification times of a file.
+    fn set_file_handle_times(
+        &mut self,
+        f: &mut Self::File,
+        atime: Option<u64>,
+        mtime: Option<u64>,
+    ) -> io::Result<()>;
+
+    /// Return the result of unpacking `file`.
+    ///
+    /// This consumes the file handle, so no other operations can be performed
+    /// on it after this.
+    fn result(&mut self, file: Self::File) -> io::Result<Unpacked>;
+}
+
+pub(crate) struct DefaultUnpacker {}
+
+impl DefaultUnpacker {
+    pub(crate) fn new() -> DefaultUnpacker {
+        DefaultUnpacker {}
+    }
+}
+
+impl Unpacker for DefaultUnpacker {
+    type File = std::fs::File;
+
+    fn open(&mut self, dst: &Path, overwrite: bool) -> io::Result<std::fs::File> {
+        // Ensure we write a new file rather than overwriting in-place which
+        // is attackable; if an existing file is found unlink it.
+        fn open(dst: &Path) -> io::Result<std::fs::File> {
+            OpenOptions::new().write(true).create_new(true).open(dst)
+        }
+        open(dst).or_else(|err| {
+            if err.kind() != ErrorKind::AlreadyExists {
+                Err(err)
+            } else if overwrite {
+                match fs::remove_file(dst) {
+                    Ok(()) => open(dst),
+                    Err(ref e) if e.kind() == io::ErrorKind::NotFound => open(dst),
+                    Err(e) => Err(e),
+                }
+            } else {
+                Err(err)
+            }
+        })
+    }
+
+    fn copy(&mut self, src: &mut dyn Read, dst: &mut Self::File, len: u64) -> io::Result<u64> {
+        io::copy(&mut src.take(len), dst)
+    }
+
+    fn pad(&mut self, dst: &mut Self::File, amount: usize) -> io::Result<()> {
+        // TODO: checked cast to i64
+        let to = SeekFrom::Current(amount as i64);
+        let size = dst.seek(to)?;
+        dst.set_len(size)?;
+
+        Ok(())
+    }
+
+    fn set_ownerships(
+        &mut self,
+        dst: &Path,
+        file: &Option<&mut Self::File>,
+        uid: u64,
+        gid: u64,
+    ) -> io::Result<()> {
+        _set_ownerships(dst, file, uid, gid)
+    }
+
+    fn set_perms(
+        &mut self,
+        dst: &Path,
+        file: Option<&mut Self::File>,
+        mode: u32,
+        mask: u32,
+        preserve: bool,
+    ) -> io::Result<()> {
+        _set_perms(dst, file, mode, mask, preserve)
+    }
+
+    fn set_file_handle_times(
+        &mut self,
+        file: &mut Self::File,
+        atime: Option<u64>,
+        mtime: Option<u64>,
+    ) -> io::Result<()> {
+        let atime = atime.map(|a| FileTime::from_unix_time(a as i64, 0));
+        let mtime = mtime.map(|m| FileTime::from_unix_time(m as i64, 0));
+        filetime::set_file_handle_times(file, atime, mtime)
+    }
+
+    fn result(&mut self, file: Self::File) -> io::Result<Unpacked> {
+        Ok(Unpacked::File(file))
+    }
+}
+
+#[cfg(unix)]
+fn _set_ownerships(
+    dst: &Path,
+    f: &Option<&mut std::fs::File>,
+    uid: u64,
+    gid: u64,
+) -> io::Result<()> {
+    use std::convert::TryInto;
+    use std::os::unix::prelude::*;
+
+    let uid: libc::uid_t = uid
+        .try_into()
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, format!("UID {} is too large!", uid)))?;
+    let gid: libc::gid_t = gid
+        .try_into()
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, format!("GID {} is too large!", gid)))?;
+    match f {
+        Some(f) => unsafe {
+            let fd = f.as_raw_fd();
+            if libc::fchown(fd, uid, gid) != 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        },
+        None => unsafe {
+            let path = std::ffi::CString::new(dst.as_os_str().as_bytes()).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("path contains null character: {:?}", e),
+                )
+            })?;
+            if libc::lchown(path.as_ptr(), uid, gid) != 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        },
+    }
+}
+
+// Windows does not support posix numeric ownership IDs
+#[cfg(any(windows, target_arch = "wasm32"))]
+fn _set_ownerships(_: &Path, _: &Option<&mut std::fs::File>, _: u64, _: u64) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn _set_perms(
+    dst: &Path,
+    f: Option<&mut std::fs::File>,
+    mode: u32,
+    mask: u32,
+    preserve: bool,
+) -> io::Result<()> {
+    use std::os::unix::prelude::*;
+
+    let mode = if preserve { mode } else { mode & 0o777 };
+    let mode = mode & !mask;
+    let perm = fs::Permissions::from_mode(mode as _);
+    match f {
+        Some(f) => f.set_permissions(perm),
+        None => fs::set_permissions(dst, perm),
+    }
+}
+
+#[cfg(windows)]
+fn _set_perms(
+    dst: &Path,
+    f: Option<&mut std::fs::File>,
+    mode: u32,
+    _mask: u32,
+    _preserve: bool,
+) -> io::Result<()> {
+    if mode & 0o200 == 0o200 {
+        return Ok(());
+    }
+    match f {
+        Some(f) => {
+            let mut perm = f.metadata()?.permissions();
+            perm.set_readonly(true);
+            f.set_permissions(perm)
+        }
+        None => {
+            let mut perm = fs::metadata(dst)?.permissions();
+            perm.set_readonly(true);
+            fs::set_permissions(dst, perm)
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(unused_variables)]
+fn _set_perms(
+    dst: &Path,
+    f: Option<&mut std::fs::File>,
+    mode: u32,
+    mask: u32,
+    _preserve: bool,
+) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Other, "Not implemented"))
 }
