@@ -8,7 +8,7 @@ documentation = "https://docs.rs/tar"
 license = "MIT OR Apache-2.0"
 keywords = ["tar", "tarfile", "encoding"]
 readme = "README.md"
-edition = "2018"
+edition = "2021"
 exclude = ["tests/archives/*"]
 
 description = """

@@ -730,7 +730,6 @@ impl<'a> EntryFields<'a> {
             uid: u64,
             gid: u64,
         ) -> io::Result<()> {
-            use std::convert::TryInto;
             use std::os::unix::prelude::*;
 
             let uid: libc::uid_t = uid.try_into().map_err(|_| {
