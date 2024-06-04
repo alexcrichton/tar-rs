@@ -181,12 +181,18 @@ impl EntryType {
         self == &EntryType::GNULongLink
     }
 
-    /// Returns whether this type represents a GNU long name header.
+    /// Returns whether this type represents PAX global extensions, that
+    /// should affect all following entries.  For more, see [PAX].
+    ///
+    /// [PAX]: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/pax.html
     pub fn is_pax_global_extensions(&self) -> bool {
         self == &EntryType::XGlobalHeader
     }
 
-    /// Returns whether this type represents a GNU long link header.
+    /// Returns whether this type represents PAX local extensions; these
+    /// only affect the current entry.  For more, see [PAX].
+    ///
+    /// [PAX]: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/pax.html
     pub fn is_pax_local_extensions(&self) -> bool {
         self == &EntryType::XHeader
     }
