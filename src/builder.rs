@@ -365,7 +365,6 @@ impl<W: Write> Builder<W> {
     /// # Examples
     ///
     /// ```
-    /// use std::fs;
     /// use tar::Builder;
     ///
     /// let mut ar = Builder::new(Vec::new());
