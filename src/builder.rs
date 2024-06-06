@@ -360,7 +360,8 @@ impl<W: Write> Builder<W> {
     /// operation then this may corrupt the archive.
     ///
     /// Also note that after all files have been written to an archive the
-    /// `finish` function needs to be called to finish writing the archive.
+    /// `finish` or `into_inner` function needs to be called to finish
+    /// writing the archive.
     ///
     /// # Examples
     ///
@@ -370,9 +371,10 @@ impl<W: Write> Builder<W> {
     ///
     /// let mut ar = Builder::new(Vec::new());
     ///
-    /// // Use the directory at one location, but insert it into the archive
-    /// // with a different name.
+    /// // Use the directory at one location ("."), but insert it into the archive
+    /// // with a different name ("bardir").
     /// ar.append_dir_all("bardir", ".").unwrap();
+    /// ar.finish().unwrap();
     /// ```
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
     where
