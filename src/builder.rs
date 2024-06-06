@@ -40,6 +40,9 @@ impl<W: Write> Builder<W> {
 
     /// Follow symlinks, archiving the contents of the file they point to rather
     /// than adding a symlink to the archive. Defaults to true.
+    ///
+    /// When true, it exhibits the same behavior as GNU `tar` command's
+    /// `--dereference` or `-h` options <https://man7.org/linux/man-pages/man1/tar.1.html>.
     pub fn follow_symlinks(&mut self, follow: bool) {
         self.follow = follow;
     }
