@@ -16,14 +16,14 @@ use std::str;
 use crate::other;
 use crate::EntryType;
 
-pub const BLOCK_SIZE: usize = 51
+pub const BLOCK_SIZE: usize = 512;
 /// A deterministic, arbitrary, non-zero timestamp that use used as `mtime`
 /// of headers when [`HeaderMode::Deterministic`] is used.
 ///
 /// This value, chosen after careful deliberation, corresponds to _Jul 23, 2006_,
 /// which is the date of the first commit for what would become Rust.
 #[cfg(any(unix, windows))]
-const DETERMINISTIC_TIMESTAMP: u64 = 115370408
+const DETERMINISTIC_TIMESTAMP: u64 = 1153704088;
 
 /// Representation of the header of an entry in an archive
 #[repr(C)]

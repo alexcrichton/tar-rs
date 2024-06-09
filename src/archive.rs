@@ -12,7 +12,7 @@ use crate::error::TarError;
 use crate::header::{SparseEntry, BLOCK_SIZE};
 use crate::other;
 use crate::pax::*;
-use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
+use crate::{Entry, GnuExtSparseHeader, Header};
 
 /// A top-level representation of an archive file.
 ///
@@ -422,9 +422,6 @@ impl<'a> EntriesFields<'a> {
                     ));
                 }
                 pax_extensions = Some(EntryFields::from(entry).read_all()?);
-                if let Some(pax_extensions_ref) = &pax_extensions {
-                    pax_size = pax_extensions_size(pax_extensions_ref);
-                }
                 // This entry has two headers.
                 // Keep pax_extensions for the next ustar header.
                 processed -= 1;
