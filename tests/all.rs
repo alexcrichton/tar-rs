@@ -579,10 +579,21 @@ fn extracting_malicious_tarball() {
             t!(a.append(&header, io::repeat(1).take(1)));
         };
         append("/tmp/abs_evil.txt");
-        append("//tmp/abs_evil2.txt");
+        // std parse `//` as UNC path, see rust-lang/rust#100833
+        append(
+            #[cfg(not(windows))]
+            "//tmp/abs_evil2.txt",
+            #[cfg(windows)]
+            "C://tmp/abs_evil2.txt",
+        );
         append("///tmp/abs_evil3.txt");
         append("/./tmp/abs_evil4.txt");
-        append("//./tmp/abs_evil5.txt");
+        append(
+            #[cfg(not(windows))]
+            "//./tmp/abs_evil5.txt",
+            #[cfg(windows)]
+            "C://./tmp/abs_evil5.txt",
+        );
         append("///./tmp/abs_evil6.txt");
         append("/../tmp/rel_evil.txt");
         append("../rel_evil2.txt");
@@ -755,6 +766,40 @@ fn backslash_treated_well() {
     let mut ar = Archive::new(&data[..]);
     t!(ar.unpack(td.path()));
     assert!(fs::metadata(td.path().join("foo\\bar")).is_ok());
+}
+
+#[test]
+#[cfg(unix)]
+fn set_mask() {
+    use ::std::os::unix::fs::PermissionsExt;
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("foo"));
+    header.set_mode(0o777);
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("bar"));
+    header.set_mode(0o421);
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+    ar.set_mask(0o211);
+    t!(ar.unpack(td.path()));
+
+    let md = t!(fs::metadata(td.path().join("foo")));
+    assert_eq!(md.permissions().mode(), 0o100566);
+    let md = t!(fs::metadata(td.path().join("bar")));
+    assert_eq!(md.permissions().mode(), 0o100420);
 }
 
 #[cfg(unix)]
@@ -1354,10 +1399,7 @@ fn tar_directory_containing_special_files() {
     // append_path has a different logic for processing files, so we need to test it as well
     t!(ar.append_path("fifo"));
     t!(ar.append_dir_all("special", td.path()));
-    // unfortunately, block device file cannot be created by non-root users
-    // as a substitute, just test the file that exists on most Unix systems
     t!(env::set_current_dir("/dev/"));
-    t!(ar.append_path("loop0"));
     // CI systems seem to have issues with creating a chr device
     t!(ar.append_path("null"));
     t!(ar.finish());
@@ -1454,5 +1496,32 @@ fn ownership_preserving() {
         // it's not possible to unpack tar while preserving ownership
         // without root permissions
         assert!(ar.unpack(td.path()).is_err());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn pax_and_gnu_uid_gid() {
+    let tarlist = [tar!("biguid_gnu.tar"), tar!("biguid_pax.tar")];
+
+    for file in &tarlist {
+        let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+        let rdr = Cursor::new(file);
+        let mut ar = Archive::new(rdr);
+        ar.set_preserve_ownerships(true);
+
+        if unsafe { libc::getuid() } == 0 {
+            t!(ar.unpack(td.path()));
+            let meta = fs::metadata(td.path().join("test.txt")).unwrap();
+            let uid = std::os::unix::prelude::MetadataExt::uid(&meta);
+            let gid = std::os::unix::prelude::MetadataExt::gid(&meta);
+            // 4294967294 = u32::MAX - 1
+            assert_eq!(uid, 4294967294);
+            assert_eq!(gid, 4294967294);
+        } else {
+            // it's not possible to unpack tar while preserving ownership
+            // without root permissions
+            assert!(ar.unpack(td.path()).is_err());
+        }
     }
 }

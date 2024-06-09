@@ -181,6 +181,37 @@ fn directory_maintains_permissions() {
 }
 
 #[test]
+#[cfg(unix)]
+fn set_entry_mask() {
+    use ::std::os::unix::fs::PermissionsExt;
+
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    t!(header.set_path("foo"));
+    header.set_mode(0o777);
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let bytes = t!(ar.into_inner());
+    let mut ar = tar::Archive::new(&bytes[..]);
+    let td = t!(Builder::new().prefix("tar").tempdir());
+    let foo_path = td.path().join("foo");
+
+    let mut entries = t!(ar.entries());
+    let mut foo = t!(entries.next().unwrap());
+    foo.set_mask(0o027);
+    t!(foo.unpack(&foo_path));
+
+    let f = t!(File::open(foo_path));
+    let md = t!(f.metadata());
+    assert!(md.is_file());
+    assert_eq!(md.permissions().mode(), 0o100750);
+}
+
+#[test]
 #[cfg(not(windows))] // dangling symlinks have weird permissions
 fn modify_link_just_created() {
     let mut ar = tar::Builder::new(Vec::new());

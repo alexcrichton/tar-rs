@@ -204,6 +204,7 @@ fn set_metadata_deterministic() {
 
     // Would not match without `Deterministic`.
     assert_eq!(t!(one.mtime()), t!(two.mtime()));
+    assert_eq!(t!(one.mtime()), 1153704088);
     // TODO: No great way to validate that these would not be filled, but
     // check them anyway.
     assert_eq!(t!(one.uid()), t!(two.uid()));

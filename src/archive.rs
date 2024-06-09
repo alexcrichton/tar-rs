@@ -11,8 +11,8 @@ use crate::entry::{EntryFields, EntryIo};
 use crate::error::TarError;
 use crate::header::{SparseEntry, BLOCK_SIZE};
 use crate::other;
-use crate::pax::pax_extensions_size;
-use crate::{Entry, GnuExtSparseHeader, Header};
+use crate::pax::*;
+use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
 
 /// A top-level representation of an archive file.
 ///
@@ -23,6 +23,7 @@ pub struct Archive<R: ?Sized + Read> {
 
 pub struct ArchiveInner<R: ?Sized> {
     pos: Cell<u64>,
+    mask: u32,
     unpack_xattrs: bool,
     preserve_permissions: bool,
     preserve_ownerships: bool,
@@ -54,6 +55,7 @@ impl<R: Read> Archive<R> {
     pub fn new(obj: R) -> Archive<R> {
         Archive {
             inner: ArchiveInner {
+                mask: u32::MIN,
                 unpack_xattrs: false,
                 preserve_permissions: false,
                 preserve_ownerships: false,
@@ -107,6 +109,20 @@ impl<R: Read> Archive<R> {
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
         let me: &mut Archive<dyn Read> = self;
         me._unpack(dst.as_ref())
+    }
+
+    /// Set the mask of the permission bits when unpacking this entry.
+    ///
+    /// The mask will be inverted when applying against a mode, similar to how
+    /// `umask` works on Unix. In logical notation it looks like:
+    ///
+    /// ```text
+    /// new_mode = old_mode & (~mask)
+    /// ```
+    ///
+    /// The mask is 0 by default and is currently only implemented on Unix.
+    pub fn set_mask(&mut self, mask: u32) {
+        self.inner.mask = mask;
     }
 
     /// Indicate whether extended file attributes (xattrs on Unix) are preserved
@@ -261,7 +277,7 @@ impl<'a, R: Read> Iterator for Entries<'a, R> {
 impl<'a> EntriesFields<'a> {
     fn next_entry_raw(
         &mut self,
-        pax_size: Option<u64>,
+        pax_extensions: Option<&[u8]>,
     ) -> io::Result<Option<Entry<'a, io::Empty>>> {
         let mut header = Header::new_old();
         let mut header_pos = self.next;
@@ -301,6 +317,19 @@ impl<'a> EntriesFields<'a> {
             return Err(other("archive header checksum mismatch"));
         }
 
+        let mut pax_size: Option<u64> = None;
+        if let Some(pax_extensions_ref) = &pax_extensions {
+            pax_size = pax_extensions_value(pax_extensions_ref, PAX_SIZE);
+
+            if let Some(pax_uid) = pax_extensions_value(pax_extensions_ref, PAX_UID) {
+                header.set_uid(pax_uid);
+            }
+
+            if let Some(pax_gid) = pax_extensions_value(pax_extensions_ref, PAX_GID) {
+                header.set_gid(pax_gid);
+            }
+        }
+
         let file_pos = self.next;
         let mut size = header.entry_size()?;
         if size == 0 {
@@ -317,6 +346,7 @@ impl<'a> EntriesFields<'a> {
             long_pathname: None,
             long_linkname: None,
             pax_extensions: None,
+            mask: self.archive.inner.mask,
             unpack_xattrs: self.archive.inner.unpack_xattrs,
             preserve_permissions: self.archive.inner.preserve_permissions,
             preserve_mtime: self.archive.inner.preserve_mtime,
@@ -345,11 +375,10 @@ impl<'a> EntriesFields<'a> {
         let mut gnu_longname = None;
         let mut gnu_longlink = None;
         let mut pax_extensions = None;
-        let mut pax_size = None;
         let mut processed = 0;
         loop {
             processed += 1;
-            let entry = match self.next_entry_raw(pax_size)? {
+            let entry = match self.next_entry_raw(pax_extensions.as_deref())? {
                 Some(entry) => entry,
                 None if processed > 1 => {
                     return Err(other(
