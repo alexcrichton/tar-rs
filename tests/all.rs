@@ -1270,10 +1270,10 @@ fn insert_local_file_different_name() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("directory");
     t!(fs::create_dir(&path));
-    ar.append_path_with_name(&path, "archive/dir").unwrap();
+    ar.append_named_path("archive/dir", &path).unwrap();
     let path = td.path().join("file");
     t!(t!(File::create(&path)).write_all(b"test"));
-    ar.append_path_with_name(&path, "archive/dir/f").unwrap();
+    ar.append_named_path("archive/dir/f", &path).unwrap();
 
     let rd = Cursor::new(t!(ar.into_inner()));
     let mut ar = Archive::new(rd);
