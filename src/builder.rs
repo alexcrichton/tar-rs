@@ -362,6 +362,11 @@ impl<W: Write> Builder<W> {
     /// Also note that after all files have been written to an archive the
     /// `finish` function needs to be called to finish writing the archive.
     ///
+    /// # Hardlinks
+    ///
+    /// This function will never create hardlinks; to do that, you will
+    /// need to implement a custom recursive walk.
+    ///
     /// # Examples
     ///
     /// ```
