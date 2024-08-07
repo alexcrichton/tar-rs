@@ -576,6 +576,12 @@ impl<'a> EntryFields<'a> {
                             ),
                         )
                     })?;
+                // While permissions on symlinks are meaningless on most systems, the ownership
+                // of symlinks is important as it dictates the access control to the symlink
+                // itself.
+                if self.preserve_ownerships {
+                    set_ownerships(dst, &None, self.header.uid()?, self.header.gid()?)?;
+                }
                 if self.preserve_mtime {
                     if let Some(mtime) = get_mtime(&self.header) {
                         filetime::set_symlink_file_times(dst, mtime, mtime).map_err(|e| {
