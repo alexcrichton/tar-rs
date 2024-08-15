@@ -1459,6 +1459,20 @@ fn ownership_preserving() {
     t!(header.set_path("iamuid580800002"));
     header.set_cksum();
     t!(ar.append(&header, data));
+    // directory 1 with uid = 580800002, gid = 580800002
+    header.set_entry_type(EntryType::Directory);
+    header.set_gid(580800002);
+    header.set_uid(580800002);
+    t!(header.set_path("iamuid580800002dir"));
+    header.set_cksum();
+    t!(ar.append(&header, data));
+    // symlink to file 1
+    header.set_entry_type(EntryType::Symlink);
+    header.set_gid(580800002);
+    header.set_uid(580800002);
+    t!(header.set_path("iamuid580800000symlink"));
+    header.set_cksum();
+    t!(ar.append_link(&mut header, "iamuid580800000symlink", "iamuid580800000"));
     t!(ar.finish());
 
     let rdr = Cursor::new(t!(ar.into_inner()));
@@ -1467,18 +1481,24 @@ fn ownership_preserving() {
     ar.set_preserve_ownerships(true);
 
     if unsafe { libc::getuid() } == 0 {
-        assert!(ar.unpack(td.path()).is_ok());
+        ar.unpack(td.path()).unwrap();
         // validate against premade files
         // iamuid580800001 has this ownership: 580800001:580800000
-        let meta = std::fs::metadata(td.path().join("iamuid580800000")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800000")).unwrap();
         assert_eq!(meta.uid(), 580800000);
         assert_eq!(meta.gid(), 580800000);
-        let meta = std::fs::metadata(td.path().join("iamuid580800001")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800001")).unwrap();
         assert_eq!(meta.uid(), 580800001);
         assert_eq!(meta.gid(), 580800000);
-        let meta = std::fs::metadata(td.path().join("iamuid580800002")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800002")).unwrap();
         assert_eq!(meta.uid(), 580800002);
         assert_eq!(meta.gid(), 580800002);
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800002dir")).unwrap();
+        assert_eq!(meta.uid(), 580800002);
+        assert_eq!(meta.gid(), 580800002);
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800000symlink")).unwrap();
+        assert_eq!(meta.uid(), 580800002);
+        assert_eq!(meta.gid(), 580800002)
     } else {
         // it's not possible to unpack tar while preserving ownership
         // without root permissions
