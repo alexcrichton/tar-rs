@@ -24,6 +24,10 @@ use crate::EntryType;
 #[cfg(any(unix, windows))]
 const DETERMINISTIC_TIMESTAMP: u64 = 1153704088;
 
+pub(crate) const GNU_SPARSE_HEADERS_COUNT: usize = 4;
+
+pub(crate) const GNU_EXT_SPARSE_HEADERS_COUNT: usize = 21;
+
 /// Representation of the header of an entry in an archive
 #[repr(C)]
 #[allow(missing_docs)]
@@ -112,7 +116,7 @@ pub struct GnuHeader {
     pub offset: [u8; 12],
     pub longnames: [u8; 4],
     pub unused: [u8; 1],
-    pub sparse: [GnuSparseHeader; 4],
+    pub sparse: [GnuSparseHeader; GNU_SPARSE_HEADERS_COUNT],
     pub isextended: [u8; 1],
     pub realsize: [u8; 12],
     pub pad: [u8; 17],
@@ -135,7 +139,7 @@ pub struct GnuSparseHeader {
 #[repr(C)]
 #[allow(missing_docs)]
 pub struct GnuExtSparseHeader {
-    pub sparse: [GnuSparseHeader; 21],
+    pub sparse: [GnuSparseHeader; GNU_EXT_SPARSE_HEADERS_COUNT],
     pub isextended: [u8; 1],
     pub padding: [u8; 7],
 }
@@ -1262,6 +1266,11 @@ impl GnuHeader {
         })
     }
 
+    /// Encodes the `real_size` provided into this header.
+    pub fn set_real_size(&mut self, real_size: u64) {
+        num_field_wrapper_into(&mut self.realsize, real_size);
+    }
+
     /// Indicates whether this header will be followed by additional
     /// sparse-header records.
     ///
@@ -1269,6 +1278,15 @@ impl GnuHeader {
     /// interesting if a `raw` iterator is being used.
     pub fn is_extended(&self) -> bool {
         self.isextended[0] == 1
+    }
+
+    /// Sets whether this header should be followed by additional sparse-header
+    /// records.
+    ///
+    /// To append a sparse [`std::fs::File`] to an archive, prefer using the
+    /// [`crate::Builder`] instead.
+    pub fn set_is_extended(&mut self, is_extended: bool) {
+        self.isextended[0] = if is_extended { 1 } else { 0 };
     }
 
     /// Views this as a normal `Header`
@@ -1330,6 +1348,11 @@ impl GnuSparseHeader {
         })
     }
 
+    /// Encodes the `offset` provided into this header.
+    pub fn set_offset(&mut self, offset: u64) {
+        num_field_wrapper_into(&mut self.offset, offset);
+    }
+
     /// Length of the block
     ///
     /// Returns `Err` for a malformed `numbytes` field.
@@ -1340,6 +1363,11 @@ impl GnuSparseHeader {
                 format!("{} when getting length from sparse header", err),
             )
         })
+    }
+
+    /// Encodes the `length` provided into this header.
+    pub fn set_length(&mut self, length: u64) {
+        num_field_wrapper_into(&mut self.numbytes, length);
     }
 }
 
@@ -1382,9 +1410,19 @@ impl GnuExtSparseHeader {
         &self.sparse
     }
 
+    /// Same as `sparse` but mutable version.
+    pub fn sparse_mut(&mut self) -> &mut [GnuSparseHeader; 21] {
+        &mut self.sparse
+    }
+
     /// Indicates if another sparse header should be following this one.
     pub fn is_extended(&self) -> bool {
         self.isextended[0] == 1
+    }
+
+    /// Sets whether another sparse header should be following this one.
+    pub fn set_is_extended(&mut self, is_extended: bool) {
+        self.isextended[0] = if is_extended { 1 } else { 0 };
     }
 }
 

@@ -1184,6 +1184,67 @@ fn sparse_with_trailing() {
 }
 
 #[test]
+fn writing_sparse() {
+    let mut ar = Builder::new(Vec::new());
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+    let mut files = Vec::new();
+    let mut append_file = |name: &str, chunks: &[(u64, u64)]| {
+        let path = td.path().join(name);
+        let mut file = t!(File::create(&path));
+        t!(file.set_len(
+            chunks
+                .iter()
+                .map(|&(off, len)| off + len)
+                .max()
+                .unwrap_or(0),
+        ));
+        for (i, &(off, len)) in chunks.iter().enumerate() {
+            t!(file.seek(io::SeekFrom::Start(off)));
+            let mut data = vec![i as u8 + b'a'; len as usize];
+            data.first_mut().map(|x| *x = b'[');
+            data.last_mut().map(|x| *x = b']');
+            t!(file.write_all(&data));
+        }
+        t!(ar.append_path_with_name(&path, path.file_name().unwrap()));
+        files.push(path);
+    };
+
+    append_file("empty", &[]);
+    append_file("full_sparse", &[(0x20_000, 0)]);
+    append_file("_x", &[(0x20_000, 0x1_000)]);
+    append_file("x_", &[(0, 0x1_000), (0x20_000, 0)]);
+    append_file("_x_x", &[(0x20_000, 0x1_000), (0x40_000, 0x1_000)]);
+    append_file("x_x_", &[(0, 0x1_000), (0x20_000, 0x1_000), (0x40_000, 0)]);
+    append_file("uneven", &[(0x20_333, 0x555), (0x40_777, 0x999)]);
+
+    t!(ar.finish());
+
+    let data = t!(ar.into_inner());
+
+    // Without sparse support, the size of the tarball exceed 1MiB.
+    #[cfg(target_os = "linux")]
+    assert!(data.len() <= 37 * 1024); // ext4 (defaults to 4k block size)
+    #[cfg(target_os = "freebsd")]
+    assert!(data.len() <= 273 * 1024); // UFS (defaults to 32k block size, last block isn't a hole)
+
+    let mut ar = Archive::new(&data[..]);
+    let mut entries = t!(ar.entries());
+    for path in files {
+        let mut f = t!(entries.next().unwrap());
+
+        let mut s = String::new();
+        t!(f.read_to_string(&mut s));
+
+        let expected = t!(fs::read_to_string(&path));
+
+        assert!(s == expected, "path: {path:?}");
+    }
+
+    assert!(entries.next().is_none());
+}
+
+#[test]
 fn path_separators() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
