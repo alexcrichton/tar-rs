@@ -421,6 +421,43 @@ fn writing_and_extracting_directories() {
 }
 
 #[test]
+fn writing_and_extracting_directories_complex_permissions() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+    // Archive with complex permissions which would fail to unpack if one attempted to do so
+    // without reordering of entries.
+    let mut ar = Builder::new(Vec::new());
+    let tmppath = td.path().join("tmpfile");
+    t!(t!(File::create(&tmppath)).write_all(b"c"));
+
+    // Root dir with very stringent permissions
+    let data: &[u8] = &[];
+    let mut header = Header::new_gnu();
+    header.set_mode(0o555);
+    header.set_entry_type(EntryType::Directory);
+    t!(header.set_path("a"));
+    header.set_size(0);
+    header.set_cksum();
+    t!(ar.append(&header, data));
+
+    // Nested dir
+    header.set_mode(0o777);
+    header.set_entry_type(EntryType::Directory);
+    t!(header.set_path("a/b"));
+    header.set_cksum();
+    t!(ar.append(&header, data));
+
+    // Nested file.
+    t!(ar.append_file("a/c", &mut t!(File::open(&tmppath))));
+    t!(ar.finish());
+
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    ar.unpack(td.path()).unwrap();
+    check_dirtree(&td);
+}
+
+#[test]
 fn writing_directories_recursively() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
