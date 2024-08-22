@@ -377,6 +377,35 @@ impl<W: Write> Builder<W> {
     /// // with a different name.
     /// ar.append_dir_all("bardir", ".").unwrap();
     /// ```
+    ///
+    /// Use `append_dir_all` with an empty string as the first path argument to
+    /// create an archive from all files in a directory without renaming.
+    ///
+    /// ```
+    /// use std::fs;
+    /// use std::path::PathBuf;
+    /// use tar::{Archive, Builder};
+    ///
+    /// let tmpdir = tempfile::tempdir().unwrap();
+    /// let path = tmpdir.path();
+    /// fs::write(path.join("a.txt"), b"hello").unwrap();
+    /// fs::write(path.join("b.txt"), b"world").unwrap();
+    ///
+    /// // Create a tarball from the files in the directory
+    /// let mut ar = Builder::new(Vec::new());
+    /// ar.append_dir_all("", path).unwrap();
+    ///
+    /// // List files in the archive
+    /// let archive = ar.into_inner().unwrap();
+    /// let archived_files = Archive::new(archive.as_slice())
+    ///     .entries()
+    ///     .unwrap()
+    ///     .map(|entry| entry.unwrap().path().unwrap().into_owned())
+    ///     .collect::<Vec<_>>();
+    ///
+    /// assert!(archived_files.contains(&PathBuf::from("a.txt")));
+    /// assert!(archived_files.contains(&PathBuf::from("b.txt")));
+    /// ```
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
     where
         P: AsRef<Path>,
