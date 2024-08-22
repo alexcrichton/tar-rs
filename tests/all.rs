@@ -1158,6 +1158,18 @@ fn extract_sparse() {
 }
 
 #[test]
+fn large_sparse() {
+    let rdr = Cursor::new(tar!("sparse-large.tar"));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+    // Only check the header info without extracting, as the file is very large,
+    // and not all filesystems support sparse files.
+    let a = t!(entries.next().unwrap());
+    let h = a.header().as_gnu().unwrap();
+    assert_eq!(h.real_size().unwrap(), 12626929280);
+}
+
+#[test]
 fn sparse_with_trailing() {
     let rdr = Cursor::new(tar!("sparse-1.tar"));
     let mut ar = Archive::new(rdr);
