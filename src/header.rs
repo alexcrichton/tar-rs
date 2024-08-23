@@ -8,7 +8,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::iter;
-use std::iter::repeat;
+use std::iter::{once, repeat};
 use std::mem;
 use std::path::{Component, Path, PathBuf};
 use std::str;
@@ -1413,8 +1413,8 @@ fn octal_from(slice: &[u8]) -> io::Result<u64> {
 
 fn octal_into<T: fmt::Octal>(dst: &mut [u8], val: T) {
     let o = format!("{:o}", val);
-    let value = o.bytes().rev().chain(repeat(b'0'));
-    for (slot, value) in dst.iter_mut().rev().skip(1).zip(value) {
+    let value = once(b'\0').chain(o.bytes().rev().chain(repeat(b'0')));
+    for (slot, value) in dst.iter_mut().rev().zip(value) {
         *slot = value;
     }
 }
