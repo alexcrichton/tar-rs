@@ -287,14 +287,14 @@ impl Header {
     /// This is useful for initializing a `Header` from the OS's metadata from a
     /// file. By default, this will use `HeaderMode::Complete` to include all
     /// metadata.
-    pub fn set_metadata(&mut self, meta: &fs::Metadata) {
-        self.fill_from(meta, HeaderMode::Complete);
+    pub fn set_metadata(&mut self, meta: &fs::Metadata, force_mtime: Option<u64>) {
+        self.fill_from(meta, HeaderMode::Complete, force_mtime);
     }
 
     /// Sets only the metadata relevant to the given HeaderMode in this header
     /// from the metadata argument provided.
-    pub fn set_metadata_in_mode(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        self.fill_from(meta, mode);
+    pub fn set_metadata_in_mode(&mut self, meta: &fs::Metadata, mode: HeaderMode, force_mtime: Option<u64>) {
+        self.fill_from(meta, mode, force_mtime);
     }
 
     /// Returns the size of entry's data this header represents.
@@ -722,8 +722,8 @@ impl Header {
             .fold(0, |a, b| a + (*b as u32))
     }
 
-    fn fill_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        self.fill_platform_from(meta, mode);
+    fn fill_from(&mut self, meta: &fs::Metadata, mode: HeaderMode, force_mtime: Option<u64>) {
+        self.fill_platform_from(meta, mode, force_mtime);
         // Set size of directories to zero
         self.set_size(if meta.is_dir() || meta.file_type().is_symlink() {
             0
@@ -747,10 +747,15 @@ impl Header {
     }
 
     #[cfg(unix)]
-    fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
+    fn fill_platform_from(
+        &mut self,
+        meta: &fs::Metadata,
+        mode: HeaderMode,
+        force_mtime: Option<u64>,
+    ) {
         match mode {
             HeaderMode::Complete => {
-                self.set_mtime(meta.mtime() as u64);
+                self.set_mtime(force_mtime.unwrap_or(meta.mtime() as u64));
                 self.set_uid(meta.uid() as u64);
                 self.set_gid(meta.gid() as u64);
                 self.set_mode(meta.mode() as u32);

@@ -164,7 +164,7 @@ fn large_filename() {
     let filename = repeat("abcd/").take(50).collect::<String>();
     let mut header = Header::new_ustar();
     header.set_path(&filename).unwrap();
-    header.set_metadata(&t!(fs::metadata(&path)));
+    header.set_metadata(&t!(fs::metadata(&path)), None);
     header.set_cksum();
     t!(ar.append(&header, &b"test"[..]));
     let too_long = repeat("abcd").take(200).collect::<String>();
@@ -578,7 +578,7 @@ fn handling_incorrect_file_size() {
     let mut file = t!(File::open(&path));
     let mut header = Header::new_old();
     t!(header.set_path("somepath"));
-    header.set_metadata(&t!(file.metadata()));
+    header.set_metadata(&t!(file.metadata()), None);
     header.set_size(2048); // past the end of file null blocks
     header.set_cksum();
     t!(ar.append(&header, &mut file));
@@ -788,7 +788,7 @@ fn backslash_treated_well() {
     // Unpack an archive with a backslash in the name
     let mut ar = Builder::new(Vec::<u8>::new());
     let mut header = Header::new_gnu();
-    header.set_metadata(&t!(fs::metadata(td.path())));
+    header.set_metadata(&t!(fs::metadata(td.path())), None);
     header.set_size(0);
     for (a, b) in header.as_old_mut().name.iter_mut().zip(b"foo\\bar\x00") {
         *a = *b;
