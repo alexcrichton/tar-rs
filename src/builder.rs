@@ -15,6 +15,7 @@ pub struct Builder<W: Write> {
     mode: HeaderMode,
     follow: bool,
     finished: bool,
+    skip_unsupported: bool,
     obj: Option<W>,
 }
 
@@ -27,6 +28,7 @@ impl<W: Write> Builder<W> {
             mode: HeaderMode::Complete,
             follow: true,
             finished: false,
+            skip_unsupported: false,
             obj: Some(obj),
         }
     }
@@ -45,6 +47,12 @@ impl<W: Write> Builder<W> {
     /// `--dereference` or `-h` options <https://man7.org/linux/man-pages/man1/tar.1.html>.
     pub fn follow_symlinks(&mut self, follow: bool) {
         self.follow = follow;
+    }
+
+    /// Skip unsupported file types (e.g. UNIX sockets) rather than returning
+    /// with an error.
+    pub fn skip_unsupported_file_types(&mut self, skip: bool) {
+        self.skip_unsupported = skip
     }
 
     /// Gets shared reference to the underlying object.
@@ -240,7 +248,15 @@ impl<W: Write> Builder<W> {
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let mode = self.mode.clone();
         let follow = self.follow;
-        append_path_with_name(self.get_mut(), path.as_ref(), None, mode, follow)
+        let skip_unsupported = self.skip_unsupported;
+        append_path_with_name(
+            self.get_mut(),
+            path.as_ref(),
+            None,
+            mode,
+            follow,
+            skip_unsupported,
+        )
     }
 
     /// Adds a file on the local filesystem to this archive under another name.
@@ -278,12 +294,14 @@ impl<W: Write> Builder<W> {
     ) -> io::Result<()> {
         let mode = self.mode.clone();
         let follow = self.follow;
+        let skip_unsupported = self.skip_unsupported;
         append_path_with_name(
             self.get_mut(),
             path.as_ref(),
             Some(name.as_ref()),
             mode,
             follow,
+            skip_unsupported,
         )
     }
 
@@ -415,12 +433,14 @@ impl<W: Write> Builder<W> {
     {
         let mode = self.mode.clone();
         let follow = self.follow;
+        let skip_unsupported = self.skip_unsupported;
         append_dir_all(
             self.get_mut(),
             path.as_ref(),
             src_path.as_ref(),
             mode,
             follow,
+            skip_unsupported,
         )
     }
 
@@ -460,6 +480,7 @@ fn append_path_with_name(
     name: Option<&Path>,
     mode: HeaderMode,
     follow: bool,
+    _skip_unsupported: bool,
 ) -> io::Result<()> {
     let stat = if follow {
         fs::metadata(path).map_err(|err| {
@@ -494,7 +515,7 @@ fn append_path_with_name(
     } else {
         #[cfg(unix)]
         {
-            append_special(dst, path, &stat, mode)
+            append_special(dst, path, &stat, mode, _skip_unsupported)
         }
         #[cfg(not(unix))]
         {
@@ -509,6 +530,7 @@ fn append_special(
     path: &Path,
     stat: &fs::Metadata,
     mode: HeaderMode,
+    skip_unsupported: bool,
 ) -> io::Result<()> {
     use ::std::os::unix::fs::{FileTypeExt, MetadataExt};
 
@@ -516,10 +538,13 @@ fn append_special(
     let entry_type;
     if file_type.is_socket() {
         // sockets can't be archived
-        return Err(other(&format!(
-            "{}: socket can not be archived",
-            path.display()
-        )));
+        return match skip_unsupported {
+            true => Ok(()),
+            false => Err(other(&format!(
+                "{}: socket can not be archived",
+                path.display()
+            ))),
+        };
     } else if file_type.is_fifo() {
         entry_type = EntryType::Fifo;
     } else if file_type.is_char_device() {
@@ -657,6 +682,7 @@ fn append_dir_all(
     src_path: &Path,
     mode: HeaderMode,
     follow: bool,
+    _skip_unsupported: bool,
 ) -> io::Result<()> {
     let mut stack = vec![(src_path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
@@ -680,7 +706,7 @@ fn append_dir_all(
             {
                 let stat = fs::metadata(&src)?;
                 if !stat.is_file() {
-                    append_special(dst, &dest, &stat, mode)?;
+                    append_special(dst, &dest, &stat, mode, _skip_unsupported)?;
                     continue;
                 }
             }
