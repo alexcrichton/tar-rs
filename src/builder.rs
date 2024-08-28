@@ -12,10 +12,15 @@ use crate::{other, EntryType, Header};
 /// This structure has methods for building up an archive from scratch into any
 /// arbitrary writer.
 pub struct Builder<W: Write> {
-    mode: HeaderMode,
-    follow: bool,
+    options: BuilderOptions,
     finished: bool,
     obj: Option<W>,
+}
+
+#[derive(Clone, Copy)]
+struct BuilderOptions {
+    mode: HeaderMode,
+    follow: bool,
 }
 
 impl<W: Write> Builder<W> {
@@ -24,8 +29,10 @@ impl<W: Write> Builder<W> {
     /// `HeaderMode::Complete` by default.
     pub fn new(obj: W) -> Builder<W> {
         Builder {
-            mode: HeaderMode::Complete,
-            follow: true,
+            options: BuilderOptions {
+                mode: HeaderMode::Complete,
+                follow: true,
+            },
             finished: false,
             obj: Some(obj),
         }
@@ -35,7 +42,7 @@ impl<W: Write> Builder<W> {
     /// methods that implicitly read metadata for an input Path. Notably, this
     /// does _not_ apply to `append(Header)`.
     pub fn mode(&mut self, mode: HeaderMode) {
-        self.mode = mode;
+        self.options.mode = mode;
     }
 
     /// Follow symlinks, archiving the contents of the file they point to rather
@@ -44,7 +51,7 @@ impl<W: Write> Builder<W> {
     /// When true, it exhibits the same behavior as GNU `tar` command's
     /// `--dereference` or `-h` options <https://man7.org/linux/man-pages/man1/tar.1.html>.
     pub fn follow_symlinks(&mut self, follow: bool) {
-        self.follow = follow;
+        self.options.follow = follow;
     }
 
     /// Gets shared reference to the underlying object.
@@ -238,9 +245,8 @@ impl<W: Write> Builder<W> {
     /// ar.append_path("foo/bar.txt").unwrap();
     /// ```
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
-        let mode = self.mode.clone();
-        let follow = self.follow;
-        append_path_with_name(self.get_mut(), path.as_ref(), None, mode, follow)
+        let options = self.options;
+        append_path_with_name(self.get_mut(), path.as_ref(), None, options)
     }
 
     /// Adds a file on the local filesystem to this archive under another name.
@@ -276,15 +282,8 @@ impl<W: Write> Builder<W> {
         path: P,
         name: N,
     ) -> io::Result<()> {
-        let mode = self.mode.clone();
-        let follow = self.follow;
-        append_path_with_name(
-            self.get_mut(),
-            path.as_ref(),
-            Some(name.as_ref()),
-            mode,
-            follow,
-        )
+        let options = self.options;
+        append_path_with_name(self.get_mut(), path.as_ref(), Some(name.as_ref()), options)
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -314,8 +313,8 @@ impl<W: Write> Builder<W> {
     /// ar.append_file("bar/baz.txt", &mut f).unwrap();
     /// ```
     pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File) -> io::Result<()> {
-        let mode = self.mode.clone();
-        append_file(self.get_mut(), path.as_ref(), file, mode)
+        let options = self.options;
+        append_file(self.get_mut(), path.as_ref(), file, options)
     }
 
     /// Adds a directory to this archive with the given path as the name of the
@@ -351,8 +350,8 @@ impl<W: Write> Builder<W> {
         P: AsRef<Path>,
         Q: AsRef<Path>,
     {
-        let mode = self.mode.clone();
-        append_dir(self.get_mut(), path.as_ref(), src_path.as_ref(), mode)
+        let options = self.options;
+        append_dir(self.get_mut(), path.as_ref(), src_path.as_ref(), options)
     }
 
     /// Adds a directory and all of its contents (recursively) to this archive
@@ -413,15 +412,8 @@ impl<W: Write> Builder<W> {
         P: AsRef<Path>,
         Q: AsRef<Path>,
     {
-        let mode = self.mode.clone();
-        let follow = self.follow;
-        append_dir_all(
-            self.get_mut(),
-            path.as_ref(),
-            src_path.as_ref(),
-            mode,
-            follow,
-        )
+        let options = self.options;
+        append_dir_all(self.get_mut(), path.as_ref(), src_path.as_ref(), options)
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -458,10 +450,9 @@ fn append_path_with_name(
     dst: &mut dyn Write,
     path: &Path,
     name: Option<&Path>,
-    mode: HeaderMode,
-    follow: bool,
+    options: BuilderOptions,
 ) -> io::Result<()> {
-    let stat = if follow {
+    let stat = if options.follow {
         fs::metadata(path).map_err(|err| {
             io::Error::new(
                 err.kind(),
@@ -478,9 +469,16 @@ fn append_path_with_name(
     };
     let ar_name = name.unwrap_or(path);
     if stat.is_file() {
-        append_fs(dst, ar_name, &stat, &mut fs::File::open(path)?, mode, None)
+        append_fs(
+            dst,
+            ar_name,
+            &stat,
+            &mut fs::File::open(path)?,
+            options.mode,
+            None,
+        )
     } else if stat.is_dir() {
-        append_fs(dst, ar_name, &stat, &mut io::empty(), mode, None)
+        append_fs(dst, ar_name, &stat, &mut io::empty(), options.mode, None)
     } else if stat.file_type().is_symlink() {
         let link_name = fs::read_link(path)?;
         append_fs(
@@ -488,13 +486,13 @@ fn append_path_with_name(
             ar_name,
             &stat,
             &mut io::empty(),
-            mode,
+            options.mode,
             Some(&link_name),
         )
     } else {
         #[cfg(unix)]
         {
-            append_special(dst, path, &stat, mode)
+            append_special(dst, path, &stat, options.mode)
         }
         #[cfg(not(unix))]
         {
@@ -551,20 +549,20 @@ fn append_file(
     dst: &mut dyn Write,
     path: &Path,
     file: &mut fs::File,
-    mode: HeaderMode,
+    options: BuilderOptions,
 ) -> io::Result<()> {
     let stat = file.metadata()?;
-    append_fs(dst, path, &stat, file, mode, None)
+    append_fs(dst, path, &stat, file, options.mode, None)
 }
 
 fn append_dir(
     dst: &mut dyn Write,
     path: &Path,
     src_path: &Path,
-    mode: HeaderMode,
+    options: BuilderOptions,
 ) -> io::Result<()> {
     let stat = fs::metadata(src_path)?;
-    append_fs(dst, path, &stat, &mut io::empty(), mode, None)
+    append_fs(dst, path, &stat, &mut io::empty(), options.mode, None)
 }
 
 fn prepare_header(size: u64, entry_type: u8) -> Header {
@@ -655,36 +653,42 @@ fn append_dir_all(
     dst: &mut dyn Write,
     path: &Path,
     src_path: &Path,
-    mode: HeaderMode,
-    follow: bool,
+    options: BuilderOptions,
 ) -> io::Result<()> {
     let mut stack = vec![(src_path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());
         // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
-        if is_dir || (is_symlink && follow && src.is_dir()) {
+        if is_dir || (is_symlink && options.follow && src.is_dir()) {
             for entry in fs::read_dir(&src)? {
                 let entry = entry?;
                 let file_type = entry.file_type()?;
                 stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
             }
             if dest != Path::new("") {
-                append_dir(dst, &dest, &src, mode)?;
+                append_dir(dst, &dest, &src, options)?;
             }
-        } else if !follow && is_symlink {
+        } else if !options.follow && is_symlink {
             let stat = fs::symlink_metadata(&src)?;
             let link_name = fs::read_link(&src)?;
-            append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name))?;
+            append_fs(
+                dst,
+                &dest,
+                &stat,
+                &mut io::empty(),
+                options.mode,
+                Some(&link_name),
+            )?;
         } else {
             #[cfg(unix)]
             {
                 let stat = fs::metadata(&src)?;
                 if !stat.is_file() {
-                    append_special(dst, &dest, &stat, mode)?;
+                    append_special(dst, &dest, &stat, options.mode)?;
                     continue;
                 }
             }
-            append_file(dst, &dest, &mut fs::File::open(src)?, mode)?;
+            append_file(dst, &dest, &mut fs::File::open(src)?, options)?;
         }
     }
     Ok(())
