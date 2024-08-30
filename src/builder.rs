@@ -165,6 +165,47 @@ impl<W: Write> Builder<W> {
         self.append(&header, data)
     }
 
+    /// Adds a new entry to this archive and returns an [`EntryWriter`] for
+    /// adding its contents.
+    ///
+    /// This function is similar to [`Self::append_data`] but returns a
+    /// [`io::Write`] implementation instead of taking data as a parameter.
+    ///
+    /// Similar constraints around the position of the archive and completion
+    /// apply as with [`Self::append_data`]. It requires the underlying writer
+    /// to implement [`Seek`] to update the header after writing the data.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when either reading or writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Cursor;
+    /// use std::io::Write as _;
+    /// use tar::{Builder, Header};
+    ///
+    /// let mut header = Header::new_gnu();
+    ///
+    /// let mut ar = Builder::new(Cursor::new(Vec::new()));
+    /// let mut entry = ar.append_writer(&mut header, "hi.txt").unwrap();
+    /// entry.write_all(b"Hello, ").unwrap();
+    /// entry.write_all(b"world!\n").unwrap();
+    /// entry.finish().unwrap();
+    /// ```
+    pub fn append_writer<'a, P: AsRef<Path>>(
+        &'a mut self,
+        header: &'a mut Header,
+        path: P,
+    ) -> io::Result<EntryWriter<'a>>
+    where
+        W: Seek,
+    {
+        EntryWriter::start(self.get_mut(), header, path.as_ref())
+    }
+
     /// Adds a new link (symbolic or hard) entry to this archive with the specified path and target.
     ///
     /// This function is similar to [`Self::append_data`] which supports long filenames,
@@ -437,6 +478,92 @@ impl<W: Write> Builder<W> {
         }
         self.finished = true;
         self.get_mut().write_all(&[0; 1024])
+    }
+}
+
+trait SeekWrite: Write + Seek {
+    fn as_write(&mut self) -> &mut dyn Write;
+}
+
+impl<T: Write + Seek> SeekWrite for T {
+    fn as_write(&mut self) -> &mut dyn Write {
+        self
+    }
+}
+
+/// A writer for a single entry in a tar archive.
+///
+/// This struct is returned by [`Builder::append_writer`] and provides a
+/// [`Write`] implementation for adding content to an archive entry.
+///
+/// After writing all data to the entry, it must be finalized either by
+/// explicitly calling [`EntryWriter::finish`] or by letting it drop.
+pub struct EntryWriter<'a> {
+    obj: &'a mut dyn SeekWrite,
+    header: &'a mut Header,
+    written: u64,
+}
+
+impl EntryWriter<'_> {
+    fn start<'a>(
+        obj: &'a mut dyn SeekWrite,
+        header: &'a mut Header,
+        path: &Path,
+    ) -> io::Result<EntryWriter<'a>> {
+        prepare_header_path(obj.as_write(), header, path)?;
+
+        // Reserve space for header, will be overwritten once data is written.
+        obj.write_all([0u8; 512].as_ref())?;
+
+        Ok(EntryWriter {
+            obj,
+            header,
+            written: 0,
+        })
+    }
+
+    /// Finish writing the current entry in the archive.
+    pub fn finish(self) -> io::Result<()> {
+        let mut this = std::mem::ManuallyDrop::new(self);
+        this.do_finish()
+    }
+
+    fn do_finish(&mut self) -> io::Result<()> {
+        // Pad with zeros if necessary.
+        let buf = [0u8; 512];
+        let remaining = u64::wrapping_sub(512, self.written) % 512;
+        self.obj.write_all(&buf[..remaining as usize])?;
+        let written = (self.written + remaining) as i64;
+
+        // Seek back to the header position.
+        self.obj.seek(io::SeekFrom::Current(-written - 512))?;
+
+        self.header.set_size(self.written);
+        self.header.set_cksum();
+        self.obj.write_all(self.header.as_bytes())?;
+
+        // Seek forward to restore the position.
+        self.obj.seek(io::SeekFrom::Current(written))?;
+
+        Ok(())
+    }
+}
+
+impl Write for EntryWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let len = self.obj.write(buf)?;
+        self.written += len as u64;
+        Ok(len)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.obj.flush()
+    }
+}
+
+impl Drop for EntryWriter<'_> {
+    fn drop(&mut self) {
+        let _ = self.do_finish();
     }
 }
 
