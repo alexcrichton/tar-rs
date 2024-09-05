@@ -30,6 +30,7 @@ pub use crate::entry_type::EntryType;
 pub use crate::header::GnuExtSparseHeader;
 pub use crate::header::{GnuHeader, GnuSparseHeader, Header, HeaderMode, OldHeader, UstarHeader};
 pub use crate::pax::{PaxExtension, PaxExtensions};
+pub use crate::streamer::Streamer;
 
 mod archive;
 mod builder;
@@ -38,6 +39,7 @@ mod entry_type;
 mod error;
 mod header;
 mod pax;
+mod streamer;
 
 fn other(msg: &str) -> Error {
     Error::new(ErrorKind::Other, msg)
