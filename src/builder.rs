@@ -535,11 +535,7 @@ fn append_special(
     prepare_header_path(dst, &mut header, path)?;
 
     header.set_entry_type(entry_type);
-    let dev_id = stat.rdev();
-    let dev_major = ((dev_id >> 32) & 0xffff_f000) | ((dev_id >> 8) & 0x0000_0fff);
-    let dev_minor = ((dev_id >> 12) & 0xffff_ff00) | ((dev_id) & 0x0000_00ff);
-    header.set_device_major(dev_major as u32)?;
-    header.set_device_minor(dev_minor as u32)?;
+    header.set_rdev(stat.rdev())?;
 
     header.set_cksum();
     dst.write_all(header.as_bytes())?;

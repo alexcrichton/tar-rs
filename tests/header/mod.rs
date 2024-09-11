@@ -100,6 +100,18 @@ fn dev_major_minor() {
     assert_eq!(t!(h.device_major()), Some(1));
     assert_eq!(t!(h.device_minor()), Some(2));
 
+    // Verify this is idempotent
+    let onetwo_rdev = libc::makedev(1, 2);
+    t!(h.set_rdev(onetwo_rdev));
+    assert_eq!(t!(h.device_major()), Some(1));
+    assert_eq!(t!(h.device_minor()), Some(2));
+
+    // And verify that changing the device works
+    let nvme_rdev = libc::makedev(0x88, 0x6);
+    t!(h.set_rdev(nvme_rdev));
+    assert_eq!(t!(h.device_major()), Some(0x88));
+    assert_eq!(t!(h.device_minor()), Some(0x6));
+
     h = Header::new_ustar();
     t!(h.set_device_major(1));
     t!(h.set_device_minor(2));
