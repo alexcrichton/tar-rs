@@ -1044,6 +1044,45 @@ fn linkname_literal() {
 }
 
 #[test]
+fn append_writer() {
+    let mut b = Builder::new(Cursor::new(Vec::new()));
+
+    let mut h = Header::new_gnu();
+    h.set_uid(42);
+    let mut writer = t!(b.append_writer(&mut h, "file1"));
+    t!(writer.write_all(b"foo"));
+    t!(writer.write_all(b"barbaz"));
+    t!(writer.finish());
+
+    let mut h = Header::new_gnu();
+    h.set_uid(43);
+    let long_path: PathBuf = repeat("abcd").take(50).collect();
+    let mut writer = t!(b.append_writer(&mut h, &long_path));
+    let long_data = repeat(b'x').take(513).collect::<Vec<u8>>();
+    t!(writer.write_all(&long_data));
+    t!(writer.finish());
+
+    let contents = t!(b.into_inner()).into_inner();
+    let mut ar = Archive::new(&contents[..]);
+    let mut entries = t!(ar.entries());
+
+    let e = &mut t!(entries.next().unwrap());
+    assert_eq!(e.header().uid().unwrap(), 42);
+    assert_eq!(&*e.path_bytes(), b"file1");
+    let mut r = Vec::new();
+    t!(e.read_to_end(&mut r));
+    assert_eq!(&r[..], b"foobarbaz");
+
+    let e = &mut t!(entries.next().unwrap());
+    assert_eq!(e.header().uid().unwrap(), 43);
+    assert_eq!(t!(e.path()), long_path.as_path());
+    let mut r = Vec::new();
+    t!(e.read_to_end(&mut r));
+    assert_eq!(r.len(), 513);
+    assert!(r.iter().all(|b| *b == b'x'));
+}
+
+#[test]
 fn encoded_long_name_has_trailing_nul() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("foo");
