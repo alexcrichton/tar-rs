@@ -530,7 +530,7 @@ impl EntryWriter<'_> {
     /// Finish writing the current entry in the archive.
     pub fn finish(self) -> io::Result<()> {
         // NOTE: This is an optimization for "fallible destructuring".
-        // we want finish() to return an error, but we also need to invoke
+        // We want finish() to return an error, but we also need to invoke
         // cleanup in our Drop handler, which will run unconditionally
         // and try to do the same work.
         // By using ManuallyDrop, we suppress that drop. However, this would
