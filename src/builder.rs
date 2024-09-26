@@ -503,7 +503,7 @@ impl<T: Write + Seek> SeekWrite for T {
 /// explicitly calling [`EntryWriter::finish`] or by letting it drop.
 pub struct EntryWriter<'a> {
     // NOTE: Do not add any fields here which require Drop!
-    // See the comment below in do_finish().
+    // See the comment below in finish().
     obj: &'a mut dyn SeekWrite,
     header: &'a mut Header,
     written: u64,
