@@ -502,6 +502,8 @@ impl<T: Write + Seek> SeekWrite for T {
 /// After writing all data to the entry, it must be finalized either by
 /// explicitly calling [`EntryWriter::finish`] or by letting it drop.
 pub struct EntryWriter<'a> {
+    // NOTE: Do not add any fields here which require Drop!
+    // See the comment below in do_finish().
     obj: &'a mut dyn SeekWrite,
     header: &'a mut Header,
     written: u64,
@@ -527,6 +529,15 @@ impl EntryWriter<'_> {
 
     /// Finish writing the current entry in the archive.
     pub fn finish(self) -> io::Result<()> {
+        // NOTE: This is an optimization for "fallible destructuring".
+        // we want finish() to return an error, but we also need to invoke
+        // cleanup in our Drop handler, which will run unconditionally
+        // and try to do the same work.
+        // By using ManuallyDrop, we suppress that drop. However, this would
+        // be a memory leak if we ever had any struct members which required
+        // Drop - which we don't right now.
+        // But if we ever gain one, we will need to change to use e.g. Option<>
+        // around some of the fields or have a `bool finished` etc.
         let mut this = std::mem::ManuallyDrop::new(self);
         this.do_finish()
     }
