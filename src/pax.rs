@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use std::io;
+use std::io::Write;
 use std::slice;
 use std::str;
 
@@ -143,5 +144,50 @@ impl<'entry> PaxExtension<'entry> {
     /// Returns the underlying raw bytes for this value of this key/value pair.
     pub fn value_bytes(&self) -> &'entry [u8] {
         self.value
+    }
+}
+
+/// Extension trait for `Builder` to append PAX extended headers.
+impl<T: Write> crate::Builder<T> {
+    /// Append PAX extended headers to the archive.
+    ///
+    /// Takes in an iterator over the list of headers to add to convert it into a header set formatted.
+    ///
+    /// Returns io::Error if an error occurs, else it returns ()
+    pub fn append_pax_extensions<'a>(
+        &mut self,
+        headers: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<(), io::Error> {
+        // Store the headers formatted before write
+        let mut data: Vec<u8> = Vec::new();
+
+        // For each key in headers, convert into a sized space and add it to data.
+        // This will then be written in the file
+        for (key, value) in headers {
+            let mut len_len = 1;
+            let mut max_len = 10;
+            let rest_len = 3 + key.len() + value.len();
+            while rest_len + len_len >= max_len {
+                len_len += 1;
+                max_len *= 10;
+            }
+            let len = rest_len + len_len;
+            write!(&mut data, "{} {}={}\n", len, key, value)?;
+        }
+
+        // Ignore the header append if it's empty.
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        // Create a header of type XHeader, set the size to the length of the
+        // data, set the entry type to XHeader, and set the checksum
+        // then append the header and the data to the archive.
+        let mut header = crate::Header::new_ustar();
+        let data_as_bytes: &[u8] = &data;
+        header.set_size(data_as_bytes.len() as u64);
+        header.set_entry_type(crate::EntryType::XHeader);
+        header.set_cksum();
+        self.append(&header, data_as_bytes)
     }
 }

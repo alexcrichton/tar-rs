@@ -6,12 +6,12 @@ extern crate xattr;
 
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::io::{self, Cursor};
+use std::io::{self, BufWriter, Cursor};
 use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
-use tar::{Archive, Builder, Entries, EntryType, Header, HeaderMode};
+use tar::{Archive, Builder, Entries, Entry, EntryType, Header, HeaderMode};
 use tempfile::{Builder as TempBuilder, TempDir};
 
 macro_rules! t {
@@ -923,6 +923,38 @@ fn pax_simple() {
     assert_eq!(second.value(), Ok("1453251915.24892486"));
     assert_eq!(third.key(), Ok("ctime"));
     assert_eq!(third.value(), Ok("1453146164.953123768"));
+}
+
+#[test]
+fn pax_simple_write() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let pax_path = td.path().join("pax.tar");
+    let file: File = t!(File::create(&pax_path));
+    let mut ar: Builder<BufWriter<File>> = Builder::new(BufWriter::new(file));
+
+    let mut pax_builder: Vec<(String, String)> = Vec::new();
+    let key: String = "arbitrary_pax_key".to_string();
+    let value: String = "arbitrary_pax_value".to_string();
+    pax_builder.push((key, value));
+
+    t!(ar.append_pax_extensions(pax_builder.into_iter()));
+    t!(ar.append_file("test2", &mut t!(File::open(&pax_path))));
+    t!(ar.finish());
+    drop(ar);
+
+    let mut archive_opened = Archive::new(t!(File::open(pax_path)));
+    let mut entries = t!(archive_opened.entries());
+    let mut f: Entry<File> = t!(entries.next().unwrap());
+    let pax_headers = t!(f.pax_extensions());
+
+    assert!(pax_headers.is_some(), "pax_headers is None");
+    let mut pax_headers = pax_headers.unwrap();
+    let pax_arbitrary = t!(pax_headers.next().unwrap());
+
+    assert_eq!(pax_arbitrary.key(), Ok("arbitrary_pax_key"));
+    assert_eq!(pax_arbitrary.value(), Ok("arbitrary_pax_value"));
+
+    assert!(entries.next().is_none());
 }
 
 #[test]
