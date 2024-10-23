@@ -932,12 +932,12 @@ fn pax_simple_write() {
     let file: File = t!(File::create(&pax_path));
     let mut ar: Builder<BufWriter<File>> = Builder::new(BufWriter::new(file));
 
-    let mut pax_builder: Vec<(String, String)> = Vec::new();
-    let key: String = "arbitrary_pax_key".to_string();
-    let value: String = "arbitrary_pax_value".to_string();
-    pax_builder.push((key, value));
+    let pax_extensions = [
+        ("arbitrary_pax_key", b"arbitrary_pax_value".as_slice()),
+        ("SCHILY.xattr.security.selinux", b"foo_t"),
+    ];
 
-    t!(ar.append_pax_extensions(pax_builder.into_iter()));
+    t!(ar.append_pax_extensions(pax_extensions));
     t!(ar.append_file("test2", &mut t!(File::open(&pax_path))));
     t!(ar.finish());
     drop(ar);
@@ -950,9 +950,11 @@ fn pax_simple_write() {
     assert!(pax_headers.is_some(), "pax_headers is None");
     let mut pax_headers = pax_headers.unwrap();
     let pax_arbitrary = t!(pax_headers.next().unwrap());
-
     assert_eq!(pax_arbitrary.key(), Ok("arbitrary_pax_key"));
     assert_eq!(pax_arbitrary.value(), Ok("arbitrary_pax_value"));
+    let xattr = t!(pax_headers.next().unwrap());
+    assert_eq!(xattr.key().unwrap(), pax_extensions[1].0);
+    assert_eq!(xattr.value_bytes(), pax_extensions[1].1);
 
     assert!(entries.next().is_none());
 }

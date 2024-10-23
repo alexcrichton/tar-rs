@@ -154,9 +154,9 @@ impl<T: Write> crate::Builder<T> {
     /// Takes in an iterator over the list of headers to add to convert it into a header set formatted.
     ///
     /// Returns io::Error if an error occurs, else it returns ()
-    pub fn append_pax_extensions<'a>(
+    pub fn append_pax_extensions<'key, 'value>(
         &mut self,
-        headers: impl IntoIterator<Item = (String, String)>,
+        headers: impl IntoIterator<Item = (&'key str, &'value [u8])>,
     ) -> Result<(), io::Error> {
         // Store the headers formatted before write
         let mut data: Vec<u8> = Vec::new();
@@ -172,7 +172,9 @@ impl<T: Write> crate::Builder<T> {
                 max_len *= 10;
             }
             let len = rest_len + len_len;
-            write!(&mut data, "{} {}={}\n", len, key, value)?;
+            write!(&mut data, "{} {}=", len, key)?;
+            data.extend_from_slice(value);
+            data.push(b'\n');
         }
 
         // Ignore the header append if it's empty.
