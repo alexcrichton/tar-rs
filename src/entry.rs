@@ -869,7 +869,7 @@ impl<'a> EntryFields<'a> {
                 .filter_map(|e| e.ok())
                 .filter_map(|e| {
                     let key = e.key_bytes();
-                    let prefix = b"SCHILY.xattr.";
+                    let prefix = crate::pax::PAX_SCHILYXATTR.as_bytes();
                     key.strip_prefix(prefix).map(|rest| (rest, e))
                 })
                 .map(|(key, e)| (OsStr::from_bytes(key), e.value_bytes()));
