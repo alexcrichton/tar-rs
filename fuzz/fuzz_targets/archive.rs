@@ -18,24 +18,29 @@ use libfuzzer_sys::fuzz_target;
 
 use std::fs::{File, OpenOptions};
 use std::io::{Cursor, Write, Read};
+use std::path::PathBuf;
 use tar::{Archive, Builder, EntryType, Header};
 use tempfile::tempdir;
 use std::convert::TryInto;
 use std::str;
 
 fuzz_target!(|data: &[u8]| {
+    let minbuf_size = 10;
+
     // Skip this iteration when data is not enough
-    if data.len() < 10 {
+    if data.len() < minbuf_size * 3 {
         return;
     }
 
     // Create temp file and dir
     let temp_dir = tempdir().unwrap();
-    let file_name = match str::from_utf8(&data[0..data.len().min(10)]) {
+    let (file_name, data) = data.split_at(minbuf_size);
+    let file_name = match str::from_utf8(file_name) {
         Ok(name) => name.to_string(),
         Err(_) => "default_file_name".to_string(),
     };
-    let dir_name = match str::from_utf8(&data[data.len().min(10)..data.len().min(20)]) {
+    let (dir_name, data) = data.split_at(minbuf_size);
+    let dir_name = match str::from_utf8(dir_name) {
         Ok(name) => name.to_string(),
         Err(_) => "default_dir_name".to_string(),
     };
@@ -111,25 +116,6 @@ fuzz_target!(|data: &[u8]| {
         let mut tar_cursor = Cursor::new(tar_data);
         let mut archive = Archive::new(&mut tar_cursor);
         let _ = archive.unpack(temp_dir.path()).ok();
-    }
-
-    // Fuzz archive and builder
-    for i in 0..3 {
-        let name_data = &data[i * 5 % data.len()..(i * 5 + 5) % data.len()];
-        let name = match str::from_utf8(name_data) {
-            Ok(n) => n.to_string(),
-            Err(_) => format!("random_name_{}", i),
-        };
-        let path = temp_dir.path().join(name);
-        if i % 2 == 0 {
-            // Create a file
-            if let Ok(mut file) = File::create(&path) {
-                let _ = file.write_all(data);
-            }
-        } else {
-            // Create a directory
-            let _ = std::fs::create_dir(&path);
-        }
     }
 
     // Fuzz unpacking
