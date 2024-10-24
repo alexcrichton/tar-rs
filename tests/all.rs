@@ -232,7 +232,7 @@ fn reading_entries() {
 fn reading_entries_with_seek() {
     let rdr = Cursor::new(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
-    reading_entries_common(t!(ar.entries_with_seek()));
+    reading_entries_common(ar.entries_with_seek().unwrap());
 }
 
 struct LoggingReader<R> {
@@ -293,10 +293,10 @@ fn check_dirtree(td: &TempDir) {
 
 #[test]
 fn extracting_directories() {
-    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
     let rdr = Cursor::new(tar!("directory.tar"));
     let mut ar = Archive::new(rdr);
-    t!(ar.unpack(td.path()));
+    ar.unpack(td.path()).unwrap();
     check_dirtree(&td);
 }
 
