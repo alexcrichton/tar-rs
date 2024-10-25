@@ -6,12 +6,12 @@ extern crate xattr;
 
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::io::{self, Cursor};
+use std::io::{self, BufWriter, Cursor};
 use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
-use tar::{Archive, Builder, Entries, EntryType, Header, HeaderMode};
+use tar::{Archive, Builder, Entries, Entry, EntryType, Header, HeaderMode};
 use tempfile::{Builder as TempBuilder, TempDir};
 
 macro_rules! t {
@@ -232,7 +232,7 @@ fn reading_entries() {
 fn reading_entries_with_seek() {
     let rdr = Cursor::new(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
-    reading_entries_common(t!(ar.entries_with_seek()));
+    reading_entries_common(ar.entries_with_seek().unwrap());
 }
 
 struct LoggingReader<R> {
@@ -293,10 +293,10 @@ fn check_dirtree(td: &TempDir) {
 
 #[test]
 fn extracting_directories() {
-    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
     let rdr = Cursor::new(tar!("directory.tar"));
     let mut ar = Archive::new(rdr);
-    t!(ar.unpack(td.path()));
+    ar.unpack(td.path()).unwrap();
     check_dirtree(&td);
 }
 
@@ -417,6 +417,43 @@ fn writing_and_extracting_directories() {
     let rdr = Cursor::new(t!(ar.into_inner()));
     let mut ar = Archive::new(rdr);
     t!(ar.unpack(td.path()));
+    check_dirtree(&td);
+}
+
+#[test]
+fn writing_and_extracting_directories_complex_permissions() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+    // Archive with complex permissions which would fail to unpack if one attempted to do so
+    // without reordering of entries.
+    let mut ar = Builder::new(Vec::new());
+    let tmppath = td.path().join("tmpfile");
+    t!(t!(File::create(&tmppath)).write_all(b"c"));
+
+    // Root dir with very stringent permissions
+    let data: &[u8] = &[];
+    let mut header = Header::new_gnu();
+    header.set_mode(0o555);
+    header.set_entry_type(EntryType::Directory);
+    t!(header.set_path("a"));
+    header.set_size(0);
+    header.set_cksum();
+    t!(ar.append(&header, data));
+
+    // Nested dir
+    header.set_mode(0o777);
+    header.set_entry_type(EntryType::Directory);
+    t!(header.set_path("a/b"));
+    header.set_cksum();
+    t!(ar.append(&header, data));
+
+    // Nested file.
+    t!(ar.append_file("a/c", &mut t!(File::open(&tmppath))));
+    t!(ar.finish());
+
+    let rdr = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rdr);
+    ar.unpack(td.path()).unwrap();
     check_dirtree(&td);
 }
 
@@ -889,6 +926,40 @@ fn pax_simple() {
 }
 
 #[test]
+fn pax_simple_write() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let pax_path = td.path().join("pax.tar");
+    let file: File = t!(File::create(&pax_path));
+    let mut ar: Builder<BufWriter<File>> = Builder::new(BufWriter::new(file));
+
+    let pax_extensions = [
+        ("arbitrary_pax_key", b"arbitrary_pax_value".as_slice()),
+        ("SCHILY.xattr.security.selinux", b"foo_t"),
+    ];
+
+    t!(ar.append_pax_extensions(pax_extensions));
+    t!(ar.append_file("test2", &mut t!(File::open(&pax_path))));
+    t!(ar.finish());
+    drop(ar);
+
+    let mut archive_opened = Archive::new(t!(File::open(pax_path)));
+    let mut entries = t!(archive_opened.entries());
+    let mut f: Entry<File> = t!(entries.next().unwrap());
+    let pax_headers = t!(f.pax_extensions());
+
+    assert!(pax_headers.is_some(), "pax_headers is None");
+    let mut pax_headers = pax_headers.unwrap();
+    let pax_arbitrary = t!(pax_headers.next().unwrap());
+    assert_eq!(pax_arbitrary.key(), Ok("arbitrary_pax_key"));
+    assert_eq!(pax_arbitrary.value(), Ok("arbitrary_pax_value"));
+    let xattr = t!(pax_headers.next().unwrap());
+    assert_eq!(xattr.key().unwrap(), pax_extensions[1].0);
+    assert_eq!(xattr.value_bytes(), pax_extensions[1].1);
+
+    assert!(entries.next().is_none());
+}
+
+#[test]
 fn pax_path() {
     let mut ar = Archive::new(tar!("pax2.tar"));
     let mut entries = t!(ar.entries());
@@ -1007,6 +1078,45 @@ fn linkname_literal() {
 }
 
 #[test]
+fn append_writer() {
+    let mut b = Builder::new(Cursor::new(Vec::new()));
+
+    let mut h = Header::new_gnu();
+    h.set_uid(42);
+    let mut writer = t!(b.append_writer(&mut h, "file1"));
+    t!(writer.write_all(b"foo"));
+    t!(writer.write_all(b"barbaz"));
+    t!(writer.finish());
+
+    let mut h = Header::new_gnu();
+    h.set_uid(43);
+    let long_path: PathBuf = repeat("abcd").take(50).collect();
+    let mut writer = t!(b.append_writer(&mut h, &long_path));
+    let long_data = repeat(b'x').take(513).collect::<Vec<u8>>();
+    t!(writer.write_all(&long_data));
+    t!(writer.finish());
+
+    let contents = t!(b.into_inner()).into_inner();
+    let mut ar = Archive::new(&contents[..]);
+    let mut entries = t!(ar.entries());
+
+    let e = &mut t!(entries.next().unwrap());
+    assert_eq!(e.header().uid().unwrap(), 42);
+    assert_eq!(&*e.path_bytes(), b"file1");
+    let mut r = Vec::new();
+    t!(e.read_to_end(&mut r));
+    assert_eq!(&r[..], b"foobarbaz");
+
+    let e = &mut t!(entries.next().unwrap());
+    assert_eq!(e.header().uid().unwrap(), 43);
+    assert_eq!(t!(e.path()), long_path.as_path());
+    let mut r = Vec::new();
+    t!(e.read_to_end(&mut r));
+    assert_eq!(r.len(), 513);
+    assert!(r.iter().all(|b| *b == b'x'));
+}
+
+#[test]
 fn encoded_long_name_has_trailing_nul() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let path = td.path().join("foo");
@@ -1121,6 +1231,18 @@ fn extract_sparse() {
 }
 
 #[test]
+fn large_sparse() {
+    let rdr = Cursor::new(tar!("sparse-large.tar"));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries());
+    // Only check the header info without extracting, as the file is very large,
+    // and not all filesystems support sparse files.
+    let a = t!(entries.next().unwrap());
+    let h = a.header().as_gnu().unwrap();
+    assert_eq!(h.real_size().unwrap(), 12626929280);
+}
+
+#[test]
 fn sparse_with_trailing() {
     let rdr = Cursor::new(tar!("sparse-1.tar"));
     let mut ar = Archive::new(rdr);
@@ -1145,6 +1267,67 @@ fn pax_sparse() {
     t!(t!(File::open(td.path().join("sparse_begin.txt"))).read_to_string(&mut s));
     assert_eq!(&s[..5], "test\n");
     assert!(s[5..].chars().all(|x| x == '\u{0}'));
+}
+
+#[test]
+fn writing_sparse() {
+    let mut ar = Builder::new(Vec::new());
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+    let mut files = Vec::new();
+    let mut append_file = |name: &str, chunks: &[(u64, u64)]| {
+        let path = td.path().join(name);
+        let mut file = t!(File::create(&path));
+        t!(file.set_len(
+            chunks
+                .iter()
+                .map(|&(off, len)| off + len)
+                .max()
+                .unwrap_or(0),
+        ));
+        for (i, &(off, len)) in chunks.iter().enumerate() {
+            t!(file.seek(io::SeekFrom::Start(off)));
+            let mut data = vec![i as u8 + b'a'; len as usize];
+            data.first_mut().map(|x| *x = b'[');
+            data.last_mut().map(|x| *x = b']');
+            t!(file.write_all(&data));
+        }
+        t!(ar.append_path_with_name(&path, path.file_name().unwrap()));
+        files.push(path);
+    };
+
+    append_file("empty", &[]);
+    append_file("full_sparse", &[(0x20_000, 0)]);
+    append_file("_x", &[(0x20_000, 0x1_000)]);
+    append_file("x_", &[(0, 0x1_000), (0x20_000, 0)]);
+    append_file("_x_x", &[(0x20_000, 0x1_000), (0x40_000, 0x1_000)]);
+    append_file("x_x_", &[(0, 0x1_000), (0x20_000, 0x1_000), (0x40_000, 0)]);
+    append_file("uneven", &[(0x20_333, 0x555), (0x40_777, 0x999)]);
+
+    t!(ar.finish());
+
+    let data = t!(ar.into_inner());
+
+    // Without sparse support, the size of the tarball exceed 1MiB.
+    #[cfg(target_os = "linux")]
+    assert!(data.len() <= 37 * 1024); // ext4 (defaults to 4k block size)
+    #[cfg(target_os = "freebsd")]
+    assert!(data.len() <= 273 * 1024); // UFS (defaults to 32k block size, last block isn't a hole)
+
+    let mut ar = Archive::new(&data[..]);
+    let mut entries = t!(ar.entries());
+    for path in files {
+        let mut f = t!(entries.next().unwrap());
+
+        let mut s = String::new();
+        t!(f.read_to_string(&mut s));
+
+        let expected = t!(fs::read_to_string(&path));
+
+        assert!(s == expected, "path: {path:?}");
+    }
+
+    assert!(entries.next().is_none());
 }
 
 #[test]
@@ -1472,6 +1655,20 @@ fn ownership_preserving() {
     t!(header.set_path("iamuid580800002"));
     header.set_cksum();
     t!(ar.append(&header, data));
+    // directory 1 with uid = 580800002, gid = 580800002
+    header.set_entry_type(EntryType::Directory);
+    header.set_gid(580800002);
+    header.set_uid(580800002);
+    t!(header.set_path("iamuid580800002dir"));
+    header.set_cksum();
+    t!(ar.append(&header, data));
+    // symlink to file 1
+    header.set_entry_type(EntryType::Symlink);
+    header.set_gid(580800002);
+    header.set_uid(580800002);
+    t!(header.set_path("iamuid580800000symlink"));
+    header.set_cksum();
+    t!(ar.append_link(&mut header, "iamuid580800000symlink", "iamuid580800000"));
     t!(ar.finish());
 
     let rdr = Cursor::new(t!(ar.into_inner()));
@@ -1480,18 +1677,24 @@ fn ownership_preserving() {
     ar.set_preserve_ownerships(true);
 
     if unsafe { libc::getuid() } == 0 {
-        assert!(ar.unpack(td.path()).is_ok());
+        ar.unpack(td.path()).unwrap();
         // validate against premade files
         // iamuid580800001 has this ownership: 580800001:580800000
-        let meta = std::fs::metadata(td.path().join("iamuid580800000")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800000")).unwrap();
         assert_eq!(meta.uid(), 580800000);
         assert_eq!(meta.gid(), 580800000);
-        let meta = std::fs::metadata(td.path().join("iamuid580800001")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800001")).unwrap();
         assert_eq!(meta.uid(), 580800001);
         assert_eq!(meta.gid(), 580800000);
-        let meta = std::fs::metadata(td.path().join("iamuid580800002")).unwrap();
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800002")).unwrap();
         assert_eq!(meta.uid(), 580800002);
         assert_eq!(meta.gid(), 580800002);
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800002dir")).unwrap();
+        assert_eq!(meta.uid(), 580800002);
+        assert_eq!(meta.gid(), 580800002);
+        let meta = std::fs::symlink_metadata(td.path().join("iamuid580800000symlink")).unwrap();
+        assert_eq!(meta.uid(), 580800002);
+        assert_eq!(meta.gid(), 580800002)
     } else {
         // it's not possible to unpack tar while preserving ownership
         // without root permissions

@@ -616,6 +616,12 @@ impl<'a> EntryFields<'a> {
                             ),
                         )
                     })?;
+                // While permissions on symlinks are meaningless on most systems, the ownership
+                // of symlinks is important as it dictates the access control to the symlink
+                // itself.
+                if self.preserve_ownerships {
+                    set_ownerships(dst, &None, self.header.uid()?, self.header.gid()?)?;
+                }
                 if self.preserve_mtime {
                     if let Some(mtime) = get_mtime(&self.header) {
                         filetime::set_symlink_file_times(dst, mtime, mtime).map_err(|e| {
@@ -903,7 +909,7 @@ impl<'a> EntryFields<'a> {
                 .filter_map(|e| e.ok())
                 .filter_map(|e| {
                     let key = e.key_bytes();
-                    let prefix = b"SCHILY.xattr.";
+                    let prefix = crate::pax::PAX_SCHILYXATTR.as_bytes();
                     key.strip_prefix(prefix).map(|rest| (rest, e))
                 })
                 .map(|(key, e)| (OsStr::from_bytes(key), e.value_bytes()));

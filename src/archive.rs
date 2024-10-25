@@ -239,6 +239,15 @@ impl Archive<dyn Read + '_> {
                 file.unpack_in(dst)?;
             }
         }
+
+        // Apply the directories.
+        //
+        // Note: the order of application is important to permissions. That is, we must traverse
+        // the filesystem graph in topological ordering or else we risk not being able to create
+        // child directories within those of more restrictive permissions. See [0] for details.
+        //
+        // [0]: <https://github.com/alexcrichton/tar-rs/issues/242>
+        directories.sort_by(|a, b| b.path_bytes().cmp(&a.path_bytes()));
         for mut dir in directories {
             dir.unpack_in(dst)?;
         }

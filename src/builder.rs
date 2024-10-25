@@ -4,7 +4,9 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::str;
 
+use crate::header::GNU_SPARSE_HEADERS_COUNT;
 use crate::header::{path2bytes, HeaderMode};
+use crate::GnuExtSparseHeader;
 use crate::{other, EntryType, Header};
 
 /// A structure for building archives
@@ -12,10 +14,16 @@ use crate::{other, EntryType, Header};
 /// This structure has methods for building up an archive from scratch into any
 /// arbitrary writer.
 pub struct Builder<W: Write> {
-    mode: HeaderMode,
-    follow: bool,
+    options: BuilderOptions,
     finished: bool,
     obj: Option<W>,
+}
+
+#[derive(Clone, Copy)]
+struct BuilderOptions {
+    mode: HeaderMode,
+    follow: bool,
+    sparse: bool,
 }
 
 impl<W: Write> Builder<W> {
@@ -24,8 +32,11 @@ impl<W: Write> Builder<W> {
     /// `HeaderMode::Complete` by default.
     pub fn new(obj: W) -> Builder<W> {
         Builder {
-            mode: HeaderMode::Complete,
-            follow: true,
+            options: BuilderOptions {
+                mode: HeaderMode::Complete,
+                follow: true,
+                sparse: true,
+            },
             finished: false,
             obj: Some(obj),
         }
@@ -35,13 +46,23 @@ impl<W: Write> Builder<W> {
     /// methods that implicitly read metadata for an input Path. Notably, this
     /// does _not_ apply to `append(Header)`.
     pub fn mode(&mut self, mode: HeaderMode) {
-        self.mode = mode;
+        self.options.mode = mode;
     }
 
     /// Follow symlinks, archiving the contents of the file they point to rather
     /// than adding a symlink to the archive. Defaults to true.
+    ///
+    /// When true, it exhibits the same behavior as GNU `tar` command's
+    /// `--dereference` or `-h` options <https://man7.org/linux/man-pages/man1/tar.1.html>.
     pub fn follow_symlinks(&mut self, follow: bool) {
-        self.follow = follow;
+        self.options.follow = follow;
+    }
+
+    /// Handle sparse files efficiently, if supported by the underlying
+    /// filesystem. When true, sparse file information is read from disk and
+    /// empty segments are omitted from the archive. Defaults to true.
+    pub fn sparse(&mut self, sparse: bool) {
+        self.options.sparse = sparse;
     }
 
     /// Gets shared reference to the underlying object.
@@ -162,6 +183,47 @@ impl<W: Write> Builder<W> {
         self.append(&header, data)
     }
 
+    /// Adds a new entry to this archive and returns an [`EntryWriter`] for
+    /// adding its contents.
+    ///
+    /// This function is similar to [`Self::append_data`] but returns a
+    /// [`io::Write`] implementation instead of taking data as a parameter.
+    ///
+    /// Similar constraints around the position of the archive and completion
+    /// apply as with [`Self::append_data`]. It requires the underlying writer
+    /// to implement [`Seek`] to update the header after writing the data.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error for any intermittent I/O error which
+    /// occurs when either reading or writing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Cursor;
+    /// use std::io::Write as _;
+    /// use tar::{Builder, Header};
+    ///
+    /// let mut header = Header::new_gnu();
+    ///
+    /// let mut ar = Builder::new(Cursor::new(Vec::new()));
+    /// let mut entry = ar.append_writer(&mut header, "hi.txt").unwrap();
+    /// entry.write_all(b"Hello, ").unwrap();
+    /// entry.write_all(b"world!\n").unwrap();
+    /// entry.finish().unwrap();
+    /// ```
+    pub fn append_writer<'a, P: AsRef<Path>>(
+        &'a mut self,
+        header: &'a mut Header,
+        path: P,
+    ) -> io::Result<EntryWriter<'a>>
+    where
+        W: Seek,
+    {
+        EntryWriter::start(self.get_mut(), header, path.as_ref())
+    }
+
     /// Adds a new link (symbolic or hard) entry to this archive with the specified path and target.
     ///
     /// This function is similar to [`Self::append_data`] which supports long filenames,
@@ -235,9 +297,8 @@ impl<W: Write> Builder<W> {
     /// ar.append_path("foo/bar.txt").unwrap();
     /// ```
     pub fn append_path<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
-        let mode = self.mode.clone();
-        let follow = self.follow;
-        append_path_with_name(self.get_mut(), path.as_ref(), None, mode, follow)
+        let options = self.options;
+        append_path_with_name(self.get_mut(), path.as_ref(), None, options)
     }
 
     /// Adds a file on the local filesystem to this archive under another name.
@@ -273,15 +334,8 @@ impl<W: Write> Builder<W> {
         path: P,
         name: N,
     ) -> io::Result<()> {
-        let mode = self.mode.clone();
-        let follow = self.follow;
-        append_path_with_name(
-            self.get_mut(),
-            path.as_ref(),
-            Some(name.as_ref()),
-            mode,
-            follow,
-        )
+        let options = self.options;
+        append_path_with_name(self.get_mut(), path.as_ref(), Some(name.as_ref()), options)
     }
 
     /// Adds a file to this archive with the given path as the name of the file
@@ -311,8 +365,8 @@ impl<W: Write> Builder<W> {
     /// ar.append_file("bar/baz.txt", &mut f).unwrap();
     /// ```
     pub fn append_file<P: AsRef<Path>>(&mut self, path: P, file: &mut fs::File) -> io::Result<()> {
-        let mode = self.mode.clone();
-        append_file(self.get_mut(), path.as_ref(), file, mode)
+        let options = self.options;
+        append_file(self.get_mut(), path.as_ref(), file, options)
     }
 
     /// Adds a directory to this archive with the given path as the name of the
@@ -348,8 +402,8 @@ impl<W: Write> Builder<W> {
         P: AsRef<Path>,
         Q: AsRef<Path>,
     {
-        let mode = self.mode.clone();
-        append_dir(self.get_mut(), path.as_ref(), src_path.as_ref(), mode)
+        let options = self.options;
+        append_dir(self.get_mut(), path.as_ref(), src_path.as_ref(), options)
     }
 
     /// Adds a directory and all of its contents (recursively) to this archive
@@ -360,7 +414,8 @@ impl<W: Write> Builder<W> {
     /// operation then this may corrupt the archive.
     ///
     /// Also note that after all files have been written to an archive the
-    /// `finish` function needs to be called to finish writing the archive.
+    /// `finish` or `into_inner` function needs to be called to finish
+    /// writing the archive.
     ///
     /// # Examples
     ///
@@ -370,24 +425,47 @@ impl<W: Write> Builder<W> {
     ///
     /// let mut ar = Builder::new(Vec::new());
     ///
-    /// // Use the directory at one location, but insert it into the archive
-    /// // with a different name.
+    /// // Use the directory at one location ("."), but insert it into the archive
+    /// // with a different name ("bardir").
     /// ar.append_dir_all("bardir", ".").unwrap();
+    /// ar.finish().unwrap();
+    /// ```
+    ///
+    /// Use `append_dir_all` with an empty string as the first path argument to
+    /// create an archive from all files in a directory without renaming.
+    ///
+    /// ```
+    /// use std::fs;
+    /// use std::path::PathBuf;
+    /// use tar::{Archive, Builder};
+    ///
+    /// let tmpdir = tempfile::tempdir().unwrap();
+    /// let path = tmpdir.path();
+    /// fs::write(path.join("a.txt"), b"hello").unwrap();
+    /// fs::write(path.join("b.txt"), b"world").unwrap();
+    ///
+    /// // Create a tarball from the files in the directory
+    /// let mut ar = Builder::new(Vec::new());
+    /// ar.append_dir_all("", path).unwrap();
+    ///
+    /// // List files in the archive
+    /// let archive = ar.into_inner().unwrap();
+    /// let archived_files = Archive::new(archive.as_slice())
+    ///     .entries()
+    ///     .unwrap()
+    ///     .map(|entry| entry.unwrap().path().unwrap().into_owned())
+    ///     .collect::<Vec<_>>();
+    ///
+    /// assert!(archived_files.contains(&PathBuf::from("a.txt")));
+    /// assert!(archived_files.contains(&PathBuf::from("b.txt")));
     /// ```
     pub fn append_dir_all<P, Q>(&mut self, path: P, src_path: Q) -> io::Result<()>
     where
         P: AsRef<Path>,
         Q: AsRef<Path>,
     {
-        let mode = self.mode.clone();
-        let follow = self.follow;
-        append_dir_all(
-            self.get_mut(),
-            path.as_ref(),
-            src_path.as_ref(),
-            mode,
-            follow,
-        )
+        let options = self.options;
+        append_dir_all(self.get_mut(), path.as_ref(), src_path.as_ref(), options)
     }
 
     /// Finish writing this archive, emitting the termination sections.
@@ -406,17 +484,116 @@ impl<W: Write> Builder<W> {
     }
 }
 
+trait SeekWrite: Write + Seek {
+    fn as_write(&mut self) -> &mut dyn Write;
+}
+
+impl<T: Write + Seek> SeekWrite for T {
+    fn as_write(&mut self) -> &mut dyn Write {
+        self
+    }
+}
+
+/// A writer for a single entry in a tar archive.
+///
+/// This struct is returned by [`Builder::append_writer`] and provides a
+/// [`Write`] implementation for adding content to an archive entry.
+///
+/// After writing all data to the entry, it must be finalized either by
+/// explicitly calling [`EntryWriter::finish`] or by letting it drop.
+pub struct EntryWriter<'a> {
+    // NOTE: Do not add any fields here which require Drop!
+    // See the comment below in finish().
+    obj: &'a mut dyn SeekWrite,
+    header: &'a mut Header,
+    written: u64,
+}
+
+impl EntryWriter<'_> {
+    fn start<'a>(
+        obj: &'a mut dyn SeekWrite,
+        header: &'a mut Header,
+        path: &Path,
+    ) -> io::Result<EntryWriter<'a>> {
+        prepare_header_path(obj.as_write(), header, path)?;
+
+        // Reserve space for header, will be overwritten once data is written.
+        obj.write_all([0u8; 512].as_ref())?;
+
+        Ok(EntryWriter {
+            obj,
+            header,
+            written: 0,
+        })
+    }
+
+    /// Finish writing the current entry in the archive.
+    pub fn finish(self) -> io::Result<()> {
+        // NOTE: This is an optimization for "fallible destructuring".
+        // We want finish() to return an error, but we also need to invoke
+        // cleanup in our Drop handler, which will run unconditionally
+        // and try to do the same work.
+        // By using ManuallyDrop, we suppress that drop. However, this would
+        // be a memory leak if we ever had any struct members which required
+        // Drop - which we don't right now.
+        // But if we ever gain one, we will need to change to use e.g. Option<>
+        // around some of the fields or have a `bool finished` etc.
+        let mut this = std::mem::ManuallyDrop::new(self);
+        this.do_finish()
+    }
+
+    fn do_finish(&mut self) -> io::Result<()> {
+        // Pad with zeros if necessary.
+        let buf = [0u8; 512];
+        let remaining = u64::wrapping_sub(512, self.written) % 512;
+        self.obj.write_all(&buf[..remaining as usize])?;
+        let written = (self.written + remaining) as i64;
+
+        // Seek back to the header position.
+        self.obj.seek(io::SeekFrom::Current(-written - 512))?;
+
+        self.header.set_size(self.written);
+        self.header.set_cksum();
+        self.obj.write_all(self.header.as_bytes())?;
+
+        // Seek forward to restore the position.
+        self.obj.seek(io::SeekFrom::Current(written))?;
+
+        Ok(())
+    }
+}
+
+impl Write for EntryWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let len = self.obj.write(buf)?;
+        self.written += len as u64;
+        Ok(len)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.obj.flush()
+    }
+}
+
+impl Drop for EntryWriter<'_> {
+    fn drop(&mut self) {
+        let _ = self.do_finish();
+    }
+}
+
 fn append(mut dst: &mut dyn Write, header: &Header, mut data: &mut dyn Read) -> io::Result<()> {
     dst.write_all(header.as_bytes())?;
     let len = io::copy(&mut data, &mut dst)?;
+    pad_zeroes(&mut dst, len)?;
+    Ok(())
+}
 
-    // Pad with zeros if necessary.
+fn pad_zeroes(dst: &mut dyn Write, len: u64) -> io::Result<()> {
     let buf = [0; 512];
     let remaining = 512 - (len % 512);
     if remaining < 512 {
         dst.write_all(&buf[..remaining as usize])?;
     }
-
     Ok(())
 }
 
@@ -424,10 +601,9 @@ fn append_path_with_name(
     dst: &mut dyn Write,
     path: &Path,
     name: Option<&Path>,
-    mode: HeaderMode,
-    follow: bool,
+    options: BuilderOptions,
 ) -> io::Result<()> {
-    let stat = if follow {
+    let stat = if options.follow {
         fs::metadata(path).map_err(|err| {
             io::Error::new(
                 err.kind(),
@@ -444,23 +620,16 @@ fn append_path_with_name(
     };
     let ar_name = name.unwrap_or(path);
     if stat.is_file() {
-        append_fs(dst, ar_name, &stat, &mut fs::File::open(path)?, mode, None)
+        append_file(dst, ar_name, &mut fs::File::open(path)?, options)
     } else if stat.is_dir() {
-        append_fs(dst, ar_name, &stat, &mut io::empty(), mode, None)
+        append_fs(dst, ar_name, &stat, options.mode, None)
     } else if stat.file_type().is_symlink() {
         let link_name = fs::read_link(path)?;
-        append_fs(
-            dst,
-            ar_name,
-            &stat,
-            &mut io::empty(),
-            mode,
-            Some(&link_name),
-        )
+        append_fs(dst, ar_name, &stat, options.mode, Some(&link_name))
     } else {
         #[cfg(unix)]
         {
-            append_special(dst, path, &stat, mode)
+            append_special(dst, path, &stat, options.mode)
         }
         #[cfg(not(unix))]
         {
@@ -517,20 +686,44 @@ fn append_file(
     dst: &mut dyn Write,
     path: &Path,
     file: &mut fs::File,
-    mode: HeaderMode,
+    options: BuilderOptions,
 ) -> io::Result<()> {
     let stat = file.metadata()?;
-    append_fs(dst, path, &stat, file, mode, None)
+    let mut header = Header::new_gnu();
+
+    prepare_header_path(dst, &mut header, path)?;
+    header.set_metadata_in_mode(&stat, options.mode);
+    let sparse_entries = if options.sparse {
+        prepare_header_sparse(file, &stat, &mut header)?
+    } else {
+        None
+    };
+    header.set_cksum();
+    dst.write_all(header.as_bytes())?;
+
+    if let Some(sparse_entries) = sparse_entries {
+        append_extended_sparse_headers(dst, &sparse_entries)?;
+        for entry in sparse_entries.entries {
+            file.seek(io::SeekFrom::Start(entry.offset))?;
+            io::copy(&mut file.take(entry.num_bytes), dst)?;
+        }
+        pad_zeroes(dst, sparse_entries.on_disk_size)?;
+    } else {
+        let len = io::copy(file, dst)?;
+        pad_zeroes(dst, len)?;
+    }
+
+    Ok(())
 }
 
 fn append_dir(
     dst: &mut dyn Write,
     path: &Path,
     src_path: &Path,
-    mode: HeaderMode,
+    options: BuilderOptions,
 ) -> io::Result<()> {
     let stat = fs::metadata(src_path)?;
-    append_fs(dst, path, &stat, &mut io::empty(), mode, None)
+    append_fs(dst, path, &stat, options.mode, None)
 }
 
 fn prepare_header(size: u64, entry_type: u8) -> Header {
@@ -598,11 +791,67 @@ fn prepare_header_link(
     Ok(())
 }
 
+fn prepare_header_sparse(
+    file: &mut fs::File,
+    stat: &fs::Metadata,
+    header: &mut Header,
+) -> io::Result<Option<SparseEntries>> {
+    let entries = match find_sparse_entries(file, stat)? {
+        Some(entries) => entries,
+        _ => return Ok(None),
+    };
+
+    header.set_entry_type(EntryType::GNUSparse);
+    header.set_size(entries.on_disk_size);
+
+    // Write the first 4 (GNU_SPARSE_HEADERS_COUNT) entries to the given header.
+    // The remaining entries will be written as subsequent extended headers. See
+    // https://www.gnu.org/software/tar/manual/html_section/Sparse-Formats.html#Old-GNU-Format
+    // for details on the format.
+    let gnu_header = &mut header.as_gnu_mut().unwrap();
+    gnu_header.set_real_size(entries.size());
+
+    for (entry, header_entry) in std::iter::zip(&entries.entries, &mut gnu_header.sparse) {
+        header_entry.set_offset(entry.offset);
+        header_entry.set_length(entry.num_bytes);
+    }
+    gnu_header.set_is_extended(entries.entries.len() > gnu_header.sparse.len());
+
+    Ok(Some(entries))
+}
+
+/// Write extra sparse headers into `dst` for those entries that did not fit in the main header.
+fn append_extended_sparse_headers(dst: &mut dyn Write, entries: &SparseEntries) -> io::Result<()> {
+    // The first `GNU_SPARSE_HEADERS_COUNT` entries are written to the main header, so skip them.
+    let mut it = entries
+        .entries
+        .iter()
+        .skip(GNU_SPARSE_HEADERS_COUNT)
+        .peekable();
+
+    // Each GnuExtSparseHeader can hold up to fixed number of sparse entries (21).
+    // So we pack entries into multiple headers if necessary.
+    while it.peek().is_some() {
+        let mut ext_header = GnuExtSparseHeader::new();
+        for header_entry in ext_header.sparse.iter_mut() {
+            if let Some(entry) = it.next() {
+                header_entry.set_offset(entry.offset);
+                header_entry.set_length(entry.num_bytes);
+            } else {
+                break;
+            }
+        }
+        ext_header.set_is_extended(it.peek().is_some());
+        dst.write_all(ext_header.as_bytes())?;
+    }
+
+    Ok(())
+}
+
 fn append_fs(
     dst: &mut dyn Write,
     path: &Path,
     meta: &fs::Metadata,
-    read: &mut dyn Read,
     mode: HeaderMode,
     link_name: Option<&Path>,
 ) -> io::Result<()> {
@@ -614,50 +863,455 @@ fn append_fs(
         prepare_header_link(dst, &mut header, link_name)?;
     }
     header.set_cksum();
-    append(dst, &header, read)
+    dst.write_all(header.as_bytes())
 }
 
 fn append_dir_all(
     dst: &mut dyn Write,
     path: &Path,
     src_path: &Path,
-    mode: HeaderMode,
-    follow: bool,
+    options: BuilderOptions,
 ) -> io::Result<()> {
     let mut stack = vec![(src_path.to_path_buf(), true, false)];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
         let dest = path.join(src.strip_prefix(&src_path).unwrap());
         // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
-        if is_dir || (is_symlink && follow && src.is_dir()) {
+        if is_dir || (is_symlink && options.follow && src.is_dir()) {
             for entry in fs::read_dir(&src)? {
                 let entry = entry?;
                 let file_type = entry.file_type()?;
                 stack.push((entry.path(), file_type.is_dir(), file_type.is_symlink()));
             }
             if dest != Path::new("") {
-                append_dir(dst, &dest, &src, mode)?;
+                append_dir(dst, &dest, &src, options)?;
             }
-        } else if !follow && is_symlink {
+        } else if !options.follow && is_symlink {
             let stat = fs::symlink_metadata(&src)?;
             let link_name = fs::read_link(&src)?;
-            append_fs(dst, &dest, &stat, &mut io::empty(), mode, Some(&link_name))?;
+            append_fs(dst, &dest, &stat, options.mode, Some(&link_name))?;
         } else {
             #[cfg(unix)]
             {
                 let stat = fs::metadata(&src)?;
                 if !stat.is_file() {
-                    append_special(dst, &dest, &stat, mode)?;
+                    append_special(dst, &dest, &stat, options.mode)?;
                     continue;
                 }
             }
-            append_file(dst, &dest, &mut fs::File::open(src)?, mode)?;
+            append_file(dst, &dest, &mut fs::File::open(src)?, options)?;
         }
     }
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SparseEntries {
+    entries: Vec<SparseEntry>,
+    on_disk_size: u64,
+}
+
+impl SparseEntries {
+    fn size(&self) -> u64 {
+        self.entries.last().map_or(0, |e| e.offset + e.num_bytes)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+struct SparseEntry {
+    offset: u64,
+    num_bytes: u64,
+}
+
+/// Find sparse entries in a file. Returns:
+/// * `Ok(Some(_))` if the file is sparse.
+/// * `Ok(None)` if the file is not sparse, or if the file system does not
+///    support sparse files.
+/// * `Err(_)` if an error occurred. The lack of support for sparse files is not
+///    considered an error. It might return an error if the file is modified
+///    while reading.
+fn find_sparse_entries(
+    file: &mut fs::File,
+    stat: &fs::Metadata,
+) -> io::Result<Option<SparseEntries>> {
+    #[cfg(not(any(target_os = "android", target_os = "freebsd", target_os = "linux")))]
+    {
+        let _ = file;
+        let _ = stat;
+        Ok(None)
+    }
+
+    #[cfg(any(target_os = "android", target_os = "freebsd", target_os = "linux"))]
+    find_sparse_entries_seek(file, stat)
+}
+
+/// Implementation of `find_sparse_entries` using `SEEK_HOLE` and `SEEK_DATA`.
+#[cfg(any(target_os = "android", target_os = "freebsd", target_os = "linux"))]
+fn find_sparse_entries_seek(
+    file: &mut fs::File,
+    stat: &fs::Metadata,
+) -> io::Result<Option<SparseEntries>> {
+    use std::os::unix::fs::MetadataExt as _;
+    use std::os::unix::io::AsRawFd as _;
+
+    fn lseek(file: &fs::File, offset: i64, whence: libc::c_int) -> Result<i64, i32> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let lseek = libc::lseek64;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let lseek = libc::lseek;
+
+        match unsafe { lseek(file.as_raw_fd(), offset, whence) } {
+            -1 => Err(io::Error::last_os_error().raw_os_error().unwrap()),
+            off => Ok(off),
+        }
+    }
+
+    if stat.blocks() == 0 {
+        return Ok(if stat.size() == 0 {
+            // Empty file.
+            None
+        } else {
+            // Fully sparse file.
+            Some(SparseEntries {
+                entries: vec![SparseEntry {
+                    offset: stat.size(),
+                    num_bytes: 0,
+                }],
+                on_disk_size: 0,
+            })
+        });
+    }
+
+    // On most Unices, we need to read `_PC_MIN_HOLE_SIZE` to see if the file
+    // system supports `SEEK_HOLE`.
+    // FreeBSD: https://man.freebsd.org/cgi/man.cgi?query=lseek&sektion=2&manpath=FreeBSD+14.1-STABLE
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    if unsafe { libc::fpathconf(file.as_raw_fd(), libc::_PC_MIN_HOLE_SIZE) } == -1 {
+        return Ok(None);
+    }
+
+    // Linux is the only UNIX-like without support for `_PC_MIN_HOLE_SIZE`, so
+    // instead we try to call `lseek` and see if it fails.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    match lseek(file, 0, libc::SEEK_HOLE) {
+        Ok(_) => (),
+        Err(libc::ENXIO) => {
+            // The file is empty. Treat it as non-sparse.
+            return Ok(None);
+        }
+        Err(_) => return Ok(None),
+    }
+
+    let mut entries = Vec::new();
+    let mut on_disk_size = 0;
+    let mut off_s = 0;
+    loop {
+        //  off_s=0      │     off_s               │ off_s
+        //    ↓          │       ↓                 │   ↓
+        //    | DATA |…  │  ……………| HOLE | DATA |…  │  …|×EOF×
+        //    ↑          │       ↑      ↑          │
+        //   (a)         │  (b) (c)    (d)         │     (e)
+        match lseek(file, off_s, libc::SEEK_DATA) {
+            Ok(0) if off_s == 0 => (), // (a) The file starts with data.
+            Ok(off) if off < off_s => {
+                // (b) Unlikely.
+                return Err(std::io::Error::new(
+                    io::ErrorKind::Other,
+                    "lseek(SEEK_DATA) went backwards",
+                ));
+            }
+            Ok(off) if off == off_s => {
+                // (c) The data at the same offset as the hole.
+                return Err(std::io::Error::new(
+                    io::ErrorKind::Other,
+                    "lseek(SEEK_DATA) did not advance. \
+                     Did the file change while appending?",
+                ));
+            }
+            Ok(off) => off_s = off,    // (d) Jump to the next hole.
+            Err(libc::ENXIO) => break, // (e) Reached the end of the file.
+            Err(errno) => return Err(io::Error::from_raw_os_error(errno)),
+        };
+
+        // off_s=0          │     off_s               │    off_s
+        //   ↓              │       ↓                 │      ↓
+        //   | DATA |×EOF×  │  ……………| DATA | HOLE |…  │  …|×EOF×
+        //          ↑       │       ↑      ↑          │
+        //         (a)      │  (b) (c)    (d)         │     (e)
+        match lseek(file, off_s, libc::SEEK_HOLE) {
+            Ok(off_e) if off_s == 0 && (off_e as u64) == stat.size() => {
+                // (a) The file is not sparse.
+                file.seek(io::SeekFrom::Start(0))?;
+                return Ok(None);
+            }
+            Ok(off_e) if off_e < off_s => {
+                // (b) Unlikely.
+                return Err(std::io::Error::new(
+                    io::ErrorKind::Other,
+                    "lseek(SEEK_HOLE) went backwards",
+                ));
+            }
+            Ok(off_e) if off_e == off_s => {
+                // (c) The hole at the same offset as the data.
+                return Err(std::io::Error::new(
+                    io::ErrorKind::Other,
+                    "lseek(SEEK_HOLE) did not advance. \
+                     Did the file change while appending?",
+                ));
+            }
+            Ok(off_e) => {
+                // (d) Found a hole or reached the end of the file (implicit
+                // zero-length hole).
+                entries.push(SparseEntry {
+                    offset: off_s as u64,
+                    num_bytes: off_e as u64 - off_s as u64,
+                });
+                on_disk_size += off_e as u64 - off_s as u64;
+                off_s = off_e;
+            }
+            Err(libc::ENXIO) => {
+                // (e) off_s was already beyond the end of the file.
+                return Err(std::io::Error::new(
+                    io::ErrorKind::Other,
+                    "lseek(SEEK_HOLE) returned ENXIO. \
+                     Did the file change while appending?",
+                ));
+            }
+            Err(errno) => return Err(io::Error::from_raw_os_error(errno)),
+        };
+    }
+
+    if off_s as u64 > stat.size() {
+        return Err(std::io::Error::new(
+            io::ErrorKind::Other,
+            "lseek(SEEK_DATA) went beyond the end of the file. \
+             Did the file change while appending?",
+        ));
+    }
+
+    // Add a final zero-length entry. It is required if the file ends with a
+    // hole, and redundant otherwise. However, we add it unconditionally to
+    // mimic GNU tar behavior.
+    entries.push(SparseEntry {
+        offset: stat.size(),
+        num_bytes: 0,
+    });
+
+    file.seek(io::SeekFrom::Start(0))?;
+
+    Ok(Some(SparseEntries {
+        entries,
+        on_disk_size,
+    }))
+}
+
 impl<W: Write> Drop for Builder<W> {
     fn drop(&mut self) {
         let _ = self.finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Should be multiple of 4KiB on ext4, multiple of 32KiB on FreeBSD/UFS.
+    const SPARSE_BLOCK_SIZE: u64 = 32768;
+
+    #[test]
+    fn test_find_sparse_entries() {
+        let cases: &[(&str, &[SparseEntry])] = &[
+            ("|", &[]),
+            (
+                "|    |    |    |    |",
+                &[SparseEntry {
+                    offset: 4 * SPARSE_BLOCK_SIZE,
+                    num_bytes: 0,
+                }],
+            ),
+            (
+                "|####|####|####|####|",
+                &[
+                    SparseEntry {
+                        offset: 0,
+                        num_bytes: 4 * SPARSE_BLOCK_SIZE,
+                    },
+                    SparseEntry {
+                        offset: 4 * SPARSE_BLOCK_SIZE,
+                        num_bytes: 0,
+                    },
+                ],
+            ),
+            (
+                "|####|####|    |    |",
+                &[
+                    SparseEntry {
+                        offset: 0,
+                        num_bytes: 2 * SPARSE_BLOCK_SIZE,
+                    },
+                    SparseEntry {
+                        offset: 4 * SPARSE_BLOCK_SIZE,
+                        num_bytes: 0,
+                    },
+                ],
+            ),
+            (
+                "|    |    |####|####|",
+                &[
+                    SparseEntry {
+                        offset: 2 * SPARSE_BLOCK_SIZE,
+                        num_bytes: 2 * SPARSE_BLOCK_SIZE,
+                    },
+                    SparseEntry {
+                        offset: 4 * SPARSE_BLOCK_SIZE,
+                        num_bytes: 0,
+                    },
+                ],
+            ),
+            (
+                "|####|    |####|    |",
+                &[
+                    SparseEntry {
+                        offset: 0,
+                        num_bytes: SPARSE_BLOCK_SIZE,
+                    },
+                    SparseEntry {
+                        offset: 2 * SPARSE_BLOCK_SIZE,
+                        num_bytes: SPARSE_BLOCK_SIZE,
+                    },
+                    SparseEntry {
+                        offset: 4 * SPARSE_BLOCK_SIZE,
+                        num_bytes: 0,
+                    },
+                ],
+            ),
+            (
+                "|####|    |    |####|",
+                &[
+                    SparseEntry {
+                        offset: 0,
+                        num_bytes: SPARSE_BLOCK_SIZE,
+                    },
+                    SparseEntry {
+                        offset: 3 * SPARSE_BLOCK_SIZE,
+                        num_bytes: SPARSE_BLOCK_SIZE,
+                    },
+                    SparseEntry {
+                        offset: 4 * SPARSE_BLOCK_SIZE,
+                        num_bytes: 0,
+                    },
+                ],
+            ),
+            (
+                "|    |####|####|    |",
+                &[
+                    SparseEntry {
+                        offset: 1 * SPARSE_BLOCK_SIZE,
+                        num_bytes: 2 * SPARSE_BLOCK_SIZE,
+                    },
+                    SparseEntry {
+                        offset: 4 * SPARSE_BLOCK_SIZE,
+                        num_bytes: 0,
+                    },
+                ],
+            ),
+        ];
+
+        let mut file = tempfile::tempfile().unwrap();
+
+        for &(description, map) in cases {
+            file.set_len(0).unwrap();
+            file.set_len(map.last().map_or(0, |e| e.offset + e.num_bytes))
+                .unwrap();
+
+            for e in map {
+                file.seek(io::SeekFrom::Start(e.offset)).unwrap();
+                for _ in 0..e.num_bytes / SPARSE_BLOCK_SIZE {
+                    file.write_all(&[0xFF; SPARSE_BLOCK_SIZE as usize]).unwrap();
+                }
+            }
+
+            let expected = match map {
+                // Empty file.
+                &[] => None,
+
+                // 100% dense.
+                &[SparseEntry {
+                    offset: 0,
+                    num_bytes: x1,
+                }, SparseEntry {
+                    offset: x2,
+                    num_bytes: 0,
+                }] if x1 == x2 => None,
+
+                // Sparse.
+                map => Some(SparseEntries {
+                    entries: map.to_vec(),
+                    on_disk_size: map.iter().map(|e| e.num_bytes).sum(),
+                }),
+            };
+
+            let stat = file.metadata().unwrap();
+            let reported = find_sparse_entries(&mut file, &stat).unwrap();
+
+            // Loose check: we did not miss any data blocks.
+            if let Err(e) = loose_check_sparse_entries(reported.as_ref(), expected.as_ref()) {
+                panic!(
+                    "Case: {description}\n\
+                     Reported: {reported:?}\n\
+                     Expected: {expected:?}\n\
+                     Error: {e}",
+                );
+            }
+
+            // On Linux, always do a strict check. Skip on FreeBSD, as on UFS
+            // the last block is always dense, even if it's zero-filled.
+            #[cfg(any(target_os = "android", target_os = "linux"))]
+            assert_eq!(reported, expected, "Case: {description}");
+        }
+    }
+
+    fn loose_check_sparse_entries(
+        reported: Option<&SparseEntries>,
+        expected: Option<&SparseEntries>,
+    ) -> Result<(), &'static str> {
+        let reported = match reported {
+            Some(entries) => entries, // Reported as sparse.
+            // It's not an error to report a sparse file as non-sparse.
+            None => return Ok(()),
+        };
+        let expected = match expected {
+            Some(entries) => entries,
+            None => return Err("Expected dense file, but reported as sparse"),
+        };
+
+        // Check that we didn't miss any data blocks. However, reporting some
+        // holes as data is not an error during the loose check.
+        if expected.entries.iter().any(|e| {
+            !reported
+                .entries
+                .iter()
+                .any(|r| e.offset >= r.offset && e.offset + e.num_bytes <= r.offset + r.num_bytes)
+        }) {
+            return Err("Reported is not a superset of expected");
+        }
+
+        if reported.entries.last() != expected.entries.last() {
+            return Err("Last zero-length entry is not as expected");
+        }
+
+        // Check invariants of SparseEntries.
+        let mut prev_end = None;
+        for e in &reported.entries[..reported.entries.len()] {
+            if prev_end.map_or(false, |p| e.offset < p) {
+                return Err("Overlapping or unsorted entries");
+            }
+            prev_end = Some(e.offset + e.num_bytes);
+        }
+
+        if reported.on_disk_size != reported.entries.iter().map(|e| e.num_bytes).sum() {
+            return Err("Incorrect on-disk size");
+        }
+
+        Ok(())
     }
 }
