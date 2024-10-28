@@ -14,37 +14,79 @@
 
 #![no_main]
 
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
-
-use tar::{Builder, Header, Archive, EntryType};
-use std::io::{Cursor, Read, Write, Seek};
+use tar::{Archive, Builder, EntryType, Header};
+use std::io::{Cursor, Read, Seek, Write};
 use tempfile::{tempdir, NamedTempFile};
 
+// Define FuzzInput for arbitrary crate
+#[derive(Debug)]
+struct FuzzInput {
+    data: Vec<u8>,
+    file_name: String,
+    link_path: String,
+    target_path: String,
+    entry_type: u8,
+    metadata_size: u64,
+}
+
+// Implement Arbitrary for FuzzInput
+impl<'a> Arbitrary<'a> for FuzzInput {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(FuzzInput {
+            data: u.arbitrary()?,
+            file_name: u.arbitrary::<&str>()?.to_string(),
+            link_path: u.arbitrary::<&str>()?.to_string(),
+            target_path: u.arbitrary::<&str>()?.to_string(),
+            entry_type: u.arbitrary()?,
+            metadata_size: u.arbitrary::<u64>()? % 1000, // Limit size to a reasonable max
+        })
+    }
+}
+
 fuzz_target!(|data: &[u8]| {
-    // Setup temporary directory and path
-    let temp_dir = tempdir().unwrap();
-    let archive_data = Cursor::new(data);
+    // Prepare FuzzInput by Arbitrary crate
+    let mut unstructured = Unstructured::new(data);
+    let input: FuzzInput = match FuzzInput::arbitrary(&mut unstructured) {
+        Ok(val) => val,
+        Err(_) => return,
+    };
+
+    // Setup temporary directory and initialize builder
+    let temp_dir = match tempdir() {
+        Ok(dir) => dir,
+        Err(_) => return,
+    };
+    let archive_data = Cursor::new(&input.data);
     let mut builder = Builder::new(Cursor::new(Vec::new()));
     let mut header = Header::new_gnu();
 
-    // Set header metadata
-    header.set_size(data.len() as u64);
+    // Set random header metadata
+    header.set_size(input.metadata_size.min(input.data.len() as u64));
     header.set_cksum();
-    header.set_entry_type(EntryType::file());
+    let entry_type = match input.entry_type % 5 {
+        0 => EntryType::Regular,
+        1 => EntryType::Directory,
+        2 => EntryType::Symlink,
+        3 => EntryType::Link,
+        _ => EntryType::Fifo,
+    };
+    header.set_entry_type(entry_type);
 
-    // Append data and a temp file to tar
-    let _ = builder.append_data(&mut header, "fuzzed/file", archive_data);
-    let mut temp_file = NamedTempFile::new().unwrap();
-    let _ = temp_file.write_all(data);
-    let _ = builder.append_file("fuzzed/file2", temp_file.as_file_mut()).ok();
+    // Append data
+    let _ = builder.append_data(&mut header, &input.file_name, archive_data);
+    if let Ok(mut temp_file) = NamedTempFile::new() {
+        let _ = temp_file.write_all(&input.data);
+        let _ = builder.append_file("fuzzed/file2", temp_file.as_file_mut()).ok();
+    }
 
     #[cfg(unix)]
-    let _ = builder.append_link(&mut header, "symlink/path", "target/path").ok();
-
+    let _ = builder.append_link(&mut header, &input.link_path, &input.target_path).ok();
     let _ = builder.finish();
 
     // Fuzzing Archive and Entry logic
-    let mut archive = Archive::new(Cursor::new(data));
+    let mut archive = Archive::new(Cursor::new(&input.data));
     if let Ok(mut entries) = archive.entries() {
         while let Some(Ok(mut entry)) = entries.next() {
             let _ = entry.path().map(|p| p.to_owned());
@@ -54,21 +96,17 @@ fuzz_target!(|data: &[u8]| {
             let _ = entry.raw_header_position();
             let _ = entry.raw_file_position();
 
+            // Randomly choose entry actions based on entry type
             match entry.header().entry_type() {
                 EntryType::Regular => { /* Do nothing */ }
-                EntryType::Directory => {
-                    let _ = entry.unpack_in(temp_dir.path()).ok();
-                }
-                EntryType::Symlink => {
-                    let _ = entry.unpack_in(temp_dir.path()).ok();
-                }
-                EntryType::Link => {
+                EntryType::Directory | EntryType::Symlink | EntryType::Link => {
                     let _ = entry.unpack_in(temp_dir.path()).ok();
                 }
                 EntryType::Fifo => { /* Do nothing */ }
                 _ => { /* Do nothing */ }
             }
 
+            // Randomly read contents and adjust permissions and attributes
             let mut buffer = Vec::new();
             let _ = entry.read_to_end(&mut buffer).ok();
             entry.set_mask(0o755);
@@ -76,8 +114,8 @@ fuzz_target!(|data: &[u8]| {
             entry.set_preserve_permissions(true);
             entry.set_preserve_mtime(true);
 
-            // Fuzz unpack
-            let dst_path = temp_dir.path().join("unpacked_file");
+            // Fuzz unpack to randomized destination path
+            let dst_path = temp_dir.path().join(&input.file_name);
             let _ = entry.unpack(&dst_path).ok();
             let _ = entry.unpack_in(temp_dir.path()).ok();
 
@@ -88,9 +126,9 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
 
-            // Fuzzing file search with tar entry position
+            // Randomized file search with tar entry position
             if entry.size() > 0 {
-                let mut data_cursor = Cursor::new(data);
+                let mut data_cursor = Cursor::new(&input.data);
                 let _ = data_cursor.seek(std::io::SeekFrom::Start(entry.raw_file_position())).ok();
                 let _ = data_cursor.read(&mut buffer).ok();
             }

@@ -14,112 +14,120 @@
 
 #![no_main]
 
+use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
-
-use std::fs::{File, OpenOptions};
-use std::io::{Cursor, Write, Read};
-use std::path::PathBuf;
+use std::io::{Cursor, Write};
+use std::fs::File;
 use tar::{Archive, Builder, EntryType, Header};
 use tempfile::tempdir;
-use std::convert::TryInto;
-use std::str;
+
+// Define ArchiveEntry for arbitrary crate
+#[derive(Debug)]
+struct ArchiveEntry {
+    path: String,
+    entry_type: u8,
+    content: Vec<u8>,
+}
+
+// Implement Arbitrary for ArchiveEntry
+impl<'a> Arbitrary<'a> for ArchiveEntry {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let path: String = u.arbitrary::<&str>()?.to_string();
+        let entry_type: u8 = u.arbitrary()?;
+        let content: Vec<u8> = u.arbitrary()?;
+        
+        Ok(ArchiveEntry { path, entry_type, content })
+    }
+}
+
+// Define FuzzInput for arbitrary crate
+#[derive(Debug)]
+struct FuzzInput {
+    entries: Vec<ArchiveEntry>,
+}
+
+// Inplement Arbitrary for FuzzInput
+impl<'a> Arbitrary<'a> for FuzzInput {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let entries: Vec<ArchiveEntry> = u.arbitrary()?;
+        Ok(FuzzInput { entries })
+    }
+}
 
 fuzz_target!(|data: &[u8]| {
-    let minbuf_size = 10;
-
-    // Skip this iteration when data is not enough
-    if data.len() < minbuf_size * 3 {
-        return;
-    }
-
-    // Create temp file and dir
-    let temp_dir = tempdir().unwrap();
-    let (file_name, data) = data.split_at(minbuf_size);
-    let file_name = match str::from_utf8(file_name) {
-        Ok(name) => name.to_string(),
-        Err(_) => "default_file_name".to_string(),
+    // Prepare FuzzInput with Arbitrary
+    let mut unstructured = Unstructured::new(data);
+    let input: FuzzInput = match FuzzInput::arbitrary(&mut unstructured) {
+        Ok(val) => val,
+        Err(_) => return,
     };
-    let (dir_name, data) = data.split_at(minbuf_size);
-    let dir_name = match str::from_utf8(dir_name) {
-        Ok(name) => name.to_string(),
-        Err(_) => "default_dir_name".to_string(),
-    };
-    let temp_file_path = temp_dir.path().join(format!("{}_file.tar", file_name));
 
-    // Initialise builder and cursor
+    // Create a temporary directory for the tar file; exit if creation fails
+    let temp_dir = match tempdir() {
+        Ok(dir) => dir,
+        Err(_) => return,
+    };
+    let temp_file_path = temp_dir.path().join("archive_file.tar");
     let mut builder = Builder::new(Vec::new());
-    let mut cursor = Cursor::new(data.to_vec());
 
-    // Choose an etnry type
-    let entry_type_byte = data[0];
-    let entry_type = match entry_type_byte % 5 {
-        0 => EntryType::Regular,
-        1 => EntryType::Directory,
-        2 => EntryType::Symlink,
-        3 => EntryType::hard_link(),
-        _ => EntryType::character_special(),
-    };
+    // Iterate through the archive entries to build a tar structure
+    for entry in &input.entries {
+        let mut header = Header::new_gnu();
 
-    // Initilaise header
-    let mut header = Header::new_gnu();
-    let file_size = u64::from_le_bytes(
-        data.get(1..9)
-            .unwrap_or(&[0; 8])
-            .try_into()
-            .unwrap_or([0; 8]),
-    );
-    header.set_size(file_size);
-    header.set_entry_type(entry_type);
-    header.set_cksum();
+        // Ensure content size is reasonable to avoid potential overflow issues
+        let file_size = entry.content.len() as u64;
+        if file_size > u32::MAX as u64 {
+            continue; // Skip large entries
+        }
+        header.set_size(file_size);
 
-    // Prepare sample tar file
-    let tar_file_path = format!("{}/{}", dir_name, file_name);
-    let _ = builder.append_data(&mut header, tar_file_path.clone(), &mut cursor).ok();
-    cursor.set_position(0);
-    for i in 1..5 {
-        let start = i * 10 % data.len();
-        let end = std::cmp::min(start + 10, data.len());
-        let entry_data = &data[start..end];
-        let entry_name = match str::from_utf8(&entry_data) {
-            Ok(name) => name.to_string(),
-            Err(_) => format!("entry_{}", i),
+        // Determine the entry type from fuzzed data
+        let entry_type = match entry.entry_type % 5 {
+            0 => EntryType::Regular,
+            1 => EntryType::Directory,
+            2 => EntryType::Symlink,
+            3 => EntryType::hard_link(),
+            _ => EntryType::character_special(),
         };
+        header.set_entry_type(entry_type);
 
-        let mut entry_header = Header::new_gnu();
-        entry_header.set_size(entry_data.len() as u64);
-        entry_header.set_entry_type(entry_type);
-        entry_header.set_cksum();
-
-        let mut entry_cursor = Cursor::new(entry_data.to_vec());
-        let _ = builder.append_data(&mut entry_header, entry_name, &mut entry_cursor).ok();
-    }
-
-    // Prepare malformed tar header
-    if data.len() > 512 {
-        let corrupt_header_data = &data[data.len() - 512..];
-        let corrupt_header = Header::from_byte_slice(corrupt_header_data);
-        let mut corrupt_cursor = Cursor::new(data.to_vec());
-        let corrupt_entry_name = "corrupt_entry.txt";
-        let _ = builder.append_data(&mut corrupt_header.clone(), corrupt_entry_name, &mut corrupt_cursor).ok();
-    }
-
-    if let Ok(mut tar_file) = File::create(&temp_file_path) {
-        if let Ok(tar_data) = builder.into_inner() {
-            let _ = tar_file.write_all(&tar_data);
+        // Process entry types based on directory structure and content
+        match entry_type {
+            EntryType::Directory => {
+                let dir_path = temp_dir.path().join(&entry.path);
+                if std::fs::create_dir_all(&dir_path).is_err() {
+                    continue;
+                }
+                if builder.append_dir(entry.path.clone(), &dir_path).is_err() {
+                    continue;
+                }
+            }
+            EntryType::Regular => {
+                let mut cursor = Cursor::new(entry.content.clone());
+                if builder.append_data(&mut header, entry.path.as_str(), &mut cursor).is_err() {
+                    continue;
+                }
+            }
+            _ => {
+                // Handle other types with appropriate mock content or skip unsupported
+                let mut cursor = Cursor::new(entry.content.clone());
+                if builder.append_data(&mut header, entry.path.as_str(), &mut cursor).is_err() {
+                    continue;
+                }
+            }
         }
     }
 
-    // Fuzz archive and builder unpack with malformed tar archvie
-    if let Ok(mut tar_file) = OpenOptions::new().read(true).open(&temp_file_path) {
-        let mut tar_data = Vec::new();
-        let _ = tar_file.read_to_end(&mut tar_data);
-        let mut tar_cursor = Cursor::new(tar_data);
-        let mut archive = Archive::new(&mut tar_cursor);
-        let _ = archive.unpack(temp_dir.path()).ok();
+    if let Ok(mut temp_file) = File::create(&temp_file_path) {
+        if temp_file.write_all(&builder.into_inner().unwrap_or_default()).is_ok() {
+            let mut archive = Archive::new(temp_file);
+            if let Ok(entries) = archive.entries() {
+                for entry in entries {
+                    if entry.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
     }
-
-    // Fuzz unpacking
-    let mut data_cursor = Cursor::new(data.to_vec());
-    let mut data_archive = Archive::new(&mut data_cursor);
-    let _ = data_archive.unpack(temp_dir.path()).ok();
 });

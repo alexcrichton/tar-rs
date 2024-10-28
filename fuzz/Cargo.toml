@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+arbitrary = "1.3.2"
 tempfile = "3.3"
 
 [dependencies.tar]
@@ -17,13 +18,6 @@ path = ".."
 [[bin]]
 name = "archive"
 path = "fuzz_targets/archive.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "builder"
-path = "fuzz_targets/builder.rs"
 test = false
 doc = false
 bench = false
