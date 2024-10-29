@@ -18,6 +18,7 @@ use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use std::io::{Cursor, Write};
 use std::fs::File;
+use std::path::{Path, PathBuf, Component};
 use tar::{Archive, Builder, EntryType, Header};
 use tempfile::tempdir;
 
@@ -46,7 +47,7 @@ struct FuzzInput {
     entries: Vec<ArchiveEntry>,
 }
 
-// Inplement Arbitrary for FuzzInput
+// Implement Arbitrary for FuzzInput
 impl<'a> Arbitrary<'a> for FuzzInput {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let entries: Vec<ArchiveEntry> = u.arbitrary()?;
@@ -94,11 +95,21 @@ fuzz_target!(|data: &[u8]| {
         // Process entry types based on directory structure and content
         match entry_type {
             EntryType::Directory => {
-                let dir_path = temp_dir.path().join(&entry.path);
+                // Sanitize the path to prevent directory traversal
+                let safe_path: PathBuf = Path::new(&entry.path)
+                    .components()
+                    .filter(|component| matches!(component, Component::Normal(_)))
+                    .collect();
+
+                if safe_path != Path::new(&entry.path) {
+                    continue;
+                }
+
+                let dir_path = temp_dir.path().join(&safe_path);
                 if std::fs::create_dir_all(&dir_path).is_err() {
                     continue;
                 }
-                if builder.append_dir(entry.path.clone(), &dir_path).is_err() {
+                if builder.append_dir(safe_path.clone(), &dir_path).is_err() {
                     continue;
                 }
             }
@@ -118,14 +129,14 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    if let Ok(mut temp_file) = File::create(&temp_file_path) {
-        if temp_file.write_all(&builder.into_inner().unwrap_or_default()).is_ok() {
-            let mut archive = Archive::new(temp_file);
-            if let Ok(entries) = archive.entries() {
-                for entry in entries {
-                    if entry.is_err() {
-                        return;
-                    }
+    // Write the builder content to the temporary tar file
+    let mut temp_file = File::create(&temp_file_path).unwrap();
+    if temp_file.write_all(&builder.into_inner().unwrap_or_default()).is_ok() {
+        let mut archive = Archive::new(temp_file);
+        if let Ok(entries) = archive.entries() {
+            for entry in entries {
+                if entry.is_err() {
+                    return;
                 }
             }
         }
