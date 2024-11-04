@@ -15,44 +15,26 @@
 #![no_main]
 
 use arbitrary::{Arbitrary, Unstructured};
+use cap_std::fs::Dir;
+use cap_std::ambient_authority;
+use derive_arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use std::io::{Cursor, Write};
-use std::fs::File;
-use std::path::{Path, PathBuf, Component};
 use tar::{Archive, Builder, EntryType, Header};
 use tempfile::tempdir;
 
 // Define ArchiveEntry for arbitrary crate
-#[derive(Debug)]
+#[derive(Debug, Arbitrary)]
 struct ArchiveEntry {
     path: String,
     entry_type: u8,
     content: Vec<u8>,
 }
 
-// Implement Arbitrary for ArchiveEntry
-impl<'a> Arbitrary<'a> for ArchiveEntry {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let path: String = u.arbitrary::<&str>()?.to_string();
-        let entry_type: u8 = u.arbitrary()?;
-        let content: Vec<u8> = u.arbitrary()?;
-        
-        Ok(ArchiveEntry { path, entry_type, content })
-    }
-}
-
 // Define FuzzInput for arbitrary crate
-#[derive(Debug)]
+#[derive(Debug, Arbitrary)]
 struct FuzzInput {
     entries: Vec<ArchiveEntry>,
-}
-
-// Implement Arbitrary for FuzzInput
-impl<'a> Arbitrary<'a> for FuzzInput {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let entries: Vec<ArchiveEntry> = u.arbitrary()?;
-        Ok(FuzzInput { entries })
-    }
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -63,12 +45,16 @@ fuzz_target!(|data: &[u8]| {
         Err(_) => return,
     };
 
-    // Create a temporary directory for the tar file; exit if creation fails
+    // Create a sandbox directory with cap_std
     let temp_dir = match tempdir() {
         Ok(dir) => dir,
         Err(_) => return,
     };
-    let temp_file_path = temp_dir.path().join("archive_file.tar");
+    let sandbox_dir = match Dir::open_ambient_dir(temp_dir.path(), ambient_authority()) {
+        Ok(dir) => dir,
+        Err(_) => return,
+    };
+    let temp_file_path = "archive_file.tar";
     let mut builder = Builder::new(Vec::new());
 
     // Iterate through the archive entries to build a tar structure
@@ -78,7 +64,7 @@ fuzz_target!(|data: &[u8]| {
         // Ensure content size is reasonable to avoid potential overflow issues
         let file_size = entry.content.len() as u64;
         if file_size > u32::MAX as u64 {
-            continue; // Skip large entries
+            continue;
         }
         header.set_size(file_size);
 
@@ -92,24 +78,13 @@ fuzz_target!(|data: &[u8]| {
         };
         header.set_entry_type(entry_type);
 
-        // Process entry types based on directory structure and content
+        // Process entry types using cap_std sandbox
         match entry_type {
             EntryType::Directory => {
-                // Sanitize the path to prevent directory traversal
-                let safe_path: PathBuf = Path::new(&entry.path)
-                    .components()
-                    .filter(|component| matches!(component, Component::Normal(_)))
-                    .collect();
-
-                if safe_path != Path::new(&entry.path) {
+                if let Err(_) = sandbox_dir.create_dir_all(&entry.path) {
                     continue;
                 }
-
-                let dir_path = temp_dir.path().join(&safe_path);
-                if std::fs::create_dir_all(&dir_path).is_err() {
-                    continue;
-                }
-                if builder.append_dir(safe_path.clone(), &dir_path).is_err() {
+                if builder.append_dir(&entry.path, &entry.path).is_err() {
                     continue;
                 }
             }
@@ -129,16 +104,21 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    // Write the builder content to the temporary tar file
-    let mut temp_file = File::create(&temp_file_path).unwrap();
-    if temp_file.write_all(&builder.into_inner().unwrap_or_default()).is_ok() {
-        let mut archive = Archive::new(temp_file);
-        if let Ok(entries) = archive.entries() {
-            for entry in entries {
-                if entry.is_err() {
-                    return;
+    // Write the builder content to the temporary tar file within the sandbox
+    if let Ok(mut temp_file) = sandbox_dir.create(temp_file_path) {
+        if temp_file.write_all(&builder.into_inner().unwrap_or_default()).is_ok() {
+            let mut archive = Archive::new(temp_file);
+            if let Ok(entries) = archive.entries() {
+                for entry in entries {
+                    if entry.is_err() {
+                        return;
+                    }
                 }
             }
         }
     }
+
+    // Cleanup temp directory and sandbox directory
+    drop(sandbox_dir);
+    drop(temp_dir);
 });

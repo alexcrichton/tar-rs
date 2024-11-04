@@ -16,8 +16,8 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
-use tar::{Archive, Builder, EntryType, Header};
 use std::io::{Cursor, Read, Seek, Write};
+use tar::{Archive, Builder, EntryType, Header};
 use tempfile::{tempdir, NamedTempFile};
 
 // Define FuzzInput for arbitrary crate
@@ -40,7 +40,7 @@ impl<'a> Arbitrary<'a> for FuzzInput {
             link_path: u.arbitrary::<&str>()?.to_string(),
             target_path: u.arbitrary::<&str>()?.to_string(),
             entry_type: u.arbitrary()?,
-            metadata_size: u.arbitrary::<u64>()? % 1000, // Limit size to a reasonable max
+            metadata_size: u.int_in_range(0..=1000)?,
         })
     }
 }
