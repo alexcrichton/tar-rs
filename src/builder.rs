@@ -1114,8 +1114,9 @@ impl<W: Write> Drop for Builder<W> {
 mod tests {
     use super::*;
 
-    /// Should be multiple of 4KiB on ext4, multiple of 32KiB on FreeBSD/UFS.
-    const SPARSE_BLOCK_SIZE: u64 = 32768;
+    /// Should be multiple of 4KiB on ext4, multiple of 32KiB on FreeBSD/UFS, multiple of 64KiB on
+    /// ppc64el
+    const SPARSE_BLOCK_SIZE: u64 = 64 * 1024;
 
     #[test]
     fn test_find_sparse_entries() {
