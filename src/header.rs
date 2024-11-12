@@ -194,7 +194,7 @@ impl Header {
     fn is_ustar(&self) -> bool {
         let ustar = unsafe { cast::<_, UstarHeader>(self) };
         ustar.magic[..] == b"ustar\0"[..]
-             && (ustar.version[..] == b"00"[..] || ustar.version[..] == b"\0\0"[..])
+            && (ustar.version[..] == b"00"[..] || ustar.version[..] == b"\0\0"[..])
     }
 
     fn is_gnu(&self) -> bool {
