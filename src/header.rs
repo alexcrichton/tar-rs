@@ -16,6 +16,7 @@ use std::str;
 use crate::other;
 use crate::EntryType;
 
+pub const BLOCK_SIZE: usize = 512;
 /// A deterministic, arbitrary, non-zero timestamp that use used as `mtime`
 /// of headers when [`HeaderMode::Deterministic`] is used.
 ///
@@ -32,7 +33,7 @@ pub(crate) const GNU_EXT_SPARSE_HEADERS_COUNT: usize = 21;
 #[repr(C)]
 #[allow(missing_docs)]
 pub struct Header {
-    bytes: [u8; 512],
+    bytes: [u8; BLOCK_SIZE],
 }
 
 /// Declares the information that should be included when filling a Header
@@ -120,6 +121,12 @@ pub struct GnuHeader {
     pub isextended: [u8; 1],
     pub realsize: [u8; 12],
     pub pad: [u8; 17],
+}
+
+/// Description of a spare entry.
+pub struct SparseEntry {
+    pub offset: u64,
+    pub size: u64,
 }
 
 /// Description of the header of a spare entry.
