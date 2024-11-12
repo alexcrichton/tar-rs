@@ -768,7 +768,7 @@ fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) ->
             Ok(s) => s,
             Err(e) => str::from_utf8(&data[..e.valid_up_to()]).unwrap(),
         };
-        header.set_path(truncated)?;
+        header.set_truncated_path_for_gnu_header(&truncated)?;
     }
     Ok(())
 }
