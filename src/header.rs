@@ -386,7 +386,10 @@ impl Header {
     // Sets the truncated path for GNU header
     //
     // Same as set_path but skips some validations.
-    pub(crate) fn set_truncated_path_for_gnu_header<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+    pub(crate) fn set_truncated_path_for_gnu_header<P: AsRef<Path>>(
+        &mut self,
+        p: P,
+    ) -> io::Result<()> {
         self._set_path(p.as_ref(), true)
     }
 
@@ -394,7 +397,13 @@ impl Header {
         if let Some(ustar) = self.as_ustar_mut() {
             return ustar.set_path(path);
         }
-        copy_path_into(&mut self.as_old_mut().name, path, false, is_truncated_gnu_long_path).map_err(|err| {
+        copy_path_into(
+            &mut self.as_old_mut().name,
+            path,
+            false,
+            is_truncated_gnu_long_path,
+        )
+        .map_err(|err| {
             io::Error::new(
                 err.kind(),
                 format!("{} when setting path for {}", err, self.path_lossy()),
@@ -1547,7 +1556,12 @@ fn copy_into(slot: &mut [u8], bytes: &[u8]) -> io::Result<()> {
 /// * a nul byte was found
 /// * an invalid path component is encountered (e.g. a root path or parent dir)
 /// * the path itself is empty
-fn copy_path_into(mut slot: &mut [u8], path: &Path, is_link_name: bool, is_truncated_gnu_long_path: bool) -> io::Result<()> {
+fn copy_path_into(
+    mut slot: &mut [u8],
+    path: &Path,
+    is_link_name: bool,
+    is_truncated_gnu_long_path: bool,
+) -> io::Result<()> {
     let mut emitted = false;
     let mut needs_slash = false;
     let mut iter = path.components().peekable();
@@ -1562,8 +1576,7 @@ fn copy_path_into(mut slot: &mut [u8], path: &Path, is_link_name: bool, is_trunc
                     // If it's last component of a gnu long path we know that there might be more
                     // to the component than .. (the rest is stored elsewhere)
                     {}
-                }
-                else {
+                } else {
                     return Err(other("paths in archives must not have `..`"));
                 }
             }

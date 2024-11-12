@@ -215,7 +215,7 @@ fn large_filename_with_dot_dot_at_100_byte_mark() {
     header.set_mode(0o644);
     header.set_size(4);
 
-    let mut long_name_with_dot_dot  = "tdir/".repeat(19);
+    let mut long_name_with_dot_dot = "tdir/".repeat(19);
     long_name_with_dot_dot.push_str("tt/..file");
 
     t!(ar.append_data(&mut header, &long_name_with_dot_dot, &b"test"[..]));
@@ -232,8 +232,6 @@ fn large_filename_with_dot_dot_at_100_byte_mark() {
     assert_eq!(s, "test");
     assert!(entries.next().is_none());
 }
-
-
 
 fn reading_entries_common<R: Read>(mut entries: Entries<R>) {
     let mut a = t!(entries.next().unwrap());
