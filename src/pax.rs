@@ -147,7 +147,7 @@ impl<'entry> PaxExtension<'entry> {
     }
 }
 
-/// Extension trait for `Builder` to append PAX extended headers.
+/// Implement `Builder` to append PAX extended headers.
 impl<T: Write> crate::Builder<T> {
     /// Append PAX extended headers to the archive.
     ///
@@ -156,7 +156,7 @@ impl<T: Write> crate::Builder<T> {
     /// Returns io::Error if an error occurs, else it returns ()
     pub fn append_pax_extensions<'key, 'value>(
         &mut self,
-        headers: impl IntoIterator<Item = (&'key str, &'value [u8])>,
+        headers: impl IntoIterator<Item = (&'key [u8], &'value [u8])>,
     ) -> Result<(), io::Error> {
         // Store the headers formatted before write
         let mut data: Vec<u8> = Vec::new();
@@ -172,7 +172,9 @@ impl<T: Write> crate::Builder<T> {
                 max_len *= 10;
             }
             let len = rest_len + len_len;
-            write!(&mut data, "{} {}=", len, key)?;
+            write!(&mut data, "{} ", len)?;
+            data.extend_from_slice(key);
+            data.push(b'=');
             data.extend_from_slice(value);
             data.push(b'\n');
         }
