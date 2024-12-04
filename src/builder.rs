@@ -953,6 +953,7 @@ fn find_sparse_entries_seek(
     use std::os::unix::fs::MetadataExt as _;
     use std::os::unix::io::AsRawFd as _;
 
+    #[allow(unsafe_code)]
     fn lseek(file: &fs::File, offset: i64, whence: libc::c_int) -> Result<i64, i32> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let lseek = libc::lseek64;

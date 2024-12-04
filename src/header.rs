@@ -13,6 +13,8 @@ use std::mem;
 use std::path::{Component, Path, PathBuf};
 use std::str;
 
+use zerocopy::FromBytes;
+
 use crate::other;
 use crate::EntryType;
 
@@ -31,6 +33,7 @@ pub(crate) const GNU_EXT_SPARSE_HEADERS_COUNT: usize = 21;
 /// Representation of the header of an entry in an archive
 #[repr(C)]
 #[allow(missing_docs)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable, zerocopy::KnownLayout)]
 pub struct Header {
     bytes: [u8; 512],
 }
@@ -52,6 +55,7 @@ pub enum HeaderMode {
 /// Representation of the header of an entry in an archive
 #[repr(C)]
 #[allow(missing_docs)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct OldHeader {
     pub name: [u8; 100],
     pub mode: [u8; 8],
@@ -68,6 +72,7 @@ pub struct OldHeader {
 /// Representation of the header of an entry in an archive
 #[repr(C)]
 #[allow(missing_docs)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct UstarHeader {
     pub name: [u8; 100],
     pub mode: [u8; 8],
@@ -93,6 +98,7 @@ pub struct UstarHeader {
 /// Representation of the header of an entry in an archive
 #[repr(C)]
 #[allow(missing_docs)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct GnuHeader {
     pub name: [u8; 100],
     pub mode: [u8; 8],
@@ -127,6 +133,7 @@ pub struct GnuHeader {
 /// Specifies the offset/number of bytes of a chunk of data in octal.
 #[repr(C)]
 #[allow(missing_docs)]
+#[derive(Default, zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::Immutable)]
 pub struct GnuSparseHeader {
     pub offset: [u8; 12],
     pub numbytes: [u8; 12],
@@ -138,6 +145,7 @@ pub struct GnuSparseHeader {
 /// the next entry will be one of these headers.
 #[repr(C)]
 #[allow(missing_docs)]
+#[derive(Default, zerocopy::Immutable, zerocopy::FromBytes, zerocopy::IntoBytes)]
 pub struct GnuExtSparseHeader {
     pub sparse: [GnuSparseHeader; GNU_EXT_SPARSE_HEADERS_COUNT],
     pub isextended: [u8; 1],
@@ -152,8 +160,8 @@ impl Header {
     /// atime/ctime metadata attributes of files.
     pub fn new_gnu() -> Header {
         let mut header = Header { bytes: [0; 512] };
-        unsafe {
-            let gnu = cast_mut::<_, GnuHeader>(&mut header);
+        {
+            let gnu: &mut GnuHeader = zerocopy::transmute_mut!(&mut header);
             gnu.magic = *b"ustar ";
             gnu.version = *b" \0";
         }
@@ -170,10 +178,10 @@ impl Header {
     /// UStar is also the basis used for pax archives.
     pub fn new_ustar() -> Header {
         let mut header = Header { bytes: [0; 512] };
-        unsafe {
-            let gnu = cast_mut::<_, UstarHeader>(&mut header);
-            gnu.magic = *b"ustar\0";
-            gnu.version = *b"00";
+        {
+            let h: &mut UstarHeader = zerocopy::transmute_mut!(&mut header);
+            h.magic = *b"ustar\0";
+            h.version = *b"00";
         }
         header.set_mtime(0);
         header
@@ -192,12 +200,12 @@ impl Header {
     }
 
     fn is_ustar(&self) -> bool {
-        let ustar = unsafe { cast::<_, UstarHeader>(self) };
+        let ustar: &UstarHeader = zerocopy::transmute_ref!(self);
         ustar.magic[..] == b"ustar\0"[..] && ustar.version[..] == b"00"[..]
     }
 
     fn is_gnu(&self) -> bool {
-        let ustar = unsafe { cast::<_, UstarHeader>(self) };
+        let ustar: &UstarHeader = zerocopy::transmute_ref!(self);
         ustar.magic[..] == b"ustar "[..] && ustar.version[..] == b" \0"[..]
     }
 
@@ -206,12 +214,12 @@ impl Header {
     /// This view will always succeed as all archive header formats will fill
     /// out at least the fields specified in the old header format.
     pub fn as_old(&self) -> &OldHeader {
-        unsafe { cast(self) }
+        zerocopy::transmute_ref!(self)
     }
 
     /// Same as `as_old`, but the mutable version.
     pub fn as_old_mut(&mut self) -> &mut OldHeader {
-        unsafe { cast_mut(self) }
+        zerocopy::transmute_mut!(self)
     }
 
     /// View this archive header as a raw UStar archive header.
@@ -225,7 +233,7 @@ impl Header {
     /// returning `None` if they aren't correct.
     pub fn as_ustar(&self) -> Option<&UstarHeader> {
         if self.is_ustar() {
-            Some(unsafe { cast(self) })
+            Some(zerocopy::transmute_ref!(self))
         } else {
             None
         }
@@ -234,7 +242,7 @@ impl Header {
     /// Same as `as_ustar_mut`, but the mutable version.
     pub fn as_ustar_mut(&mut self) -> Option<&mut UstarHeader> {
         if self.is_ustar() {
-            Some(unsafe { cast_mut(self) })
+            Some(zerocopy::transmute_mut!(self))
         } else {
             None
         }
@@ -251,7 +259,7 @@ impl Header {
     /// returning `None` if they aren't correct.
     pub fn as_gnu(&self) -> Option<&GnuHeader> {
         if self.is_gnu() {
-            Some(unsafe { cast(self) })
+            Some(zerocopy::transmute_ref!(self))
         } else {
             None
         }
@@ -260,7 +268,7 @@ impl Header {
     /// Same as `as_gnu`, but the mutable version.
     pub fn as_gnu_mut(&mut self) -> Option<&mut GnuHeader> {
         if self.is_gnu() {
-            Some(unsafe { cast_mut(self) })
+            Some(zerocopy::transmute_mut!(self))
         } else {
             None
         }
@@ -270,9 +278,7 @@ impl Header {
     ///
     /// Panics if the length of the passed slice is not equal to 512.
     pub fn from_byte_slice(bytes: &[u8]) -> &Header {
-        assert_eq!(bytes.len(), mem::size_of::<Header>());
-        assert_eq!(mem::align_of_val(bytes), mem::align_of::<Header>());
-        unsafe { &*(bytes.as_ptr() as *const Header) }
+        &Header::ref_from_bytes(bytes).unwrap()
     }
 
     /// Returns a view into this header as a byte array.
@@ -902,18 +908,6 @@ impl<T: fmt::Octal> fmt::Debug for DebugAsOctal<T> {
     }
 }
 
-unsafe fn cast<T, U>(a: &T) -> &U {
-    assert_eq!(mem::size_of_val(a), mem::size_of::<U>());
-    assert_eq!(mem::align_of_val(a), mem::align_of::<U>());
-    &*(a as *const T as *const U)
-}
-
-unsafe fn cast_mut<T, U>(a: &mut T) -> &mut U {
-    assert_eq!(mem::size_of_val(a), mem::size_of::<U>());
-    assert_eq!(mem::align_of_val(a), mem::align_of::<U>());
-    &mut *(a as *mut T as *mut U)
-}
-
 impl Clone for Header {
     fn clone(&self) -> Header {
         Header { bytes: self.bytes }
@@ -935,12 +929,12 @@ impl fmt::Debug for Header {
 impl OldHeader {
     /// Views this as a normal `Header`
     pub fn as_header(&self) -> &Header {
-        unsafe { cast(self) }
+        zerocopy::transmute_ref!(self)
     }
 
     /// Views this as a normal `Header`
     pub fn as_header_mut(&mut self) -> &mut Header {
-        unsafe { cast_mut(self) }
+        zerocopy::transmute_mut!(self)
     }
 }
 
@@ -1106,12 +1100,12 @@ impl UstarHeader {
 
     /// Views this as a normal `Header`
     pub fn as_header(&self) -> &Header {
-        unsafe { cast(self) }
+        zerocopy::transmute_ref!(self)
     }
 
     /// Views this as a normal `Header`
     pub fn as_header_mut(&mut self) -> &mut Header {
-        unsafe { cast_mut(self) }
+        zerocopy::transmute_mut!(self)
     }
 }
 
@@ -1291,12 +1285,12 @@ impl GnuHeader {
 
     /// Views this as a normal `Header`
     pub fn as_header(&self) -> &Header {
-        unsafe { cast(self) }
+        zerocopy::transmute_ref!(self)
     }
 
     /// Views this as a normal `Header`
     pub fn as_header_mut(&mut self) -> &mut Header {
-        unsafe { cast_mut(self) }
+        zerocopy::transmute_mut!(self)
     }
 }
 
@@ -1387,19 +1381,17 @@ impl fmt::Debug for GnuSparseHeader {
 impl GnuExtSparseHeader {
     /// Crates a new zero'd out sparse header entry.
     pub fn new() -> GnuExtSparseHeader {
-        unsafe { mem::zeroed() }
+        Default::default()
     }
 
     /// Returns a view into this header as a byte array.
     pub fn as_bytes(&self) -> &[u8; 512] {
-        debug_assert_eq!(mem::size_of_val(self), 512);
-        unsafe { mem::transmute(self) }
+        zerocopy::transmute_ref!(self)
     }
 
     /// Returns a view into this header as a byte array.
     pub fn as_mut_bytes(&mut self) -> &mut [u8; 512] {
-        debug_assert_eq!(mem::size_of_val(self), 512);
-        unsafe { mem::transmute(self) }
+        zerocopy::transmute_mut!(self)
     }
 
     /// Returns a slice of the underlying sparse headers.
@@ -1423,12 +1415,6 @@ impl GnuExtSparseHeader {
     /// Sets whether another sparse header should be following this one.
     pub fn set_is_extended(&mut self, is_extended: bool) {
         self.isextended[0] = if is_extended { 1 } else { 0 };
-    }
-}
-
-impl Default for GnuExtSparseHeader {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
