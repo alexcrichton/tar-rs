@@ -1605,12 +1605,16 @@ fn copy_path_into_inner(
     }
 }
 
+/// Copies `path` into the `slot` provided
+///
+/// Returns an error if:
+///
+/// * the path is too long to fit
+/// * a nul byte was found
+/// * an invalid path component is encountered (e.g. a root path or parent dir)
+/// * the path itself is empty
 fn copy_path_into(slot: &mut [u8], path: &Path, is_link_name: bool) -> io::Result<()> {
     copy_path_into_inner(slot, path, is_link_name, false)
-}
-
-fn copy_path_into_gnu_long(slot: &mut [u8], path: &Path, is_link_name: bool) -> io::Result<()> {
-    copy_path_into_inner(slot, path, is_link_name, true)
 }
 
 /// Copies `path` into the `slot` provided
@@ -1621,6 +1625,11 @@ fn copy_path_into_gnu_long(slot: &mut [u8], path: &Path, is_link_name: bool) -> 
 /// * a nul byte was found
 /// * an invalid path component is encountered (e.g. a root path or parent dir)
 /// * the path itself is empty
+///
+/// This is less restrictive version meant to be used for truncated GNU paths.
+fn copy_path_into_gnu_long(slot: &mut [u8], path: &Path, is_link_name: bool) -> io::Result<()> {
+    copy_path_into_inner(slot, path, is_link_name, true)
+}
 
 #[cfg(target_arch = "wasm32")]
 fn ends_with_slash(p: &Path) -> bool {
