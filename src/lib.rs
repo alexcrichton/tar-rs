@@ -19,6 +19,8 @@
 
 #![doc(html_root_url = "https://docs.rs/tar/0.4")]
 #![deny(missing_docs)]
+// The only exceptions right now are calls to libc; TODO use rustix
+#![deny(unsafe_code)]
 #![cfg_attr(test, deny(warnings))]
 
 use std::io::{Error, ErrorKind};

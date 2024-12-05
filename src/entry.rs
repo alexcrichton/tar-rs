@@ -730,6 +730,7 @@ impl<'a> EntryFields<'a> {
         }
 
         #[cfg(unix)]
+        #[allow(unsafe_code)]
         fn _set_ownerships(
             dst: &Path,
             f: &Option<&mut std::fs::File>,
