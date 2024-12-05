@@ -211,14 +211,13 @@ fn large_filename_with_dot_dot_at_100_byte_mark() {
     let mut ar = Builder::new(Vec::new());
 
     let mut header = Header::new_gnu();
-    header.set_cksum();
     header.set_mode(0o644);
     header.set_size(4);
 
     let mut long_name_with_dot_dot = "tdir/".repeat(19);
     long_name_with_dot_dot.push_str("tt/..file");
 
-    t!(ar.append_data(&mut header, &long_name_with_dot_dot, &b"test"[..]));
+    t!(ar.append_data(&mut header, &long_name_with_dot_dot, b"test".as_slice()));
 
     let rd = Cursor::new(t!(ar.into_inner()));
     let mut ar = Archive::new(rd);

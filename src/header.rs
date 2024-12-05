@@ -380,7 +380,7 @@ impl Header {
     /// use `Builder` methods to insert a long-name extension at the same time
     /// as the file content.
     pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
-        self._set_path(p.as_ref(), false)
+        self.set_path_inner(p.as_ref(), false)
     }
 
     // Sets the truncated path for GNU header
@@ -390,19 +390,18 @@ impl Header {
         &mut self,
         p: P,
     ) -> io::Result<()> {
-        self._set_path(p.as_ref(), true)
+        self.set_path_inner(p.as_ref(), true)
     }
 
-    fn _set_path(&mut self, path: &Path, is_truncated_gnu_long_path: bool) -> io::Result<()> {
+    fn set_path_inner(&mut self, path: &Path, is_truncated_gnu_long_path: bool) -> io::Result<()> {
         if let Some(ustar) = self.as_ustar_mut() {
             return ustar.set_path(path);
         }
-        copy_path_into(
-            &mut self.as_old_mut().name,
-            path,
-            false,
-            is_truncated_gnu_long_path,
-        )
+        if is_truncated_gnu_long_path {
+            copy_path_into_gnu_long(&mut self.as_old_mut().name, path, false)
+        } else {
+            copy_path_into(&mut self.as_old_mut().name, path, false)
+        }
         .map_err(|err| {
             io::Error::new(
                 err.kind(),
@@ -455,7 +454,7 @@ impl Header {
     }
 
     fn _set_link_name(&mut self, path: &Path) -> io::Result<()> {
-        copy_path_into(&mut self.as_old_mut().linkname, path, true, false).map_err(|err| {
+        copy_path_into(&mut self.as_old_mut().linkname, path, true).map_err(|err| {
             io::Error::new(
                 err.kind(),
                 format!("{} when setting link name for {}", err, self.path_lossy()),
@@ -1007,7 +1006,7 @@ impl UstarHeader {
         let bytes = path2bytes(path)?;
         let (maxnamelen, maxprefixlen) = (self.name.len(), self.prefix.len());
         if bytes.len() <= maxnamelen {
-            copy_path_into(&mut self.name, path, false, false).map_err(|err| {
+            copy_path_into(&mut self.name, path, false).map_err(|err| {
                 io::Error::new(
                     err.kind(),
                     format!("{} when setting path for {}", err, self.path_lossy()),
@@ -1031,14 +1030,14 @@ impl UstarHeader {
                     break;
                 }
             }
-            copy_path_into(&mut self.prefix, prefix, false, false).map_err(|err| {
+            copy_path_into(&mut self.prefix, prefix, false).map_err(|err| {
                 io::Error::new(
                     err.kind(),
                     format!("{} when setting path for {}", err, self.path_lossy()),
                 )
             })?;
             let path = bytes2path(Cow::Borrowed(&bytes[prefixlen + 1..]))?;
-            copy_path_into(&mut self.name, &path, false, false).map_err(|err| {
+            copy_path_into(&mut self.name, &path, false).map_err(|err| {
                 io::Error::new(
                     err.kind(),
                     format!("{} when setting path for {}", err, self.path_lossy()),
@@ -1548,15 +1547,7 @@ fn copy_into(slot: &mut [u8], bytes: &[u8]) -> io::Result<()> {
     }
 }
 
-/// Copies `path` into the `slot` provided
-///
-/// Returns an error if:
-///
-/// * the path is too long to fit
-/// * a nul byte was found
-/// * an invalid path component is encountered (e.g. a root path or parent dir)
-/// * the path itself is empty
-fn copy_path_into(
+fn copy_path_into_inner(
     mut slot: &mut [u8],
     path: &Path,
     is_link_name: bool,
@@ -1572,11 +1563,10 @@ fn copy_path_into(
                 return Err(other("paths in archives must be relative"));
             }
             (Component::ParentDir, false) => {
-                if is_truncated_gnu_long_path && iter.peek().is_none() {
-                    // If it's last component of a gnu long path we know that there might be more
-                    // to the component than .. (the rest is stored elsewhere)
-                    {}
-                } else {
+                // If it's last component of a gnu long path we know that there might be more
+                // to the component than .. (the rest is stored elsewhere)
+                // Otherwise it's a clear error
+                if !is_truncated_gnu_long_path || iter.peek().is_some() {
                     return Err(other("paths in archives must not have `..`"));
                 }
             }
@@ -1614,6 +1604,23 @@ fn copy_path_into(
         Ok(())
     }
 }
+
+fn copy_path_into(slot: &mut [u8], path: &Path, is_link_name: bool) -> io::Result<()> {
+    copy_path_into_inner(slot, path, is_link_name, false)
+}
+
+fn copy_path_into_gnu_long(slot: &mut [u8], path: &Path, is_link_name: bool) -> io::Result<()> {
+    copy_path_into_inner(slot, path, is_link_name, true)
+}
+
+/// Copies `path` into the `slot` provided
+///
+/// Returns an error if:
+///
+/// * the path is too long to fit
+/// * a nul byte was found
+/// * an invalid path component is encountered (e.g. a root path or parent dir)
+/// * the path itself is empty
 
 #[cfg(target_arch = "wasm32")]
 fn ends_with_slash(p: &Path) -> bool {
