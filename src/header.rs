@@ -24,6 +24,8 @@ use crate::EntryType;
 #[cfg(any(unix, windows))]
 const DETERMINISTIC_TIMESTAMP: u64 = 1153704088;
 
+pub(crate) const BLOCK_SIZE: u64 = 512;
+
 pub(crate) const GNU_SPARSE_HEADERS_COUNT: usize = 4;
 
 pub(crate) const GNU_EXT_SPARSE_HEADERS_COUNT: usize = 21;
@@ -32,7 +34,7 @@ pub(crate) const GNU_EXT_SPARSE_HEADERS_COUNT: usize = 21;
 #[repr(C)]
 #[allow(missing_docs)]
 pub struct Header {
-    bytes: [u8; 512],
+    bytes: [u8; BLOCK_SIZE as usize],
 }
 
 /// Declares the information that should be included when filling a Header
@@ -151,7 +153,9 @@ impl Header {
     /// extensions such as long path names, long link names, and setting the
     /// atime/ctime metadata attributes of files.
     pub fn new_gnu() -> Header {
-        let mut header = Header { bytes: [0; 512] };
+        let mut header = Header {
+            bytes: [0; BLOCK_SIZE as usize],
+        };
         unsafe {
             let gnu = cast_mut::<_, GnuHeader>(&mut header);
             gnu.magic = *b"ustar ";
@@ -169,7 +173,9 @@ impl Header {
     ///
     /// UStar is also the basis used for pax archives.
     pub fn new_ustar() -> Header {
-        let mut header = Header { bytes: [0; 512] };
+        let mut header = Header {
+            bytes: [0; BLOCK_SIZE as usize],
+        };
         unsafe {
             let gnu = cast_mut::<_, UstarHeader>(&mut header);
             gnu.magic = *b"ustar\0";
@@ -186,7 +192,9 @@ impl Header {
     /// format limits the path name limit and isn't able to contain extra
     /// metadata like atime/ctime.
     pub fn new_old() -> Header {
-        let mut header = Header { bytes: [0; 512] };
+        let mut header = Header {
+            bytes: [0; BLOCK_SIZE as usize],
+        };
         header.set_mtime(0);
         header
     }
@@ -276,12 +284,12 @@ impl Header {
     }
 
     /// Returns a view into this header as a byte array.
-    pub fn as_bytes(&self) -> &[u8; 512] {
+    pub fn as_bytes(&self) -> &[u8; BLOCK_SIZE as usize] {
         &self.bytes
     }
 
     /// Returns a view into this header as a byte array.
-    pub fn as_mut_bytes(&mut self) -> &mut [u8; 512] {
+    pub fn as_mut_bytes(&mut self) -> &mut [u8; BLOCK_SIZE as usize] {
         &mut self.bytes
     }
 
@@ -1406,14 +1414,14 @@ impl GnuExtSparseHeader {
     }
 
     /// Returns a view into this header as a byte array.
-    pub fn as_bytes(&self) -> &[u8; 512] {
-        debug_assert_eq!(mem::size_of_val(self), 512);
+    pub fn as_bytes(&self) -> &[u8; BLOCK_SIZE as usize] {
+        debug_assert_eq!(mem::size_of_val(self), BLOCK_SIZE as usize);
         unsafe { mem::transmute(self) }
     }
 
     /// Returns a view into this header as a byte array.
-    pub fn as_mut_bytes(&mut self) -> &mut [u8; 512] {
-        debug_assert_eq!(mem::size_of_val(self), 512);
+    pub fn as_mut_bytes(&mut self) -> &mut [u8; BLOCK_SIZE as usize] {
+        debug_assert_eq!(mem::size_of_val(self), BLOCK_SIZE as usize);
         unsafe { mem::transmute(self) }
     }
 
