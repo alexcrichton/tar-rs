@@ -4,6 +4,7 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::str;
 
+use crate::header::BLOCK_SIZE;
 use crate::header::GNU_SPARSE_HEADERS_COUNT;
 use crate::header::{path2bytes, HeaderMode};
 use crate::GnuExtSparseHeader;
@@ -518,7 +519,7 @@ impl EntryWriter<'_> {
         prepare_header_path(obj.as_write(), header, path)?;
 
         // Reserve space for header, will be overwritten once data is written.
-        obj.write_all([0u8; 512].as_ref())?;
+        obj.write_all([0u8; BLOCK_SIZE as usize].as_ref())?;
 
         Ok(EntryWriter {
             obj,
@@ -544,13 +545,14 @@ impl EntryWriter<'_> {
 
     fn do_finish(&mut self) -> io::Result<()> {
         // Pad with zeros if necessary.
-        let buf = [0u8; 512];
-        let remaining = u64::wrapping_sub(512, self.written) % 512;
+        let buf = [0u8; BLOCK_SIZE as usize];
+        let remaining = BLOCK_SIZE.wrapping_sub(self.written) % BLOCK_SIZE;
         self.obj.write_all(&buf[..remaining as usize])?;
         let written = (self.written + remaining) as i64;
 
         // Seek back to the header position.
-        self.obj.seek(io::SeekFrom::Current(-written - 512))?;
+        self.obj
+            .seek(io::SeekFrom::Current(-written - BLOCK_SIZE as i64))?;
 
         self.header.set_size(self.written);
         self.header.set_cksum();
@@ -589,9 +591,9 @@ fn append(mut dst: &mut dyn Write, header: &Header, mut data: &mut dyn Read) -> 
 }
 
 fn pad_zeroes(dst: &mut dyn Write, len: u64) -> io::Result<()> {
-    let buf = [0; 512];
-    let remaining = 512 - (len % 512);
-    if remaining < 512 {
+    let buf = [0; BLOCK_SIZE as usize];
+    let remaining = BLOCK_SIZE - (len % BLOCK_SIZE);
+    if remaining < BLOCK_SIZE {
         dst.write_all(&buf[..remaining as usize])?;
     }
     Ok(())
