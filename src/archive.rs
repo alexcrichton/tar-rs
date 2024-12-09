@@ -259,7 +259,7 @@ impl Archive<dyn Read + '_> {
 impl<'a, R: Read> Entries<'a, R> {
     /// Indicates whether this iterator will return raw entries or not.
     ///
-    /// If the raw list of entries are returned, then no preprocessing happens
+    /// If the raw list of entries is returned, then no preprocessing happens
     /// on account of this library, for example taking into account GNU long name
     /// or long link archive members. Raw iteration is disabled by default.
     pub fn raw(self, raw: bool) -> Entries<'a, R> {
@@ -304,14 +304,14 @@ impl<'a> EntriesFields<'a> {
             // Otherwise, check if we are ignoring zeros and continue, or break as if this is the
             // end of the archive.
             if !header.as_bytes().iter().all(|i| *i == 0) {
-                self.next += BLOCK_SIZE as u64;
+                self.next += BLOCK_SIZE;
                 break;
             }
 
             if !self.archive.inner.ignore_zeros {
                 return Ok(None);
             }
-            self.next += BLOCK_SIZE as u64;
+            self.next += BLOCK_SIZE;
             header_pos = self.next;
         }
 
@@ -366,11 +366,11 @@ impl<'a> EntriesFields<'a> {
         // Store where the next entry is, rounding up by 512 bytes (the size of
         // a header);
         let size = size
-            .checked_add(BLOCK_SIZE as u64 - 1)
+            .checked_add(BLOCK_SIZE - 1)
             .ok_or_else(|| other("size overflow"))?;
         self.next = self
             .next
-            .checked_add(size & !(BLOCK_SIZE as u64 - 1))
+            .checked_add(size & !(BLOCK_SIZE - 1))
             .ok_or_else(|| other("size overflow"))?;
 
         Ok(Some(ret.into_entry()))
@@ -462,7 +462,7 @@ impl<'a> EntriesFields<'a> {
         if entry.is_pax_sparse() {
             real_size = entry.pax_sparse_realsize()?;
             let mut num_bytes_read = 0;
-            let mut reader = io::BufReader::with_capacity(BLOCK_SIZE, &self.archive.inner);
+            let mut reader = io::BufReader::with_capacity(BLOCK_SIZE as usize, &self.archive.inner);
             let mut read_decimal_line = || -> io::Result<u64> {
                 let mut str = String::new();
                 num_bytes_read += reader.read_line(&mut str)?;
@@ -477,7 +477,7 @@ impl<'a> EntriesFields<'a> {
                 let size = read_decimal_line()?;
                 sparse_map.push(SparseEntry { offset, size });
             }
-            let rem = BLOCK_SIZE - (num_bytes_read % BLOCK_SIZE);
+            let rem = BLOCK_SIZE as usize - (num_bytes_read % BLOCK_SIZE as usize);
             entry.size -= (num_bytes_read + rem) as u64;
         } else if entry.header.entry_type().is_gnu_sparse() {
             let gnu = match entry.header.as_gnu() {
@@ -522,7 +522,7 @@ impl<'a> EntriesFields<'a> {
             let reader = &self.archive.inner;
             let size = entry.size;
             let mut add_block = |off: u64, len: u64| -> io::Result<_> {
-                if len != 0 && (size - remaining) % BLOCK_SIZE as u64 != 0 {
+                if len != 0 && (size - remaining) % BLOCK_SIZE != 0 {
                     return Err(other(
                         "previous block in sparse file was not \
                          aligned to 512-byte boundary",
@@ -559,7 +559,7 @@ impl<'a> EntriesFields<'a> {
                         return Err(other("failed to read extension"));
                     }
 
-                    self.next += BLOCK_SIZE as u64;
+                    self.next += BLOCK_SIZE;
                     for block in ext.sparse.iter() {
                         if !block.is_empty() {
                             add_block(block.offset()?, block.length()?)?;
