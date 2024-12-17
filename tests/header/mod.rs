@@ -1,11 +1,13 @@
-use std::fs::{self, File};
-use std::io::{self, Write};
-use std::path::Path;
-use std::{iter, mem, thread, time};
+use std::{
+    fs::{self, File},
+    io::{self, Write},
+    iter, mem,
+    path::Path,
+    thread, time,
+};
 
+use tar::{EntryType, GnuHeader, Header, HeaderMode};
 use tempfile::Builder;
-
-use tar::{GnuHeader, Header, HeaderMode};
 
 #[test]
 fn default_gnu() {
@@ -253,4 +255,15 @@ fn byte_slice_conversion() {
     let b: &[u8] = h.as_bytes();
     let b_conv: &[u8] = Header::from_byte_slice(h.as_bytes()).as_bytes();
     assert_eq!(b, b_conv);
+}
+
+#[test]
+fn hardlink_entry_size() {
+    let mut h = Header::new_ustar();
+    let p = Path::new("a").join(&vec!["a"; 100].join(""));
+    h.set_entry_type(EntryType::Link);
+    t!(h.set_path(&p));
+    t!(h.set_link_name("foo"));
+    h.set_size(200);
+    assert_eq!(t!(h.entry_size()), 0);
 }
