@@ -773,7 +773,7 @@ impl Header {
         unimplemented!();
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         match mode {
             HeaderMode::Complete => {
@@ -1650,7 +1650,7 @@ fn ends_with_slash(p: &Path) -> bool {
     last == Some(b'/' as u16) || last == Some(b'\\' as u16)
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 fn ends_with_slash(p: &Path) -> bool {
     p.as_os_str().as_bytes().ends_with(&[b'/'])
 }
@@ -1677,7 +1677,7 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
         })
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 /// On unix this will never fail
 pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     Ok(p.as_os_str().as_bytes()).map(Cow::Borrowed)
@@ -1706,7 +1706,7 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 /// On unix this operation can never fail.
 pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     use std::ffi::{OsStr, OsString};
