@@ -1,4 +1,4 @@
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 use std::os::unix::prelude::*;
 #[cfg(windows)]
 use std::os::windows::prelude::*;
@@ -21,7 +21,7 @@ use crate::EntryType;
 ///
 /// This value, chosen after careful deliberation, corresponds to _Jul 23, 2006_,
 /// which is the date of the first commit for what would become Rust.
-#[cfg(any(unix, windows))]
+#[cfg(all(any(unix, windows), not(target_arch = "wasm32")))]
 const DETERMINISTIC_TIMESTAMP: u64 = 1153704088;
 
 pub(crate) const BLOCK_SIZE: u64 = 512;
