@@ -35,6 +35,14 @@ jobs:
       run: sudo -E $(which cargo) test
       if: ${{ matrix.os == 'ubuntu-latest' }}
 
+  wasm:
+    name: Wasm
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - run: rustup target add wasm32-unknown-emscripten
+    - run: cargo build --target=wasm32-unknown-emscripten
+
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest
