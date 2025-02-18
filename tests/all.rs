@@ -958,6 +958,8 @@ fn pax_simple() {
 fn pax_simple_write() {
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
     let pax_path = td.path().join("pax.tar");
+    let test2 = td.path().join("test2");
+    t!(std::fs::write(&test2, "Hello, world"));
     let file: File = t!(File::create(&pax_path));
     let mut ar: Builder<BufWriter<File>> = Builder::new(BufWriter::new(file));
 
@@ -967,7 +969,7 @@ fn pax_simple_write() {
     ];
 
     t!(ar.append_pax_extensions(pax_extensions));
-    t!(ar.append_file("test2", &mut t!(File::open(&pax_path))));
+    t!(ar.append_file("test2", &mut t!(File::open(&test2))));
     t!(ar.finish());
     drop(ar);
 
