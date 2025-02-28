@@ -1289,11 +1289,14 @@ fn sparse_with_trailing() {
 fn pax_sparse() {
     let rdr = Cursor::new(tar!("pax_sparse.tar"));
     let mut ar = Archive::new(rdr);
-    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
-    t!(ar.unpack(td.path()));
+    let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
+    ar.unpack(td.path()).unwrap();
 
     let mut s = String::new();
-    t!(t!(File::open(td.path().join("sparse_begin.txt"))).read_to_string(&mut s));
+    File::open(td.path().join("sparse_begin.txt"))
+        .unwrap()
+        .read_to_string(&mut s)
+        .unwrap();
     assert_eq!(&s[..5], "test\n");
     assert!(s[5..].chars().all(|x| x == '\u{0}'));
 }
