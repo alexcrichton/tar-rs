@@ -124,6 +124,12 @@ pub struct GnuHeader {
     pub pad: [u8; 17],
 }
 
+/// Description of a spare entry.
+pub struct SparseEntry {
+    pub offset: u64,
+    pub size: u64,
+}
+
 /// Description of the header of a spare entry.
 ///
 /// Specifies the offset/number of bytes of a chunk of data in octal.

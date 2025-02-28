@@ -13,6 +13,7 @@ use crate::archive::ArchiveInner;
 use crate::error::TarError;
 use crate::header::bytes2path;
 use crate::other;
+use crate::pax::{GNU_SPARSE_MAJOR_EXTENSION, GNU_SPARSE_MINOR_EXTENSION};
 use crate::{Archive, Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
@@ -298,6 +299,47 @@ impl<'a> EntryFields<'a> {
         let cap = cmp::min(self.size, 128 * 1024);
         let mut v = Vec::with_capacity(cap as usize);
         self.read_to_end(&mut v).map(|_| v)
+    }
+
+    /// Check if the tar file is using PAX sparse extensions.
+    pub fn is_pax_sparse(&mut self) -> bool {
+        if let Some(ref pax) = self.pax_extensions {
+            let mut extensions = PaxExtensions::new(pax).filter_map(|f| f.ok());
+            return extensions
+                .find(|f| *f == GNU_SPARSE_MAJOR_EXTENSION)
+                .is_some()
+                && extensions
+                    .find(|f| *f == GNU_SPARSE_MINOR_EXTENSION)
+                    .is_some();
+        }
+        false
+    }
+
+    pub fn pax_sparse_name(&mut self) -> Option<Vec<u8>> {
+        if let Some(ref pax) = self.pax_extensions {
+            return PaxExtensions::new(pax)
+                .filter_map(|f| f.ok())
+                .find(|f| f.key_bytes() == b"GNU.sparse.name")
+                .map(|f| f.value_bytes().to_vec());
+        }
+        None
+    }
+
+    pub fn pax_sparse_realsize(&mut self) -> io::Result<u64> {
+        if let Some(ref pax) = self.pax_extensions {
+            let pax = PaxExtensions::new(pax)
+                .filter_map(|f| f.ok())
+                .find(|f| f.key_bytes() == b"GNU.sparse.realsize")
+                .map(|f| f.value_bytes());
+            if let Some(field) = pax {
+                let str =
+                    std::str::from_utf8(&field).map_err(|_| other("failed to read string"))?;
+                return str
+                    .parse::<u64>()
+                    .map_err(|_| other("failed to parse the real size"));
+            }
+        }
+        Err(other("PAX extension GNU.sparse.realsize not found"))
     }
 
     fn path(&self) -> io::Result<Cow<Path>> {
