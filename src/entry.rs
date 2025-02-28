@@ -13,6 +13,7 @@ use crate::archive::ArchiveInner;
 use crate::error::TarError;
 use crate::header::bytes2path;
 use crate::other;
+use crate::pax::{GNU_SPARSE_MAJOR_EXTENSION, GNU_SPARSE_MINOR_EXTENSION};
 use crate::{Archive, Header, PaxExtensions};
 
 /// A read-only view into an entry of an archive.
@@ -285,14 +286,15 @@ impl<'a> EntryFields<'a> {
         self.read_to_end(&mut v).map(|_| v)
     }
 
+    /// Check if the tar file is using PAX sparse extensions.
     pub fn is_pax_sparse(&mut self) -> bool {
         if let Some(ref pax) = self.pax_extensions {
             let mut extensions = PaxExtensions::new(pax).filter_map(|f| f.ok());
             return extensions
-                .find(|f| f.key_bytes() == b"GNU.sparse.major" && f.value_bytes() == b"1")
+                .find(|f| *f == GNU_SPARSE_MAJOR_EXTENSION)
                 .is_some()
                 && extensions
-                    .find(|f| f.key_bytes() == b"GNU.sparse.minor" && f.value_bytes() == b"0")
+                    .find(|f| *f == GNU_SPARSE_MINOR_EXTENSION)
                     .is_some();
         }
         false

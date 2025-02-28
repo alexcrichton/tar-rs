@@ -25,10 +25,23 @@ impl<'entry> PaxExtensions<'entry> {
 }
 
 /// A key/value pair corresponding to a pax extension.
+#[derive(PartialEq)]
 pub struct PaxExtension<'entry> {
     key: &'entry [u8],
     value: &'entry [u8],
 }
+
+/// Constant of the GNU sparse major extension.
+pub const GNU_SPARSE_MAJOR_EXTENSION: PaxExtension<'_> = PaxExtension {
+    key: b"GNU.sparse.major",
+    value: b"1",
+};
+
+/// Constant of the GNU sparse minor extension.
+pub const GNU_SPARSE_MINOR_EXTENSION: PaxExtension<'_> = PaxExtension {
+    key: b"GNU.sparse.minor",
+    value: b"0",
+};
 
 pub fn pax_extensions_size(a: &[u8]) -> Option<u64> {
     for extension in PaxExtensions::new(a) {
