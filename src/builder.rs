@@ -381,7 +381,7 @@ impl<W: Write> Builder<W> {
     /// operation then this may corrupt the archive.
     ///
     /// Note this will not add the contents of the directory to the archive.
-    /// See `append_dir_all` for recusively adding the contents of the directory.
+    /// See `append_dir_all` for recursively adding the contents of the directory.
     ///
     /// Also note that after all files have been written to an archive the
     /// `finish` function needs to be called to finish writing the archive.
@@ -983,7 +983,7 @@ fn find_sparse_entries_seek(
         });
     }
 
-    // On most Unices, we need to read `_PC_MIN_HOLE_SIZE` to see if the file
+    // On most Unixes, we need to read `_PC_MIN_HOLE_SIZE` to see if the file
     // system supports `SEEK_HOLE`.
     // FreeBSD: https://man.freebsd.org/cgi/man.cgi?query=lseek&sektion=2&manpath=FreeBSD+14.1-STABLE
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
