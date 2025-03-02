@@ -1603,7 +1603,7 @@ fn copy_path_into_inner(
 
     fn copy(slot: &mut &mut [u8], bytes: &[u8]) -> io::Result<()> {
         copy_into(slot, bytes)?;
-        let tmp = std::mem::take(slot);
+        let tmp = mem::take(slot);
         *slot = &mut tmp[bytes.len()..];
         Ok(())
     }
