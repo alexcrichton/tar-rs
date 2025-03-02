@@ -161,13 +161,13 @@ fn large_filename() {
     let path = td.path().join("test");
     t!(t!(File::create(&path)).write_all(b"test"));
 
-    let filename = repeat("abcd/").take(50).collect::<String>();
+    let filename = "abcd/".repeat(50);
     let mut header = Header::new_ustar();
     header.set_path(&filename).unwrap();
     header.set_metadata(&t!(fs::metadata(&path)));
     header.set_cksum();
     t!(ar.append(&header, &b"test"[..]));
-    let too_long = repeat("abcd").take(200).collect::<String>();
+    let too_long = "abcd".repeat(200);
     t!(ar.append_file(&too_long, &mut t!(File::open(&path))));
     t!(ar.append_data(&mut header, &too_long, &b"test"[..]));
 
@@ -280,9 +280,8 @@ impl<R> LoggingReader<R> {
 
 impl<T: Read> Read for LoggingReader<T> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.inner.read(buf).map(|i| {
+        self.inner.read(buf).inspect(|&i| {
             self.read_bytes += i as u64;
-            i
         })
     }
 }
@@ -535,7 +534,7 @@ fn append_dir_all_blank_dest() {
     let mut ar = Archive::new(Cursor::new(data));
     t!(ar.unpack(td.path()));
     let base_dir = td.path();
-    assert!(fs::metadata(&base_dir).map(|m| m.is_dir()).unwrap_or(false));
+    assert!(fs::metadata(base_dir).map(|m| m.is_dir()).unwrap_or(false));
     let file1_path = base_dir.join("file1");
     assert!(fs::metadata(&file1_path)
         .map(|m| m.is_file())
@@ -1152,7 +1151,7 @@ fn encoded_long_name_has_trailing_nul() {
     t!(t!(File::create(&path)).write_all(b"test"));
 
     let mut b = Builder::new(Vec::<u8>::new());
-    let long = repeat("abcd").take(200).collect::<String>();
+    let long = "abcd".repeat(200);
 
     t!(b.append_file(&long, &mut t!(File::open(&path))));
 
@@ -1286,6 +1285,7 @@ fn sparse_with_trailing() {
 }
 
 #[test]
+#[allow(clippy::option_map_unit_fn)]
 fn writing_sparse() {
     let mut ar = Builder::new(Vec::new());
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
@@ -1399,8 +1399,8 @@ fn append_path_symlink() {
     ar.follow_symlinks(false);
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
 
-    let long_linkname = repeat("abcd").take(30).collect::<String>();
-    let long_pathname = repeat("dcba").take(30).collect::<String>();
+    let long_linkname = "abcd".repeat(30);
+    let long_pathname = "dcba".repeat(30);
     t!(env::set_current_dir(td.path()));
     // "short" path name / short link name
     t!(symlink("testdest", "test"));
@@ -1611,7 +1611,7 @@ fn header_size_overflow() {
     let mut header = Header::new_gnu();
     header.set_size(u64::MAX);
     header.set_cksum();
-    ar.append(&mut header, "x".as_bytes()).unwrap();
+    ar.append(&header, "x".as_bytes()).unwrap();
     let result = t!(ar.into_inner());
     let mut ar = Archive::new(&result[..]);
     let mut e = ar.entries().unwrap();
@@ -1627,11 +1627,11 @@ fn header_size_overflow() {
     let mut header = Header::new_gnu();
     header.set_size(1_000);
     header.set_cksum();
-    ar.append(&mut header, &[0u8; 1_000][..]).unwrap();
+    ar.append(&header, &[0u8; 1_000][..]).unwrap();
     let mut header = Header::new_gnu();
     header.set_size(u64::MAX - 513);
     header.set_cksum();
-    ar.append(&mut header, "x".as_bytes()).unwrap();
+    ar.append(&header, "x".as_bytes()).unwrap();
     let result = t!(ar.into_inner());
     let mut ar = Archive::new(&result[..]);
     let mut e = ar.entries().unwrap();

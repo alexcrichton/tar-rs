@@ -430,10 +430,10 @@ impl<'a> EntryFields<'a> {
             None => return Ok(false),
         };
 
-        self.ensure_dir_created(&dst, parent)
+        self.ensure_dir_created(dst, parent)
             .map_err(|e| TarError::new(format!("failed to create `{}`", parent.display()), e))?;
 
-        let canon_target = self.validate_inside_dst(&dst, parent)?;
+        let canon_target = self.validate_inside_dst(dst, parent)?;
 
         self.unpack(Some(&canon_target), &file_dst)
             .map_err(|e| TarError::new(format!("failed to unpack `{}`", file_dst.display()), e))?;
@@ -537,7 +537,7 @@ impl<'a> EntryFields<'a> {
                     // use canonicalization to ensure this guarantee. For hard
                     // links though they're canonicalized to their existing path
                     // so we need to validate at this time.
-                    Some(ref p) => {
+                    Some(p) => {
                         let link_src = p.join(src);
                         self.validate_inside_dst(p, &link_src)?;
                         link_src

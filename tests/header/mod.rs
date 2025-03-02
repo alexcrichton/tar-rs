@@ -1,7 +1,7 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
-use std::{iter, mem, thread, time};
+use std::{mem, thread, time};
 
 use tempfile::Builder;
 
@@ -145,9 +145,9 @@ fn set_path() {
     t!(h.set_path("./control"));
     assert_eq!(t!(h.path()).to_str(), Some("control"));
 
-    let long_name = iter::repeat("foo").take(100).collect::<String>();
-    let medium1 = iter::repeat("foo").take(52).collect::<String>();
-    let medium2 = iter::repeat("fo/").take(52).collect::<String>();
+    let long_name = "foo".repeat(100);
+    let medium1 = "foo".repeat(52);
+    let medium2 = "fo/".repeat(52);
 
     assert!(h.set_path(&long_name).is_err());
     assert!(h.set_path(&medium1).is_err());
@@ -171,7 +171,7 @@ fn set_path() {
 #[test]
 fn set_ustar_path_hard() {
     let mut h = Header::new_ustar();
-    let p = Path::new("a").join(&vec!["a"; 100].join(""));
+    let p = Path::new("a").join(vec!["a"; 100].join(""));
     t!(h.set_path(&p));
     assert_eq!(t!(h.path()), p);
 }
