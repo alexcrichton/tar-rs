@@ -264,10 +264,7 @@ impl<'a, R: Read> Entries<'a, R> {
     /// or long link archive members. Raw iteration is disabled by default.
     pub fn raw(self, raw: bool) -> Entries<'a, R> {
         Entries {
-            fields: EntriesFields {
-                raw,
-                ..self.fields
-            },
+            fields: EntriesFields { raw, ..self.fields },
             _ignored: marker::PhantomData,
         }
     }
