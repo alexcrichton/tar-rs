@@ -184,6 +184,22 @@ impl<W: Write> Builder<W> {
         self.append(&header, data)
     }
 
+    /// Add a file entry to the archive.
+    ///
+    /// This function will create a header for a file of correct size, mode, and checksum.
+    pub fn append_file_data<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        mode: u32,
+        data: &[u8],
+    ) -> io::Result<()> {
+        let mut header = Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(mode);
+        header.set_cksum();
+        self.append_data(&mut header, path, data)
+    }
+
     /// Adds a new entry to this archive and returns an [`EntryWriter`] for
     /// adding its contents.
     ///
