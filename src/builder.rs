@@ -418,6 +418,11 @@ impl<W: Write> Builder<W> {
     /// `finish` or `into_inner` function needs to be called to finish
     /// writing the archive.
     ///
+    /// # Hardlinks
+    ///
+    /// This function will never create hardlinks; to do that, you will
+    /// need to implement a custom recursive walk.
+    ///
     /// # Examples
     ///
     /// ```
