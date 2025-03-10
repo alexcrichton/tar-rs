@@ -45,6 +45,16 @@ fn absolute_symlink() {
 #[test]
 fn absolute_hardlink() {
     let td = t!(Builder::new().prefix("tar").tempdir());
+    // on macos the tempdir is created in /var/folders/ which is actually
+    // /private/var/folders/. Canonicalize the path so the link target has
+    // the proper base. Do not do this on Windows as canonicalize() will
+    // convert the path to the extended length syntax which cannot be used
+    // in the tarball paths.
+    let td_canon = if cfg!(unix) {
+        td.path().canonicalize().unwrap()
+    } else {
+        td.path().to_path_buf()
+    };
     let mut ar = tar::Builder::new(Vec::new());
 
     let mut header = tar::Header::new_gnu();
@@ -59,16 +69,30 @@ fn absolute_hardlink() {
     header.set_entry_type(tar::EntryType::Link);
     t!(header.set_path("bar"));
     // This absolute path under tempdir will be created at unpack time
-    t!(header.set_link_name(td.path().join("foo")));
+    t!(header.set_link_name(td_canon.join("foo")));
+    header.set_cksum();
+    t!(ar.append(&header, &[][..]));
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Link);
+    t!(header.set_path("baz"));
+    // This absolute path on root will be converted when unpacking
+    if cfg!(unix) {
+        t!(header.set_link_name("/foo"));
+    } else {
+        t!(header.set_link_name("C:\\foo"));
+    }
     header.set_cksum();
     t!(ar.append(&header, &[][..]));
 
     let bytes = t!(ar.into_inner());
     let mut ar = tar::Archive::new(&bytes[..]);
 
-    t!(ar.unpack(td.path()));
+    t!(ar.unpack(&td_canon));
     t!(td.path().join("foo").metadata());
     t!(td.path().join("bar").metadata());
+    t!(td.path().join("baz").metadata());
 }
 
 #[test]
