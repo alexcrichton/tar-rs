@@ -1,12 +1,10 @@
 use std::borrow::Cow;
 use std::cmp;
-use std::collections::BTreeMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
-use std::ops::Bound;
 use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
@@ -36,12 +34,12 @@ pub struct EntryFields<'a> {
     pub mask: u32,
     pub header: Header,
     pub size: u64,
+    pub real_size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
     pub data: &'a ArchiveInner<dyn Read + 'a>,
     pub data_seekable: Option<&'a ArchiveInner<dyn SeekRead + 'a>>,
-    pub data_index: BTreeMap<u64, EntrySegment>,
-    pub virtual_pos: u64,
+    pub cursor: EntryCursor,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
     pub preserve_ownerships: bool,
@@ -49,9 +47,17 @@ pub struct EntryFields<'a> {
     pub overwrite: bool,
 }
 
+#[derive(Default)]
+pub struct EntryCursor {
+    pub pos: u64,
+    pub segments: Vec<EntrySegment>,
+    pub cur_segment: usize,
+}
+
 pub struct EntrySegment {
     pub file_off: u64,
-    pub virtual_off: u64,
+    pub start: u64,
+    pub end: u64,
     pub kind: EntrySegmentKind,
 }
 
@@ -671,12 +677,9 @@ impl<'a> EntryFields<'a> {
                     Err(err)
                 }
             })?;
-            for (src_end, src) in self
-                .data_index
-                .range((Bound::Excluded(self.virtual_pos), Bound::Unbounded))
-            {
-                let limit = src_end - self.virtual_pos;
-                match src.kind {
+            for seg in &self.cursor.segments[self.cursor.cur_segment..] {
+                let limit = seg.end - self.cursor.pos;
+                match seg.kind {
                     EntrySegmentKind::Data => {
                         let mut d = (&mut self.data).take(limit);
                         if io::copy(&mut d, &mut f)? != limit {
@@ -690,7 +693,8 @@ impl<'a> EntryFields<'a> {
                         f.set_len(size)?;
                     }
                 }
-                self.virtual_pos += limit;
+                self.cursor.pos += limit;
+                self.cursor.cur_segment += 1;
             }
             Ok(f)
         })()
@@ -968,20 +972,20 @@ impl<'a> EntryFields<'a> {
 
 impl<'a> Read for EntryFields<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        let Some((src_end, src)) = self
-            .data_index
-            .range((Bound::Excluded(self.virtual_pos), Bound::Unbounded))
-            .next()
-        else {
+        let Some(seg) = self.cursor.segments.get(self.cursor.cur_segment) else {
             return Ok(0);
         };
 
-        let limit = src_end - self.virtual_pos;
-        let n_read = match src.kind {
+        let limit = seg.end - self.cursor.pos;
+        let n_read = match seg.kind {
             EntrySegmentKind::Pad => io::repeat(0).take(limit).read(into)?,
             EntrySegmentKind::Data => self.data.take(limit).read(into)?,
         };
-        self.virtual_pos += n_read as u64;
+
+        self.cursor.pos += n_read as u64;
+        if n_read as u64 == limit {
+            self.cursor.cur_segment += 1;
+        }
         Ok(n_read)
     }
 }
@@ -1001,27 +1005,49 @@ impl<'a> Seek for EntryFields<'a> {
             SeekFrom::Current(_) => todo!(),
         };
 
-        if target == self.virtual_pos {
-            return Ok(self.virtual_pos);
+        if target == self.cursor.pos {
+            return Ok(self.cursor.pos);
         }
-        self.virtual_pos = target;
 
-        let Some((_, src)) = self
-            .data_index
-            .range((Bound::Excluded(self.virtual_pos), Bound::Unbounded))
-            .next()
-        else {
-            return Ok(self.virtual_pos);
+        let cur_segment = self.cursor.segments.partition_point(|seg| target < seg.end);
+        let Some(seg) = self.cursor.segments.get(cur_segment) else {
+            self.cursor.pos = self.real_size;
+            self.cursor.cur_segment = cur_segment;
+            return Ok(self.cursor.pos);
         };
 
-        let pos = match src.kind {
-            EntrySegmentKind::Pad => SeekFrom::Start(src.file_off),
-            EntrySegmentKind::Data => {
-                SeekFrom::Start(src.file_off + (self.virtual_pos - src.virtual_off))
-            }
+        let pos = match seg.kind {
+            EntrySegmentKind::Pad => SeekFrom::Start(seg.file_off),
+            EntrySegmentKind::Data => SeekFrom::Start(seg.file_off + (target - seg.start)),
         };
         data.seek(pos)?;
 
-        Ok(self.virtual_pos)
+        self.cursor.pos = target;
+        self.cursor.cur_segment = cur_segment;
+        Ok(self.cursor.pos)
+    }
+}
+
+impl EntryCursor {
+    pub fn append_segment(&mut self, kind: EntrySegmentKind, end: u64, entry_file_pos: u64) {
+        let (start, file_off) = match self.segments.last() {
+            Some(prev) => (
+                prev.end,
+                match prev.kind {
+                    EntrySegmentKind::Pad => prev.file_off,
+                    EntrySegmentKind::Data => prev.file_off + (prev.end - prev.start),
+                },
+            ),
+            None => (0, entry_file_pos),
+        };
+        debug_assert!(end >= start);
+
+        let seg = EntrySegment {
+            file_off: file_off,
+            start: start,
+            end: end,
+            kind: kind,
+        };
+        self.segments.push(seg);
     }
 }

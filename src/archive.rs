@@ -1,6 +1,5 @@
 use std::cell::{Cell, RefCell};
 use std::cmp;
-use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fs;
 use std::io::prelude::*;
@@ -8,7 +7,7 @@ use std::io::{self, SeekFrom};
 use std::marker;
 use std::path::Path;
 
-use crate::entry::{EntryFields, EntrySegment, EntrySegmentKind};
+use crate::entry::{EntryCursor, EntryFields, EntrySegmentKind};
 use crate::error::TarError;
 use crate::header::BLOCK_SIZE;
 use crate::other;
@@ -346,24 +345,18 @@ impl<'a> EntriesFields<'a> {
                 size = pax_size;
             }
         }
-        let mut data_index = BTreeMap::new();
-        data_index.insert(
-            size,
-            EntrySegment {
-                file_off: file_pos,
-                virtual_off: 0,
-                kind: EntrySegmentKind::Data,
-            },
-        );
+        let real_size = header.size()?;
+
+        let mut cursor = EntryCursor::default();
+        cursor.append_segment(EntrySegmentKind::Data, size, file_pos);
 
         let ret = EntryFields {
             size: size,
+            real_size: real_size,
             header_pos: header_pos,
             file_pos: file_pos,
             data: &self.archive.inner,
             data_seekable: self.seekable_archive.map(|a| &a.inner),
-            data_index: data_index,
-            virtual_pos: 0,
             header: header,
             long_pathname: None,
             long_linkname: None,
@@ -374,6 +367,7 @@ impl<'a> EntriesFields<'a> {
             preserve_mtime: self.archive.inner.preserve_mtime,
             overwrite: self.archive.inner.overwrite,
             preserve_ownerships: self.archive.inner.preserve_ownerships,
+            cursor: cursor,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
@@ -484,21 +478,20 @@ impl<'a> EntriesFields<'a> {
         // the same as the current offset (described by the list of blocks) as
         // well as the amount of data read equals the size of the entry
         // (`Header::entry_size`).
-        entry.data_index.clear();
+        entry.cursor.segments.truncate(0);
 
         let mut cur = 0;
         let mut remaining = entry.size;
         {
-            let index = &mut entry.data_index;
             let size = entry.size;
             let file_pos = entry.file_pos;
+            let cursor = &mut entry.cursor;
             let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
                 if block.is_empty() {
                     return Ok(());
                 }
                 let off = block.offset()?;
                 let len = block.length()?;
-                let file_off = file_pos + (size - remaining);
                 if len != 0 && (size - remaining) % BLOCK_SIZE != 0 {
                     return Err(other(
                         "previous block in sparse file was not \
@@ -510,14 +503,7 @@ impl<'a> EntriesFields<'a> {
                          blocks",
                     ));
                 } else if cur < off {
-                    index.insert(
-                        off,
-                        EntrySegment {
-                            file_off,
-                            virtual_off: cur,
-                            kind: EntrySegmentKind::Pad,
-                        },
-                    );
+                    cursor.append_segment(EntrySegmentKind::Pad, off, file_pos);
                 }
                 cur = off
                     .checked_add(len)
@@ -528,16 +514,7 @@ impl<'a> EntriesFields<'a> {
                          listed",
                     )
                 })?;
-                if len > 0 {
-                    index.insert(
-                        cur,
-                        EntrySegment {
-                            file_off,
-                            virtual_off: off,
-                            kind: EntrySegmentKind::Data,
-                        },
-                    );
-                }
+                cursor.append_segment(EntrySegmentKind::Data, cur, file_pos);
                 Ok(())
             };
             for block in gnu.sparse.iter() {
