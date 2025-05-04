@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
-use crate::archive::ArchiveInner;
+use crate::archive::{ArchiveInner, SeekRead};
 use crate::error::TarError;
 use crate::header::bytes2path;
 use crate::other;
@@ -18,8 +18,12 @@ use crate::{Archive, Header, PaxExtensions};
 /// A read-only view into an entry of an archive.
 ///
 /// This structure is a window into a portion of a borrowed archive which can
-/// be inspected. It acts as a file handle by implementing the Reader trait. An
+/// be inspected. It acts as a file handle by implementing the [Read] trait. An
 /// entry cannot be rewritten once inserted into an archive.
+///
+/// Note that the [Seek] implementation for this type is only valid for values
+/// obtained from [`Archive::entries_with_seek`]. Calling [Seek::seek] on a
+/// value obtained otherwise will return an error.
 pub struct Entry<'a, R: 'a + Read> {
     fields: EntryFields<'a>,
     _ignored: marker::PhantomData<&'a Archive<R>>,
@@ -34,9 +38,12 @@ pub struct EntryFields<'a> {
     pub mask: u32,
     pub header: Header,
     pub size: u64,
+    pub real_size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
-    pub data: Vec<EntryIo<'a>>,
+    pub data: &'a ArchiveInner<dyn Read + 'a>,
+    pub data_seekable: Option<&'a ArchiveInner<dyn SeekRead + 'a>>,
+    pub cursor: EntryCursor,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
     pub preserve_ownerships: bool,
@@ -44,9 +51,24 @@ pub struct EntryFields<'a> {
     pub overwrite: bool,
 }
 
-pub enum EntryIo<'a> {
-    Pad(io::Take<io::Repeat>),
-    Data(io::Take<&'a ArchiveInner<dyn Read + 'a>>),
+#[derive(Default)]
+pub struct EntryCursor {
+    pub pos: u64,
+    pub segments: Vec<EntrySegment>,
+    pub cur_segment: usize,
+}
+
+pub struct EntrySegment {
+    pub file_off: u64,
+    pub start: u64,
+    pub end: u64,
+    pub kind: EntrySegmentKind,
+}
+
+#[derive(Debug)]
+pub enum EntrySegmentKind {
+    Pad,
+    Data,
 }
 
 /// When unpacking items the unpacked thing is returned to allow custom
@@ -278,6 +300,12 @@ impl<'a, R: Read> Entry<'a, R> {
 impl<'a, R: Read> Read for Entry<'a, R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         self.fields.read(into)
+    }
+}
+
+impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.fields.seek(pos)
     }
 }
 
@@ -659,21 +687,24 @@ impl<'a> EntryFields<'a> {
                     Err(err)
                 }
             })?;
-            for io in self.data.drain(..) {
-                match io {
-                    EntryIo::Data(mut d) => {
-                        let expected = d.limit();
-                        if io::copy(&mut d, &mut f)? != expected {
+            for seg in &self.cursor.segments[self.cursor.cur_segment..] {
+                let limit = seg.end - self.cursor.pos;
+                match seg.kind {
+                    EntrySegmentKind::Data => {
+                        let mut d = (&mut self.data).take(limit);
+                        if io::copy(&mut d, &mut f)? != limit {
                             return Err(other("failed to write entire file"));
                         }
                     }
-                    EntryIo::Pad(d) => {
+                    EntrySegmentKind::Pad => {
                         // TODO: checked cast to i64
-                        let to = SeekFrom::Current(d.limit() as i64);
+                        let to = SeekFrom::Current(limit as i64);
                         let size = f.seek(to)?;
                         f.set_len(size)?;
                     }
                 }
+                self.cursor.pos += limit;
+                self.cursor.cur_segment += 1;
             }
             Ok(f)
         })()
@@ -951,23 +982,81 @@ impl<'a> EntryFields<'a> {
 
 impl<'a> Read for EntryFields<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        loop {
-            match self.data.get_mut(0).map(|io| io.read(into)) {
-                Some(Ok(0)) => {
-                    self.data.remove(0);
-                }
-                Some(r) => return r,
-                None => return Ok(0),
+        for seg in &self.cursor.segments[self.cursor.cur_segment..] {
+            let limit = seg.end - self.cursor.pos;
+            let n_read = match seg.kind {
+                EntrySegmentKind::Pad => io::repeat(0).take(limit).read(into),
+                EntrySegmentKind::Data => self.data.take(limit).read(into),
+            }?;
+            if n_read != 0 {
+                self.cursor.pos += n_read as u64;
+                return Ok(n_read);
             }
+            self.cursor.cur_segment += 1;
         }
+        Ok(0)
     }
 }
 
-impl<'a> Read for EntryIo<'a> {
-    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        match *self {
-            EntryIo::Pad(ref mut io) => io.read(into),
-            EntryIo::Data(ref mut io) => io.read(into),
+impl<'a> Seek for EntryFields<'a> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let mut data = self.data_seekable.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "seeking only supported on entries produced from Archive::entries_with_seek",
+            )
+        })?;
+
+        let target = match pos {
+            SeekFrom::Start(n) => Some(n),
+            SeekFrom::End(n) => self.real_size.checked_add_signed(n),
+            SeekFrom::Current(n) => self.cursor.pos.checked_add_signed(n),
         }
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "seek pos overflow"))?;
+
+        if target == self.cursor.pos {
+            return Ok(self.cursor.pos);
+        }
+
+        let cur_segment = self.cursor.segments.partition_point(|s| s.end <= target);
+        let Some(seg) = self.cursor.segments.get(cur_segment) else {
+            self.cursor.pos = self.real_size;
+            self.cursor.cur_segment = cur_segment;
+            return Ok(self.cursor.pos);
+        };
+
+        let pos = match seg.kind {
+            EntrySegmentKind::Pad => SeekFrom::Start(seg.file_off),
+            EntrySegmentKind::Data => SeekFrom::Start(seg.file_off + (target - seg.start)),
+        };
+        data.seek(pos)?;
+
+        self.cursor.pos = target;
+        self.cursor.cur_segment = cur_segment;
+        Ok(self.cursor.pos)
+    }
+}
+
+impl EntryCursor {
+    pub fn append_segment(&mut self, kind: EntrySegmentKind, end: u64, entry_file_pos: u64) {
+        let (start, file_off) = match self.segments.last() {
+            Some(prev) => (
+                prev.end,
+                match prev.kind {
+                    EntrySegmentKind::Pad => prev.file_off,
+                    EntrySegmentKind::Data => prev.file_off + (prev.end - prev.start),
+                },
+            ),
+            None => (0, entry_file_pos),
+        };
+        debug_assert!(end >= start);
+
+        let seg = EntrySegment {
+            file_off: file_off,
+            start: start,
+            end: end,
+            kind: kind,
+        };
+        self.segments.push(seg);
     }
 }

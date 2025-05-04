@@ -6,7 +6,7 @@ extern crate xattr;
 
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::io::{self, BufWriter, Cursor};
+use std::io::{self, BufWriter, Cursor, SeekFrom};
 use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
@@ -262,6 +262,43 @@ fn reading_entries_with_seek() {
     let rdr = Cursor::new(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
     reading_entries_common(ar.entries_with_seek().unwrap());
+}
+
+#[test]
+fn seeking_entries() {
+    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let mut ar = Archive::new(rdr);
+    let mut entries = ar.entries_with_seek().unwrap();
+
+    let mut a = t!(entries.next().unwrap());
+    assert_eq!(&*a.header().path_bytes(), b"a");
+    assert_eq!(t!(a.seek(SeekFrom::End(0))), 22);
+    assert_eq!(t!(a.seek(SeekFrom::Start(2))), 2);
+    let mut s = String::new();
+    t!(a.read_to_string(&mut s));
+    assert_eq!(s, "a\na\na\na\na\na\na\na\na\na\n");
+    s.truncate(0);
+    assert!(a.seek(SeekFrom::End(-23)).is_err());
+    t!(a.seek(SeekFrom::Current(-5)));
+    t!(a.read_to_string(&mut s));
+    assert_eq!(s, "\na\na\n");
+    t!(a.seek(SeekFrom::End(-10)));
+
+    let mut b = t!(entries.next().unwrap());
+    assert_eq!(&*b.header().path_bytes(), b"b");
+    s.truncate(0);
+    t!(b.read_to_string(&mut s));
+    assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
+    s.truncate(0);
+    t!(b.seek(SeekFrom::Start(0)));
+    t!(b.read_to_string(&mut s));
+    assert_eq!(s, "b\nb\nb\nb\nb\nb\nb\nb\nb\nb\nb\n");
+    s.truncate(0);
+    assert_eq!(t!(b.seek(SeekFrom::End(8))), 22);
+    t!(b.read_to_string(&mut s));
+    assert_eq!(s, "");
+
+    assert!(entries.next().is_none());
 }
 
 struct LoggingReader<R> {
@@ -1342,6 +1379,47 @@ fn writing_sparse() {
 
         assert!(s == expected, "path: {path:?}");
     }
+
+    assert!(entries.next().is_none());
+}
+
+#[test]
+fn seeking_sparse() {
+    let rdr = Cursor::new(tar!("sparse.tar"));
+    let mut ar = Archive::new(rdr);
+    let mut entries = t!(ar.entries_with_seek());
+
+    let a = t!(entries.next().unwrap());
+    assert_eq!(&*a.header().path_bytes(), b"sparse_begin.txt");
+
+    let a = t!(entries.next().unwrap());
+    assert_eq!(&*a.header().path_bytes(), b"sparse_end.txt");
+
+    let mut a = t!(entries.next().unwrap());
+    let mut s = String::new();
+    assert_eq!(&*a.header().path_bytes(), b"sparse_ext.txt");
+    t!(a.seek(SeekFrom::Start(0xa000)));
+    t!(a.read_to_string(&mut s));
+    assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x1000..], "text\n");
+    s.truncate(0);
+    t!(a.seek(SeekFrom::Current(-(0x2000 + 3))));
+    t!(a.read_to_string(&mut s));
+    assert_eq!(&s[..3], "xt\n");
+    assert!(s[3..0x2000 - 2].chars().all(|x| x == '\u{0}'));
+    assert_eq!(&s[0x2000 - 2..], "text\n");
+    s.truncate(0);
+    t!(a.read_to_string(&mut s));
+    assert_eq!(s, "");
+
+    let mut a = t!(entries.next().unwrap());
+    let mut s = String::new();
+    assert_eq!(&*a.header().path_bytes(), b"sparse.txt");
+    t!(a.seek(SeekFrom::Start(0x2fa0)));
+    t!(a.read_to_string(&mut s));
+    assert_eq!(&s[..6], "world\n");
+    assert!(s[6..].chars().all(|x| x == '\u{0}'));
+    assert_eq!(s.len(), 0x4000 - 0x2fa0);
 
     assert!(entries.next().is_none());
 }

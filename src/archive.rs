@@ -7,7 +7,7 @@ use std::io::{self, SeekFrom};
 use std::marker;
 use std::path::Path;
 
-use crate::entry::{EntryFields, EntryIo};
+use crate::entry::{EntryCursor, EntryFields, EntrySegmentKind};
 use crate::error::TarError;
 use crate::header::BLOCK_SIZE;
 use crate::other;
@@ -39,7 +39,7 @@ pub struct Entries<'a, R: 'a + Read> {
     _ignored: marker::PhantomData<&'a Archive<R>>,
 }
 
-trait SeekRead: Read + Seek {}
+pub(crate) trait SeekRead: Read + Seek {}
 impl<R: Read + Seek> SeekRead for R {}
 
 struct EntriesFields<'a> {
@@ -345,11 +345,18 @@ impl<'a> EntriesFields<'a> {
                 size = pax_size;
             }
         }
+        let real_size = header.size()?;
+
+        let mut cursor = EntryCursor::default();
+        cursor.append_segment(EntrySegmentKind::Data, size, file_pos);
+
         let ret = EntryFields {
             size: size,
+            real_size: real_size,
             header_pos: header_pos,
             file_pos: file_pos,
-            data: vec![EntryIo::Data((&self.archive.inner).take(size))],
+            data: &self.archive.inner,
+            data_seekable: self.seekable_archive.map(|a| &a.inner),
             header: header,
             long_pathname: None,
             long_linkname: None,
@@ -360,6 +367,7 @@ impl<'a> EntriesFields<'a> {
             preserve_mtime: self.archive.inner.preserve_mtime,
             overwrite: self.archive.inner.overwrite,
             preserve_ownerships: self.archive.inner.preserve_ownerships,
+            cursor: cursor,
         };
 
         // Store where the next entry is, rounding up by 512 bytes (the size of
@@ -470,14 +478,14 @@ impl<'a> EntriesFields<'a> {
         // the same as the current offset (described by the list of blocks) as
         // well as the amount of data read equals the size of the entry
         // (`Header::entry_size`).
-        entry.data.truncate(0);
+        entry.cursor.segments.truncate(0);
 
         let mut cur = 0;
         let mut remaining = entry.size;
         {
-            let data = &mut entry.data;
-            let reader = &self.archive.inner;
             let size = entry.size;
+            let file_pos = entry.file_pos;
+            let cursor = &mut entry.cursor;
             let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
                 if block.is_empty() {
                     return Ok(());
@@ -495,8 +503,7 @@ impl<'a> EntriesFields<'a> {
                          blocks",
                     ));
                 } else if cur < off {
-                    let block = io::repeat(0).take(off - cur);
-                    data.push(EntryIo::Pad(block));
+                    cursor.append_segment(EntrySegmentKind::Pad, off, file_pos);
                 }
                 cur = off
                     .checked_add(len)
@@ -507,7 +514,7 @@ impl<'a> EntriesFields<'a> {
                          listed",
                     )
                 })?;
-                data.push(EntryIo::Data(reader.take(len)));
+                cursor.append_segment(EntrySegmentKind::Data, cur, file_pos);
                 Ok(())
             };
             for block in gnu.sparse.iter() {
