@@ -1,15 +1,17 @@
 use std::borrow::Cow;
 use std::cmp;
+use std::collections::BTreeMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
+use std::ops::Bound;
 use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
-use crate::archive::ArchiveInner;
+use crate::archive::{ArchiveInner, SeekRead};
 use crate::error::TarError;
 use crate::header::bytes2path;
 use crate::other;
@@ -36,7 +38,10 @@ pub struct EntryFields<'a> {
     pub size: u64,
     pub header_pos: u64,
     pub file_pos: u64,
-    pub data: Vec<EntryIo<'a>>,
+    pub data: &'a ArchiveInner<dyn Read + 'a>,
+    pub data_seekable: Option<&'a ArchiveInner<dyn SeekRead + 'a>>,
+    pub data_index: BTreeMap<u64, EntrySegment>,
+    pub virtual_pos: u64,
     pub unpack_xattrs: bool,
     pub preserve_permissions: bool,
     pub preserve_ownerships: bool,
@@ -44,9 +49,16 @@ pub struct EntryFields<'a> {
     pub overwrite: bool,
 }
 
-pub enum EntryIo<'a> {
-    Pad(io::Take<io::Repeat>),
-    Data(io::Take<&'a ArchiveInner<dyn Read + 'a>>),
+pub struct EntrySegment {
+    pub file_off: u64,
+    pub virtual_off: u64,
+    pub kind: EntrySegmentKind,
+}
+
+#[derive(Debug)]
+pub enum EntrySegmentKind {
+    Pad,
+    Data,
 }
 
 /// When unpacking items the unpacked thing is returned to allow custom
@@ -659,21 +671,26 @@ impl<'a> EntryFields<'a> {
                     Err(err)
                 }
             })?;
-            for io in self.data.drain(..) {
-                match io {
-                    EntryIo::Data(mut d) => {
-                        let expected = d.limit();
-                        if io::copy(&mut d, &mut f)? != expected {
+            for (src_end, src) in self
+                .data_index
+                .range((Bound::Excluded(self.virtual_pos), Bound::Unbounded))
+            {
+                let limit = src_end - self.virtual_pos;
+                match src.kind {
+                    EntrySegmentKind::Data => {
+                        let mut d = (&mut self.data).take(limit);
+                        if io::copy(&mut d, &mut f)? != limit {
                             return Err(other("failed to write entire file"));
                         }
                     }
-                    EntryIo::Pad(d) => {
+                    EntrySegmentKind::Pad => {
                         // TODO: checked cast to i64
-                        let to = SeekFrom::Current(d.limit() as i64);
+                        let to = SeekFrom::Current(limit as i64);
                         let size = f.seek(to)?;
                         f.set_len(size)?;
                     }
                 }
+                self.virtual_pos += limit;
             }
             Ok(f)
         })()
@@ -951,23 +968,60 @@ impl<'a> EntryFields<'a> {
 
 impl<'a> Read for EntryFields<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        loop {
-            match self.data.get_mut(0).map(|io| io.read(into)) {
-                Some(Ok(0)) => {
-                    self.data.remove(0);
-                }
-                Some(r) => return r,
-                None => return Ok(0),
-            }
-        }
+        let Some((src_end, src)) = self
+            .data_index
+            .range((Bound::Excluded(self.virtual_pos), Bound::Unbounded))
+            .next()
+        else {
+            return Ok(0);
+        };
+
+        let limit = src_end - self.virtual_pos;
+        let n_read = match src.kind {
+            EntrySegmentKind::Pad => io::repeat(0).take(limit).read(into)?,
+            EntrySegmentKind::Data => self.data.take(limit).read(into)?,
+        };
+        self.virtual_pos += n_read as u64;
+        Ok(n_read)
     }
 }
 
-impl<'a> Read for EntryIo<'a> {
-    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        match *self {
-            EntryIo::Pad(ref mut io) => io.read(into),
-            EntryIo::Data(ref mut io) => io.read(into),
+impl<'a> Seek for EntryFields<'a> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let mut data = self.data_seekable.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "seeking only supported on entries produced from Archive::entries_with_seek",
+            )
+        })?;
+
+        let target = match pos {
+            SeekFrom::Start(n) => n,
+            SeekFrom::End(_) => todo!(),
+            SeekFrom::Current(_) => todo!(),
+        };
+
+        if target == self.virtual_pos {
+            return Ok(self.virtual_pos);
         }
+        self.virtual_pos = target;
+
+        let Some((_, src)) = self
+            .data_index
+            .range((Bound::Excluded(self.virtual_pos), Bound::Unbounded))
+            .next()
+        else {
+            return Ok(self.virtual_pos);
+        };
+
+        let pos = match src.kind {
+            EntrySegmentKind::Pad => SeekFrom::Start(src.file_off),
+            EntrySegmentKind::Data => {
+                SeekFrom::Start(src.file_off + (self.virtual_pos - src.virtual_off))
+            }
+        };
+        data.seek(pos)?;
+
+        Ok(self.virtual_pos)
     }
 }
