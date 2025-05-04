@@ -18,8 +18,12 @@ use crate::{Archive, Header, PaxExtensions};
 /// A read-only view into an entry of an archive.
 ///
 /// This structure is a window into a portion of a borrowed archive which can
-/// be inspected. It acts as a file handle by implementing the Reader trait. An
+/// be inspected. It acts as a file handle by implementing the [Read] trait. An
 /// entry cannot be rewritten once inserted into an archive.
+///
+/// Note that the [Seek] implementation for this type is only valid for values
+/// obtained from [`Archive::entries_with_seek`]. Calling [Seek::seek] on a
+/// value obtained otherwise will return an error.
 pub struct Entry<'a, R: 'a + Read> {
     fields: EntryFields<'a>,
     _ignored: marker::PhantomData<&'a Archive<R>>,
