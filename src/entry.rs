@@ -299,6 +299,12 @@ impl<'a, R: Read> Read for Entry<'a, R> {
     }
 }
 
+impl<'a, R: Read + Seek> Seek for Entry<'a, R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.fields.seek(pos)
+    }
+}
+
 impl<'a> EntryFields<'a> {
     pub fn from<R: Read>(entry: Entry<R>) -> EntryFields {
         entry.fields
@@ -1000,16 +1006,17 @@ impl<'a> Seek for EntryFields<'a> {
         })?;
 
         let target = match pos {
-            SeekFrom::Start(n) => n,
-            SeekFrom::End(_) => todo!(),
-            SeekFrom::Current(_) => todo!(),
-        };
+            SeekFrom::Start(n) => Some(n),
+            SeekFrom::End(n) => self.real_size.checked_add_signed(n),
+            SeekFrom::Current(n) => self.cursor.pos.checked_add_signed(n),
+        }
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "seek pos overflow"))?;
 
         if target == self.cursor.pos {
             return Ok(self.cursor.pos);
         }
 
-        let cur_segment = self.cursor.segments.partition_point(|seg| target < seg.end);
+        let cur_segment = self.cursor.segments.partition_point(|s| s.end <= target);
         let Some(seg) = self.cursor.segments.get(cur_segment) else {
             self.cursor.pos = self.real_size;
             self.cursor.cur_segment = cur_segment;
