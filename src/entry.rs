@@ -982,21 +982,19 @@ impl<'a> EntryFields<'a> {
 
 impl<'a> Read for EntryFields<'a> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        let Some(seg) = self.cursor.segments.get(self.cursor.cur_segment) else {
-            return Ok(0);
-        };
-
-        let limit = seg.end - self.cursor.pos;
-        let n_read = match seg.kind {
-            EntrySegmentKind::Pad => io::repeat(0).take(limit).read(into)?,
-            EntrySegmentKind::Data => self.data.take(limit).read(into)?,
-        };
-
-        self.cursor.pos += n_read as u64;
-        if n_read as u64 == limit {
+        for seg in &self.cursor.segments[self.cursor.cur_segment..] {
+            let limit = seg.end - self.cursor.pos;
+            let n_read = match seg.kind {
+                EntrySegmentKind::Pad => io::repeat(0).take(limit).read(into),
+                EntrySegmentKind::Data => self.data.take(limit).read(into),
+            }?;
+            if n_read != 0 {
+                self.cursor.pos += n_read as u64;
+                return Ok(n_read);
+            }
             self.cursor.cur_segment += 1;
         }
-        Ok(n_read)
+        Ok(0)
     }
 }
 
