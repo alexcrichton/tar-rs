@@ -583,14 +583,18 @@ impl Drop for EntryWriter<'_> {
     }
 }
 
-fn append(mut dst: &mut dyn Write, header: &Header, mut data: &mut dyn Read) -> io::Result<()> {
+fn append<W: Write + ?Sized>(
+    mut dst: &mut W,
+    header: &Header,
+    mut data: &mut dyn Read,
+) -> io::Result<()> {
     dst.write_all(header.as_bytes())?;
     let len = io::copy(&mut data, &mut dst)?;
     pad_zeroes(&mut dst, len)?;
     Ok(())
 }
 
-fn pad_zeroes(dst: &mut dyn Write, len: u64) -> io::Result<()> {
+fn pad_zeroes<W: Write + ?Sized>(dst: &mut W, len: u64) -> io::Result<()> {
     let buf = [0; BLOCK_SIZE as usize];
     let remaining = BLOCK_SIZE - (len % BLOCK_SIZE);
     if remaining < BLOCK_SIZE {
@@ -599,8 +603,8 @@ fn pad_zeroes(dst: &mut dyn Write, len: u64) -> io::Result<()> {
     Ok(())
 }
 
-fn append_path_with_name(
-    dst: &mut dyn Write,
+fn append_path_with_name<W: Write + ?Sized>(
+    dst: &mut W,
     path: &Path,
     name: Option<&Path>,
     options: BuilderOptions,
@@ -641,8 +645,8 @@ fn append_path_with_name(
 }
 
 #[cfg(unix)]
-fn append_special(
-    dst: &mut dyn Write,
+fn append_special<W: Write + ?Sized>(
+    dst: &mut W,
     path: &Path,
     stat: &fs::Metadata,
     mode: HeaderMode,
@@ -684,8 +688,8 @@ fn append_special(
     Ok(())
 }
 
-fn append_file(
-    dst: &mut dyn Write,
+fn append_file<W: Write + ?Sized>(
+    dst: &mut W,
     path: &Path,
     file: &mut fs::File,
     options: BuilderOptions,
@@ -718,8 +722,8 @@ fn append_file(
     Ok(())
 }
 
-fn append_dir(
-    dst: &mut dyn Write,
+fn append_dir<W: Write + ?Sized>(
+    dst: &mut W,
     path: &Path,
     src_path: &Path,
     options: BuilderOptions,
@@ -743,7 +747,11 @@ fn prepare_header(size: u64, entry_type: u8) -> Header {
     header
 }
 
-fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) -> io::Result<()> {
+fn prepare_header_path<W: Write + ?Sized>(
+    dst: &mut W,
+    header: &mut Header,
+    path: &Path,
+) -> io::Result<()> {
     // Try to encode the path directly in the header, but if it ends up not
     // working (probably because it's too long) then try to use the GNU-specific
     // long name extension by emitting an entry which indicates that it's the
@@ -775,8 +783,8 @@ fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) ->
     Ok(())
 }
 
-fn prepare_header_link(
-    dst: &mut dyn Write,
+fn prepare_header_link<W: Write + ?Sized>(
+    dst: &mut W,
     header: &mut Header,
     link_name: &Path,
 ) -> io::Result<()> {
@@ -823,7 +831,10 @@ fn prepare_header_sparse(
 }
 
 /// Write extra sparse headers into `dst` for those entries that did not fit in the main header.
-fn append_extended_sparse_headers(dst: &mut dyn Write, entries: &SparseEntries) -> io::Result<()> {
+fn append_extended_sparse_headers<W: Write + ?Sized>(
+    dst: &mut W,
+    entries: &SparseEntries,
+) -> io::Result<()> {
     // The first `GNU_SPARSE_HEADERS_COUNT` entries are written to the main header, so skip them.
     let mut it = entries
         .entries
@@ -850,8 +861,8 @@ fn append_extended_sparse_headers(dst: &mut dyn Write, entries: &SparseEntries) 
     Ok(())
 }
 
-fn append_fs(
-    dst: &mut dyn Write,
+fn append_fs<W: Write + ?Sized>(
+    dst: &mut W,
     path: &Path,
     meta: &fs::Metadata,
     mode: HeaderMode,
@@ -868,8 +879,8 @@ fn append_fs(
     dst.write_all(header.as_bytes())
 }
 
-fn append_dir_all(
-    dst: &mut dyn Write,
+fn append_dir_all<W: Write + ?Sized>(
+    dst: &mut W,
     path: &Path,
     src_path: &Path,
     options: BuilderOptions,
