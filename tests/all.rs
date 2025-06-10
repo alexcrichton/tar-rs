@@ -961,8 +961,11 @@ fn pax_simple_write() {
     let mut ar: Builder<BufWriter<File>> = Builder::new(BufWriter::new(file));
 
     let pax_extensions = [
-        ("arbitrary_pax_key", b"arbitrary_pax_value".as_slice()),
-        ("SCHILY.xattr.security.selinux", b"foo_t"),
+        (
+            b"arbitrary_pax_key".as_slice(),
+            b"arbitrary_pax_value".as_slice(),
+        ),
+        (b"SCHILY.xattr.security.selinux".as_slice(), b"foo_t"),
     ];
 
     t!(ar.append_pax_extensions(pax_extensions));
@@ -981,7 +984,10 @@ fn pax_simple_write() {
     assert_eq!(pax_arbitrary.key(), Ok("arbitrary_pax_key"));
     assert_eq!(pax_arbitrary.value(), Ok("arbitrary_pax_value"));
     let xattr = t!(pax_headers.next().unwrap());
-    assert_eq!(xattr.key().unwrap(), pax_extensions[1].0);
+    assert_eq!(
+        xattr.key().unwrap(),
+        std::str::from_utf8(pax_extensions[1].0).unwrap()
+    );
     assert_eq!(xattr.value_bytes(), pax_extensions[1].1);
 
     assert!(entries.next().is_none());
