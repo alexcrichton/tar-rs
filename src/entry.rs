@@ -7,6 +7,7 @@ use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(feature = "fs")]
 use filetime::{self, FileTime};
 
 use crate::archive::ArchiveInner;
@@ -200,6 +201,7 @@ impl<'a, R: Read> Entry<'a, R> {
     ///     file.unpack(format!("file-{}", i)).unwrap();
     /// }
     /// ```
+    #[cfg(feature = "fs")]
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<Unpacked> {
         self.fields.unpack(None, dst.as_ref())
     }
@@ -228,6 +230,7 @@ impl<'a, R: Read> Entry<'a, R> {
     ///     file.unpack_in("target").unwrap();
     /// }
     /// ```
+    #[cfg(feature = "fs")]
     pub fn unpack_in<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<bool> {
         self.fields.unpack_in(dst.as_ref())
     }
@@ -378,6 +381,7 @@ impl<'a> EntryFields<'a> {
         )))
     }
 
+    #[cfg(feature = "fs")]
     fn unpack_in(&mut self, dst: &Path) -> io::Result<bool> {
         // Notes regarding bsdtar 2.8.3 / libarchive 2.8.3:
         // * Leading '/'s are trimmed. For example, `///test` is treated as
@@ -458,6 +462,7 @@ impl<'a> EntryFields<'a> {
         })
     }
 
+    #[cfg(feature = "fs")]
     /// Returns access to the header of this entry in the archive.
     fn unpack(&mut self, target_base: Option<&Path>, dst: &Path) -> io::Result<Unpacked> {
         fn set_perms_ownerships(
