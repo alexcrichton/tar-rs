@@ -399,6 +399,42 @@ fn extracting_duplicate_link_succeed() {
 }
 
 #[test]
+#[cfg(unix)]
+fn extracting_duplicate_hard_link_fail() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let path_present = td.path().join("link");
+    t!(std::fs::write(path_present, "hello"));
+
+    let rdr = Cursor::new(tar!("hard_link.tar"));
+    let mut ar = Archive::new(rdr);
+    ar.set_overwrite(false);
+    if let Err(err) = ar.unpack(td.path()) {
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            // as expected with overwrite false
+            return;
+        }
+        panic!("unexpected error: {:?}", err);
+    }
+    panic!(
+        "unpack() should have returned an error of kind {:?}, returned Ok",
+        std::io::ErrorKind::AlreadyExists
+    )
+}
+
+#[test]
+#[cfg(unix)]
+fn extracting_duplicate_hard_link_succeed() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+    let path_present = td.path().join("link");
+    t!(std::fs::write(path_present, "hello"));
+
+    let rdr = Cursor::new(tar!("hard_link.tar"));
+    let mut ar = Archive::new(rdr);
+    ar.set_overwrite(true);
+    t!(ar.unpack(td.path()));
+}
+
+#[test]
 #[cfg(all(unix, feature = "xattr"))]
 fn xattrs() {
     // If /tmp is a tmpfs, xattr will fail

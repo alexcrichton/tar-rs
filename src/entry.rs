@@ -544,17 +544,26 @@ impl<'a> EntryFields<'a> {
                     }
                     None => src.into_owned(),
                 };
-                fs::hard_link(&link_src, dst).map_err(|err| {
-                    Error::new(
-                        err.kind(),
-                        format!(
-                            "{} when hard linking {} to {}",
-                            err,
-                            link_src.display(),
-                            dst.display()
-                        ),
-                    )
-                })?;
+                fs::hard_link(&link_src, dst)
+                    .or_else(|err_io| {
+                        if err_io.kind() == io::ErrorKind::AlreadyExists && self.overwrite {
+                            // remove dest and try once more
+                            std::fs::remove_file(dst).and_then(|()| fs::hard_link(&link_src, dst))
+                        } else {
+                            Err(err_io)
+                        }
+                    })
+                    .map_err(|err| {
+                        Error::new(
+                            err.kind(),
+                            format!(
+                                "{} when hard linking {} to {}",
+                                err,
+                                link_src.display(),
+                                dst.display()
+                            ),
+                        )
+                    })?;
             } else {
                 symlink(&src, dst)
                     .or_else(|err_io| {
