@@ -800,6 +800,40 @@ fn zero_file_times() {
 }
 
 #[test]
+#[cfg(unix)]
+fn clamp_mtime() {
+    let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
+
+    let clamp = 1000000000;
+    let max_clamp = u64::MAX;
+
+    let mut ar = Builder::new(Vec::new());
+    ar.mode(HeaderMode::ClampMtime(clamp));
+    let path = td.path().join("tmpfile");
+    t!(File::create(&path));
+    t!(ar.append_path_with_name(&path, "a"));
+
+    ar.mode(HeaderMode::ClampMtime(max_clamp));
+    t!(ar.append_path_with_name(&path, "b"));
+
+    let data = t!(ar.into_inner());
+    let mut ar = Archive::new(&data[..]);
+    assert!(ar.unpack(td.path()).is_ok());
+
+    let meta = fs::metadata(td.path().join("a")).unwrap();
+    let mtime = FileTime::from_last_modification_time(&meta);
+    let atime = FileTime::from_last_access_time(&meta);
+    assert!(mtime.unix_seconds() as u64 == clamp);
+    assert!(atime.unix_seconds() as u64 == clamp);
+
+    let meta = fs::metadata(td.path().join("b")).unwrap();
+    let mtime = FileTime::from_last_modification_time(&meta);
+    let atime = FileTime::from_last_access_time(&meta);
+    assert!((mtime.unix_seconds() as u64) < max_clamp);
+    assert!((atime.unix_seconds() as u64) < max_clamp);
+}
+
+#[test]
 fn backslash_treated_well() {
     // Insert a file into an archive with a backslash
     let td = t!(TempBuilder::new().prefix("tar-rs").tempdir());
