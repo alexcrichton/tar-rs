@@ -668,6 +668,17 @@ impl Header {
         }
     }
 
+    /// Encodes the device number into the major and minor fields of this header.
+    ///
+    /// This function will return an error if this header format cannot encode a
+    /// a device number.
+    pub fn set_rdev(&mut self, rdev: libc::dev_t) -> io::Result<()> {
+        let dev_major = ((rdev >> 32) & 0xffff_f000) | ((rdev >> 8) & 0x0000_0fff);
+        self.set_device_major(dev_major as u32)?;
+        let dev_minor = ((rdev >> 12) & 0xffff_ff00) | ((rdev) & 0x0000_00ff);
+        self.set_device_minor(dev_minor as u32)
+    }
+
     /// Returns the device minor number, if present.
     ///
     /// This field may not be present in all archives, and it may not be
