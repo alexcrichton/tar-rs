@@ -301,7 +301,12 @@ impl<'a> EntryFields<'a> {
     }
 
     fn path(&self) -> io::Result<Cow<Path>> {
-        bytes2path(self.path_bytes())
+        let mut path = self.path_bytes();
+        if cfg!(windows) && self.path_lossy().starts_with("//") {
+            // Avoid being parsed as UNC
+            path.to_mut()[0] = '.' as u8;
+        }
+        bytes2path(path)
     }
 
     fn path_bytes(&self) -> Cow<[u8]> {
