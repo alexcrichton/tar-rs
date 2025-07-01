@@ -351,6 +351,8 @@ impl Header {
     ///
     /// Note that this function will convert any `\` characters to directory
     /// separators.
+    /// It is recommended to use `Entry.path()` instead of inspecting the `header`
+    /// directly to ensure that various archive formats are handled correctly.
     pub fn path(&self) -> io::Result<Cow<Path>> {
         bytes2path(self.path_bytes())
     }
