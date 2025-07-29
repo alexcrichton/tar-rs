@@ -32,6 +32,7 @@ pub struct EntryFields<'a> {
     pub long_linkname: Option<Vec<u8>>,
     pub pax_extensions: Option<Vec<u8>>,
     pub mask: u32,
+    pub mode: Option<u32>,
     pub header: Header,
     pub size: u64,
     pub header_pos: u64,
@@ -244,6 +245,13 @@ impl<'a, R: Read> Entry<'a, R> {
     /// The mask is 0 by default and is currently only implemented on Unix.
     pub fn set_mask(&mut self, mask: u32) {
         self.fields.mask = mask;
+    }
+
+    /// Set the permission bits when unpacking this entry.
+    ///
+    /// The mode is unchanged by default.
+    pub fn set_mode(&mut self, mode: u32) {
+        self.fields.mode = Some(mode);
     }
 
     /// Indicate whether extended file attributes (xattrs on Unix) are preserved
@@ -467,13 +475,16 @@ impl<'a> EntryFields<'a> {
             mask: u32,
             perms: bool,
             ownerships: bool,
+            mode: Option<u32>,
         ) -> io::Result<()> {
             // ownerships need to be set first to avoid stripping SUID bits in the permissions ...
             if ownerships {
                 set_ownerships(dst, &f, header.uid()?, header.gid()?)?;
             }
             // ... then set permissions, SUID bits set here is kept
-            if let Ok(mode) = header.mode() {
+            if let Some(mode) = mode {
+                set_perms(dst, f, mode, mask, perms)?;
+            } else if let Ok(mode) = header.mode() {
                 set_perms(dst, f, mode, mask, perms)?;
             }
 
@@ -504,6 +515,7 @@ impl<'a> EntryFields<'a> {
                 self.mask,
                 self.preserve_permissions,
                 self.preserve_ownerships,
+                self.mode,
             )?;
             return Ok(Unpacked::__Nonexhaustive);
         } else if kind.is_hard_link() || kind.is_symlink() {
@@ -627,6 +639,7 @@ impl<'a> EntryFields<'a> {
                 self.mask,
                 self.preserve_permissions,
                 self.preserve_ownerships,
+                self.mode,
             )?;
             return Ok(Unpacked::__Nonexhaustive);
         }
@@ -703,6 +716,7 @@ impl<'a> EntryFields<'a> {
             self.mask,
             self.preserve_permissions,
             self.preserve_ownerships,
+            self.mode,
         )?;
         if self.unpack_xattrs {
             set_xattrs(self, dst)?;

@@ -352,6 +352,7 @@ impl<'a> EntriesFields<'a> {
             long_linkname: None,
             pax_extensions: None,
             mask: self.archive.inner.mask,
+            mode: None,
             unpack_xattrs: self.archive.inner.unpack_xattrs,
             preserve_permissions: self.archive.inner.preserve_permissions,
             preserve_mtime: self.archive.inner.preserve_mtime,
