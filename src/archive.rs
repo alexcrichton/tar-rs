@@ -79,7 +79,7 @@ impl<R: Read> Archive<R> {
     /// sequence. If entries are processed out of sequence (from what the
     /// iterator returns), then the contents read for each entry may be
     /// corrupted.
-    pub fn entries(&mut self) -> io::Result<Entries<R>> {
+    pub fn entries(&mut self) -> io::Result<Entries<'_, R>> {
         let me: &mut Archive<dyn Read> = self;
         me._entries(None).map(|fields| Entries {
             fields,
@@ -184,7 +184,7 @@ impl<R: Seek + Read> Archive<R> {
     /// sequence. If entries are processed out of sequence (from what the
     /// iterator returns), then the contents read for each entry may be
     /// corrupted.
-    pub fn entries_with_seek(&mut self) -> io::Result<Entries<R>> {
+    pub fn entries_with_seek(&mut self) -> io::Result<Entries<'_, R>> {
         let me: &Archive<dyn Read> = self;
         let me_seekable: &Archive<dyn SeekRead> = self;
         me._entries(Some(me_seekable)).map(|fields| Entries {

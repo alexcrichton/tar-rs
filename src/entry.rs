@@ -74,7 +74,7 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// It is recommended to use this method instead of inspecting the `header`
     /// directly to ensure that various archive formats are handled correctly.
-    pub fn path(&self) -> io::Result<Cow<Path>> {
+    pub fn path(&self) -> io::Result<Cow<'_, Path>> {
         self.fields.path()
     }
 
@@ -84,7 +84,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// separators, and it will not always return the same value as
     /// `self.header().path_bytes()` as some archive formats have support for
     /// longer path names described in separate entries.
-    pub fn path_bytes(&self) -> Cow<[u8]> {
+    pub fn path_bytes(&self) -> Cow<'_, [u8]> {
         self.fields.path_bytes()
     }
 
@@ -101,7 +101,7 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// It is recommended to use this method instead of inspecting the `header`
     /// directly to ensure that various archive formats are handled correctly.
-    pub fn link_name(&self) -> io::Result<Option<Cow<Path>>> {
+    pub fn link_name(&self) -> io::Result<Option<Cow<'_, Path>>> {
         self.fields.link_name()
     }
 
@@ -110,7 +110,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// Note that this will not always return the same value as
     /// `self.header().link_name_bytes()` as some archive formats have support for
     /// longer path names described in separate entries.
-    pub fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
+    pub fn link_name_bytes(&self) -> Option<Cow<'_, [u8]>> {
         self.fields.link_name_bytes()
     }
 
@@ -132,7 +132,7 @@ impl<'a, R: Read> Entry<'a, R> {
     ///
     /// Also note that this function will read the entire entry if the entry
     /// itself is a list of extensions.
-    pub fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions>> {
+    pub fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions<'_>>> {
         self.fields.pax_extensions()
     }
 
@@ -300,11 +300,11 @@ impl<'a> EntryFields<'a> {
         self.read_to_end(&mut v).map(|_| v)
     }
 
-    fn path(&self) -> io::Result<Cow<Path>> {
+    fn path(&self) -> io::Result<Cow<'_, Path>> {
         bytes2path(self.path_bytes())
     }
 
-    fn path_bytes(&self) -> Cow<[u8]> {
+    fn path_bytes(&self) -> Cow<'_, [u8]> {
         match self.long_pathname {
             Some(ref bytes) => {
                 if let Some(&0) = bytes.last() {
@@ -333,14 +333,14 @@ impl<'a> EntryFields<'a> {
         String::from_utf8_lossy(&self.path_bytes()).to_string()
     }
 
-    fn link_name(&self) -> io::Result<Option<Cow<Path>>> {
+    fn link_name(&self) -> io::Result<Option<Cow<'_, Path>>> {
         match self.link_name_bytes() {
             Some(bytes) => bytes2path(bytes).map(Some),
             None => Ok(None),
         }
     }
 
-    fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
+    fn link_name_bytes(&self) -> Option<Cow<'_, [u8]>> {
         match self.long_linkname {
             Some(ref bytes) => {
                 if let Some(&0) = bytes.last() {
@@ -364,7 +364,7 @@ impl<'a> EntryFields<'a> {
         }
     }
 
-    fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions>> {
+    fn pax_extensions(&mut self) -> io::Result<Option<PaxExtensions<'_>>> {
         if self.pax_extensions.is_none() {
             if !self.header.entry_type().is_pax_global_extensions()
                 && !self.header.entry_type().is_pax_local_extensions()
