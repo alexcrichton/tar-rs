@@ -926,11 +926,10 @@ struct SparseEntry {
 
 /// Find sparse entries in a file. Returns:
 /// * `Ok(Some(_))` if the file is sparse.
-/// * `Ok(None)` if the file is not sparse, or if the file system does not
-///    support sparse files.
+/// * `Ok(None)` if the file is not sparse, or if the file system does not support sparse files.
 /// * `Err(_)` if an error occurred. The lack of support for sparse files is not
-///    considered an error. It might return an error if the file is modified
-///    while reading.
+///   considered an error. It might return an error if the file is modified
+///   while reading.
 fn find_sparse_entries(
     file: &mut fs::File,
     stat: &fs::Metadata,

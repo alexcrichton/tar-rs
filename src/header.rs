@@ -7,7 +7,6 @@ use std::borrow::Cow;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::iter;
 use std::iter::{once, repeat};
 use std::mem;
 use std::path::{Component, Path, PathBuf};
@@ -740,7 +739,7 @@ impl Header {
         let len = old.cksum.len();
         self.bytes[0..offset]
             .iter()
-            .chain(iter::repeat(&b' ').take(len))
+            .chain(repeat(&b' ').take(len))
             .chain(&self.bytes[offset + len..])
             .fold(0, |a, b| a + (*b as u32))
     }
@@ -1541,7 +1540,7 @@ fn truncate(slice: &[u8]) -> &[u8] {
 fn copy_into(slot: &mut [u8], bytes: &[u8]) -> io::Result<()> {
     if bytes.len() > slot.len() {
         Err(other("provided value is too long"))
-    } else if bytes.iter().any(|b| *b == 0) {
+    } else if bytes.contains(&0) {
         Err(other("provided value contains a nul byte"))
     } else {
         for (slot, val) in slot.iter_mut().zip(bytes.iter().chain(Some(&0))) {

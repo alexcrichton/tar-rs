@@ -584,7 +584,7 @@ impl<'a> Iterator for EntriesFields<'a> {
     }
 }
 
-impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
+impl<R: ?Sized + Read> Read for &ArchiveInner<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         let i = self.obj.borrow_mut().read(into)?;
         self.pos.set(self.pos.get() + i as u64);
@@ -592,7 +592,7 @@ impl<'a, R: ?Sized + Read> Read for &'a ArchiveInner<R> {
     }
 }
 
-impl<'a, R: ?Sized + Seek> Seek for &'a ArchiveInner<R> {
+impl<R: ?Sized + Seek> Seek for &ArchiveInner<R> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let pos = self.obj.borrow_mut().seek(pos)?;
         self.pos.set(pos);
