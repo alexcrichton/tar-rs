@@ -7,15 +7,6 @@ use std::io::Read;
 
 use tempfile::Builder;
 
-macro_rules! t {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(e) => panic!("{} returned {}", stringify!($e), e),
-        }
-    };
-}
-
 #[test]
 fn absolute_symlink() {
     let mut ar = tar::Builder::new(Vec::new());

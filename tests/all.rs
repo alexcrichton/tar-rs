@@ -14,15 +14,6 @@ use filetime::FileTime;
 use tar::{Archive, Builder, Entries, Entry, EntryType, Header, HeaderMode};
 use tempfile::{Builder as TempBuilder, TempDir};
 
-macro_rules! t {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(e) => panic!("{} returned {}", stringify!($e), e),
-        }
-    };
-}
-
 macro_rules! tar {
     ($e:expr) => {
         &include_bytes!(concat!("archives/", $e))[..]
