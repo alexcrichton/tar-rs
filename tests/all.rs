@@ -618,7 +618,7 @@ fn unpack_old_style_bsd_dir() {
     // Iterating
     let rdr = Cursor::new(ar.into_inner().into_inner());
     let mut ar = Archive::new(rdr);
-    assert!(t!(ar.entries()).all(|fr| fr.is_ok()));
+    assert!(ar.entries().unwrap().all(|fr| fr.is_ok()));
 
     assert!(td.path().join("testdir").is_dir());
 }
@@ -647,7 +647,7 @@ fn handling_incorrect_file_size() {
     // Iterating
     let rdr = Cursor::new(ar.into_inner().into_inner());
     let mut ar = Archive::new(rdr);
-    assert!(t!(ar.entries()).any(|fr| fr.is_err()));
+    assert!(ar.entries().unwrap().any(|fr| fr.is_err()));
 }
 
 #[test]
@@ -838,9 +838,9 @@ fn backslash_treated_well() {
     let mut ar = Archive::new(Cursor::new(ar.into_inner().unwrap()));
     let f = ar.entries().unwrap().next().unwrap().unwrap();
     if cfg!(unix) {
-        assert_eq!(t!(f.header().path()).to_str(), Some("foo\\bar"));
+        assert_eq!(f.header().path().unwrap().to_str(), Some("foo\\bar"));
     } else {
-        assert_eq!(t!(f.header().path()).to_str(), Some("foo/bar"));
+        assert_eq!(f.header().path().unwrap().to_str(), Some("foo/bar"));
     }
 
     // Unpack an archive with a backslash in the name
@@ -856,7 +856,7 @@ fn backslash_treated_well() {
     let data = ar.into_inner().unwrap();
     let mut ar = Archive::new(&data[..]);
     let f = ar.entries().unwrap().next().unwrap().unwrap();
-    assert_eq!(t!(f.header().path()).to_str(), Some("foo\\bar"));
+    assert_eq!(f.header().path().unwrap().to_str(), Some("foo\\bar"));
 
     let mut ar = Archive::new(&data[..]);
     ar.unpack(td.path()).unwrap();
@@ -916,11 +916,11 @@ fn links() {
     let mut entries = ar.entries().unwrap();
     let link = entries.next().unwrap().unwrap();
     assert_eq!(
-        t!(link.header().link_name()).as_ref().map(|p| &**p),
+        link.header().link_name().unwrap().as_ref().map(|p| &**p),
         Some(Path::new("file"))
     );
     let other = entries.next().unwrap().unwrap();
-    assert!(t!(other.header().link_name()).is_none());
+    assert!(other.header().link_name().unwrap().is_none());
 }
 
 #[test]
@@ -937,7 +937,7 @@ fn unpack_links() {
     assert_eq!(mtime.unix_seconds(), 1448291033);
 
     assert_eq!(
-        &*t!(fs::read_link(td.path().join("lnk"))),
+        &*fs::read_link(td.path().join("lnk")).unwrap(),
         Path::new("file")
     );
     File::open(td.path().join("lnk")).unwrap();
@@ -1168,7 +1168,7 @@ fn append_writer() {
 
     let e = &mut entries.next().unwrap().unwrap();
     assert_eq!(e.header().uid().unwrap(), 43);
-    assert_eq!(t!(e.path()), long_path.as_path());
+    assert_eq!(e.path().unwrap(), long_path.as_path());
     let mut r = Vec::new();
     e.read_to_end(&mut r).unwrap();
     assert_eq!(r.len(), 513);
@@ -1407,11 +1407,11 @@ fn path_separators() {
     let mut header = Header::new_ustar();
 
     header.set_path(&short_path).unwrap();
-    assert_eq!(t!(header.path()), short_path);
+    assert_eq!(header.path().unwrap(), short_path);
     assert!(!header.path_bytes().contains(&b'\\'));
 
     header.set_path(&long_path).unwrap();
-    assert_eq!(t!(header.path()), long_path);
+    assert_eq!(header.path().unwrap(), long_path);
     assert!(!header.path_bytes().contains(&b'\\'));
 
     // Make sure GNU headers normalize to Unix path separators,
@@ -1426,11 +1426,11 @@ fn path_separators() {
     let mut entries = ar.entries().unwrap();
 
     let entry = entries.next().unwrap().unwrap();
-    assert_eq!(t!(entry.path()), short_path);
+    assert_eq!(entry.path().unwrap(), short_path);
     assert!(!entry.path_bytes().contains(&b'\\'));
 
     let entry = entries.next().unwrap().unwrap();
-    assert_eq!(t!(entry.path()), long_path);
+    assert_eq!(entry.path().unwrap(), long_path);
     assert!(!entry.path_bytes().contains(&b'\\'));
 
     assert!(entries.next().is_none());
@@ -1465,28 +1465,28 @@ fn append_path_symlink() {
     let mut entries = ar.entries().unwrap();
 
     let entry = entries.next().unwrap().unwrap();
-    assert_eq!(t!(entry.path()), Path::new("test"));
+    assert_eq!(entry.path().unwrap(), Path::new("test"));
     assert_eq!(
-        t!(entry.link_name()),
+        entry.link_name().unwrap(),
         Some(Cow::from(Path::new("testdest")))
     );
-    assert_eq!(t!(entry.header().size()), 0);
+    assert_eq!(entry.header().size().unwrap(), 0);
 
     let entry = entries.next().unwrap().unwrap();
-    assert_eq!(t!(entry.path()), Path::new("test2"));
+    assert_eq!(entry.path().unwrap(), Path::new("test2"));
     assert_eq!(
-        t!(entry.link_name()),
+        entry.link_name().unwrap(),
         Some(Cow::from(Path::new(&long_linkname)))
     );
-    assert_eq!(t!(entry.header().size()), 0);
+    assert_eq!(entry.header().size().unwrap(), 0);
 
     let entry = entries.next().unwrap().unwrap();
-    assert_eq!(t!(entry.path()), Path::new(&long_pathname));
+    assert_eq!(entry.path().unwrap(), Path::new(&long_pathname));
     assert_eq!(
-        t!(entry.link_name()),
+        entry.link_name().unwrap(),
         Some(Cow::from(Path::new(&long_linkname)))
     );
-    assert_eq!(t!(entry.header().size()), 0);
+    assert_eq!(entry.header().size().unwrap(), 0);
 
     assert!(entries.next().is_none());
 }
@@ -1519,7 +1519,7 @@ fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
     // Iterating
     let rdr = Cursor::new(ar.into_inner().into_inner());
     let mut ar = Archive::new(rdr);
-    assert!(t!(ar.entries()).all(|fr| fr.is_ok()));
+    assert!(ar.entries().unwrap().all(|fr| fr.is_ok()));
 
     assert!(td.path().join("foo").is_file());
 }
@@ -1539,9 +1539,9 @@ fn insert_local_file_different_name() {
     let mut ar = Archive::new(rd);
     let mut entries = ar.entries().unwrap();
     let entry = entries.next().unwrap().unwrap();
-    assert_eq!(t!(entry.path()), Path::new("archive/dir"));
+    assert_eq!(entry.path().unwrap(), Path::new("archive/dir"));
     let entry = entries.next().unwrap().unwrap();
-    assert_eq!(t!(entry.path()), Path::new("archive/dir/f"));
+    assert_eq!(entry.path().unwrap(), Path::new("archive/dir/f"));
     assert!(entries.next().is_none());
 }
 

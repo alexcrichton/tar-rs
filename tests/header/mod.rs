@@ -38,23 +38,23 @@ fn goto_ustar() {
 fn link_name() {
     let mut h = Header::new_gnu();
     h.set_link_name("foo").unwrap();
-    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo"));
+    assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo"));
     h.set_link_name("../foo").unwrap();
-    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("../foo"));
+    assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("../foo"));
     h.set_link_name("foo/bar").unwrap();
-    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/bar"));
+    assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo/bar"));
     h.set_link_name("foo\\ba").unwrap();
     if cfg!(windows) {
-        assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/ba"));
+        assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo/ba"));
     } else {
-        assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo\\ba"));
+        assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo\\ba"));
     }
 
     let name = "foo\\bar\0";
     for (slot, val) in h.as_old_mut().linkname.iter_mut().zip(name.as_bytes()) {
         *slot = *val;
     }
-    assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo\\bar"));
+    assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo\\bar"));
 
     assert!(h.set_link_name("\0").is_err());
 }
@@ -62,13 +62,13 @@ fn link_name() {
 #[test]
 fn mtime() {
     let h = Header::new_gnu();
-    assert_eq!(t!(h.mtime()), 0);
+    assert_eq!(h.mtime().unwrap(), 0);
 
     let h = Header::new_ustar();
-    assert_eq!(t!(h.mtime()), 0);
+    assert_eq!(h.mtime().unwrap(), 0);
 
     let h = Header::new_old();
-    assert_eq!(t!(h.mtime()), 0);
+    assert_eq!(h.mtime().unwrap(), 0);
 }
 
 #[test]
@@ -76,18 +76,18 @@ fn user_and_group_name() {
     let mut h = Header::new_gnu();
     h.set_username("foo").unwrap();
     h.set_groupname("bar").unwrap();
-    assert_eq!(t!(h.username()), Some("foo"));
-    assert_eq!(t!(h.groupname()), Some("bar"));
+    assert_eq!(h.username().unwrap(), Some("foo"));
+    assert_eq!(h.groupname().unwrap(), Some("bar"));
 
     h = Header::new_ustar();
     h.set_username("foo").unwrap();
     h.set_groupname("bar").unwrap();
-    assert_eq!(t!(h.username()), Some("foo"));
-    assert_eq!(t!(h.groupname()), Some("bar"));
+    assert_eq!(h.username().unwrap(), Some("foo"));
+    assert_eq!(h.groupname().unwrap(), Some("bar"));
 
     h = Header::new_old();
-    assert_eq!(t!(h.username()), None);
-    assert_eq!(t!(h.groupname()), None);
+    assert_eq!(h.username().unwrap(), None);
+    assert_eq!(h.groupname().unwrap(), None);
     assert!(h.set_username("foo").is_err());
     assert!(h.set_groupname("foo").is_err());
 }
@@ -97,14 +97,14 @@ fn dev_major_minor() {
     let mut h = Header::new_gnu();
     h.set_device_major(1).unwrap();
     h.set_device_minor(2).unwrap();
-    assert_eq!(t!(h.device_major()), Some(1));
-    assert_eq!(t!(h.device_minor()), Some(2));
+    assert_eq!(h.device_major().unwrap(), Some(1));
+    assert_eq!(h.device_minor().unwrap(), Some(2));
 
     h = Header::new_ustar();
     h.set_device_major(1).unwrap();
     h.set_device_minor(2).unwrap();
-    assert_eq!(t!(h.device_major()), Some(1));
-    assert_eq!(t!(h.device_minor()), Some(2));
+    assert_eq!(h.device_major().unwrap(), Some(1));
+    assert_eq!(h.device_minor().unwrap(), Some(2));
 
     h.as_ustar_mut().unwrap().dev_minor[0] = 0x7f;
     h.as_ustar_mut().unwrap().dev_major[0] = 0x7f;
@@ -117,8 +117,8 @@ fn dev_major_minor() {
     assert!(h.device_minor().is_err());
 
     h = Header::new_old();
-    assert_eq!(t!(h.device_major()), None);
-    assert_eq!(t!(h.device_minor()), None);
+    assert_eq!(h.device_major().unwrap(), None);
+    assert_eq!(h.device_minor().unwrap(), None);
     assert!(h.set_device_major(1).is_err());
     assert!(h.set_device_minor(1).is_err());
 }
@@ -127,23 +127,23 @@ fn dev_major_minor() {
 fn set_path() {
     let mut h = Header::new_gnu();
     h.set_path("foo").unwrap();
-    assert_eq!(t!(h.path()).to_str(), Some("foo"));
+    assert_eq!(h.path().unwrap().to_str(), Some("foo"));
     h.set_path("foo/").unwrap();
-    assert_eq!(t!(h.path()).to_str(), Some("foo/"));
+    assert_eq!(h.path().unwrap().to_str(), Some("foo/"));
     h.set_path("foo/bar").unwrap();
-    assert_eq!(t!(h.path()).to_str(), Some("foo/bar"));
+    assert_eq!(h.path().unwrap().to_str(), Some("foo/bar"));
     h.set_path("foo\\bar").unwrap();
     if cfg!(windows) {
-        assert_eq!(t!(h.path()).to_str(), Some("foo/bar"));
+        assert_eq!(h.path().unwrap().to_str(), Some("foo/bar"));
     } else {
-        assert_eq!(t!(h.path()).to_str(), Some("foo\\bar"));
+        assert_eq!(h.path().unwrap().to_str(), Some("foo\\bar"));
     }
 
     // set_path documentation explicitly states it removes any ".", signifying the
     // current directory, from the path. This test ensures that documented
     // behavior occurs
     h.set_path("./control").unwrap();
-    assert_eq!(t!(h.path()).to_str(), Some("control"));
+    assert_eq!(h.path().unwrap().to_str(), Some("control"));
 
     let long_name = "foo".repeat(100);
     let medium1 = "foo".repeat(52);
@@ -160,12 +160,12 @@ fn set_path() {
 
     h = Header::new_ustar();
     h.set_path("foo").unwrap();
-    assert_eq!(t!(h.path()).to_str(), Some("foo"));
+    assert_eq!(h.path().unwrap().to_str(), Some("foo"));
 
     assert!(h.set_path(&long_name).is_err());
     assert!(h.set_path(&medium1).is_err());
     h.set_path(&medium2).unwrap();
-    assert_eq!(t!(h.path()).to_str(), Some(&medium2[..]));
+    assert_eq!(h.path().unwrap().to_str(), Some(&medium2[..]));
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn set_ustar_path_hard() {
     let mut h = Header::new_ustar();
     let p = Path::new("a").join(vec!["a"; 100].join(""));
     h.set_path(&p).unwrap();
-    assert_eq!(t!(h.path()), p);
+    assert_eq!(h.path().unwrap(), p);
 }
 
 #[test]
@@ -198,17 +198,17 @@ fn set_metadata_deterministic() {
     let two = mk_header(tmppath.as_path(), true).unwrap();
 
     // Always expected to match.
-    assert_eq!(t!(one.size()), t!(two.size()));
-    assert_eq!(t!(one.path()), t!(two.path()));
-    assert_eq!(t!(one.mode()), t!(two.mode()));
+    assert_eq!(one.size().unwrap(), t!(two.size()));
+    assert_eq!(one.path().unwrap(), t!(two.path()));
+    assert_eq!(one.mode().unwrap(), t!(two.mode()));
 
     // Would not match without `Deterministic`.
-    assert_eq!(t!(one.mtime()), t!(two.mtime()));
-    assert_eq!(t!(one.mtime()), 1153704088);
+    assert_eq!(one.mtime().unwrap(), t!(two.mtime()));
+    assert_eq!(one.mtime().unwrap(), 1153704088);
     // TODO: No great way to validate that these would not be filled, but
     // check them anyway.
-    assert_eq!(t!(one.uid()), t!(two.uid()));
-    assert_eq!(t!(one.gid()), t!(two.gid()));
+    assert_eq!(one.uid().unwrap(), t!(two.uid()));
+    assert_eq!(one.gid().unwrap(), t!(two.gid()));
 }
 
 #[test]
