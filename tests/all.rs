@@ -907,7 +907,7 @@ fn links() {
     let mut entries = ar.entries().unwrap();
     let link = entries.next().unwrap().unwrap();
     assert_eq!(
-        link.header().link_name().unwrap().as_ref().map(|p| &**p),
+        link.header().link_name().unwrap().as_deref(),
         Some(Path::new("file"))
     );
     let other = entries.next().unwrap().unwrap();
