@@ -37,13 +37,13 @@ fn goto_ustar() {
 #[test]
 fn link_name() {
     let mut h = Header::new_gnu();
-    t!(h.set_link_name("foo"));
+    h.set_link_name("foo").unwrap();
     assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo"));
-    t!(h.set_link_name("../foo"));
+    h.set_link_name("../foo").unwrap();
     assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("../foo"));
-    t!(h.set_link_name("foo/bar"));
+    h.set_link_name("foo/bar").unwrap();
     assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/bar"));
-    t!(h.set_link_name("foo\\ba"));
+    h.set_link_name("foo\\ba").unwrap();
     if cfg!(windows) {
         assert_eq!(t!(h.link_name()).unwrap().to_str(), Some("foo/ba"));
     } else {
@@ -74,14 +74,14 @@ fn mtime() {
 #[test]
 fn user_and_group_name() {
     let mut h = Header::new_gnu();
-    t!(h.set_username("foo"));
-    t!(h.set_groupname("bar"));
+    h.set_username("foo").unwrap();
+    h.set_groupname("bar").unwrap();
     assert_eq!(t!(h.username()), Some("foo"));
     assert_eq!(t!(h.groupname()), Some("bar"));
 
     h = Header::new_ustar();
-    t!(h.set_username("foo"));
-    t!(h.set_groupname("bar"));
+    h.set_username("foo").unwrap();
+    h.set_groupname("bar").unwrap();
     assert_eq!(t!(h.username()), Some("foo"));
     assert_eq!(t!(h.groupname()), Some("bar"));
 
@@ -95,14 +95,14 @@ fn user_and_group_name() {
 #[test]
 fn dev_major_minor() {
     let mut h = Header::new_gnu();
-    t!(h.set_device_major(1));
-    t!(h.set_device_minor(2));
+    h.set_device_major(1).unwrap();
+    h.set_device_minor(2).unwrap();
     assert_eq!(t!(h.device_major()), Some(1));
     assert_eq!(t!(h.device_minor()), Some(2));
 
     h = Header::new_ustar();
-    t!(h.set_device_major(1));
-    t!(h.set_device_minor(2));
+    h.set_device_major(1).unwrap();
+    h.set_device_minor(2).unwrap();
     assert_eq!(t!(h.device_major()), Some(1));
     assert_eq!(t!(h.device_minor()), Some(2));
 
@@ -126,13 +126,13 @@ fn dev_major_minor() {
 #[test]
 fn set_path() {
     let mut h = Header::new_gnu();
-    t!(h.set_path("foo"));
+    h.set_path("foo").unwrap();
     assert_eq!(t!(h.path()).to_str(), Some("foo"));
-    t!(h.set_path("foo/"));
+    h.set_path("foo/").unwrap();
     assert_eq!(t!(h.path()).to_str(), Some("foo/"));
-    t!(h.set_path("foo/bar"));
+    h.set_path("foo/bar").unwrap();
     assert_eq!(t!(h.path()).to_str(), Some("foo/bar"));
-    t!(h.set_path("foo\\bar"));
+    h.set_path("foo\\bar").unwrap();
     if cfg!(windows) {
         assert_eq!(t!(h.path()).to_str(), Some("foo/bar"));
     } else {
@@ -142,7 +142,7 @@ fn set_path() {
     // set_path documentation explicitly states it removes any ".", signifying the
     // current directory, from the path. This test ensures that documented
     // behavior occurs
-    t!(h.set_path("./control"));
+    h.set_path("./control").unwrap();
     assert_eq!(t!(h.path()).to_str(), Some("control"));
 
     let long_name = "foo".repeat(100);
@@ -159,12 +159,12 @@ fn set_path() {
     assert!(h.set_path("foo/../bar").is_err());
 
     h = Header::new_ustar();
-    t!(h.set_path("foo"));
+    h.set_path("foo").unwrap();
     assert_eq!(t!(h.path()).to_str(), Some("foo"));
 
     assert!(h.set_path(&long_name).is_err());
     assert!(h.set_path(&medium1).is_err());
-    t!(h.set_path(&medium2));
+    h.set_path(&medium2).unwrap();
     assert_eq!(t!(h.path()).to_str(), Some(&medium2[..]));
 }
 
@@ -172,30 +172,30 @@ fn set_path() {
 fn set_ustar_path_hard() {
     let mut h = Header::new_ustar();
     let p = Path::new("a").join(vec!["a"; 100].join(""));
-    t!(h.set_path(&p));
+    h.set_path(&p).unwrap();
     assert_eq!(t!(h.path()), p);
 }
 
 #[test]
 fn set_metadata_deterministic() {
-    let td = t!(Builder::new().prefix("tar-rs").tempdir());
+    let td = Builder::new().prefix("tar-rs").tempdir().unwrap();
     let tmppath = td.path().join("tmpfile");
 
     fn mk_header(path: &Path, readonly: bool) -> Result<Header, io::Error> {
-        let mut file = t!(File::create(path));
-        t!(file.write_all(b"c"));
-        let mut perms = t!(file.metadata()).permissions();
+        let mut file = File::create(path).unwrap();
+        file.write_all(b"c").unwrap();
+        let mut perms = file.metadata().unwrap().permissions();
         perms.set_readonly(readonly);
-        t!(fs::set_permissions(path, perms));
+        fs::set_permissions(path, perms).unwrap();
         let mut h = Header::new_ustar();
-        h.set_metadata_in_mode(&t!(path.metadata()), HeaderMode::Deterministic);
+        h.set_metadata_in_mode(&path.metadata().unwrap(), HeaderMode::Deterministic);
         Ok(h)
     }
 
     // Create "the same" File twice in a row, one second apart, with differing readonly values.
-    let one = t!(mk_header(tmppath.as_path(), false));
+    let one = mk_header(tmppath.as_path(), false).unwrap();
     thread::sleep(time::Duration::from_millis(1050));
-    let two = t!(mk_header(tmppath.as_path(), true));
+    let two = mk_header(tmppath.as_path(), true).unwrap();
 
     // Always expected to match.
     assert_eq!(t!(one.size()), t!(two.size()));
