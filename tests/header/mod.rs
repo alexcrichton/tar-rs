@@ -198,17 +198,17 @@ fn set_metadata_deterministic() {
     let two = mk_header(tmppath.as_path(), true).unwrap();
 
     // Always expected to match.
-    assert_eq!(one.size().unwrap(), t!(two.size()));
-    assert_eq!(one.path().unwrap(), t!(two.path()));
-    assert_eq!(one.mode().unwrap(), t!(two.mode()));
+    assert_eq!(one.size().unwrap(), two.size().unwrap());
+    assert_eq!(one.path().unwrap(), two.path().unwrap());
+    assert_eq!(one.mode().unwrap(), two.mode().unwrap());
 
     // Would not match without `Deterministic`.
-    assert_eq!(one.mtime().unwrap(), t!(two.mtime()));
+    assert_eq!(one.mtime().unwrap(), two.mtime().unwrap());
     assert_eq!(one.mtime().unwrap(), 1153704088);
     // TODO: No great way to validate that these would not be filled, but
     // check them anyway.
-    assert_eq!(one.uid().unwrap(), t!(two.uid()));
-    assert_eq!(one.gid().unwrap(), t!(two.gid()));
+    assert_eq!(one.uid().unwrap(), two.uid().unwrap());
+    assert_eq!(one.gid().unwrap(), two.gid().unwrap());
 }
 
 #[test]
