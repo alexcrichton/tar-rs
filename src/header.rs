@@ -7,7 +7,6 @@ use std::borrow::Cow;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::iter;
 use std::iter::{once, repeat};
 use std::mem;
 use std::path::{Component, Path, PathBuf};
@@ -351,7 +350,7 @@ impl Header {
     ///
     /// Note that this function will convert any `\` characters to directory
     /// separators.
-    pub fn path(&self) -> io::Result<Cow<Path>> {
+    pub fn path(&self) -> io::Result<Cow<'_, Path>> {
         bytes2path(self.path_bytes())
     }
 
@@ -362,7 +361,7 @@ impl Header {
     ///
     /// Note that this function will convert any `\` characters to directory
     /// separators.
-    pub fn path_bytes(&self) -> Cow<[u8]> {
+    pub fn path_bytes(&self) -> Cow<'_, [u8]> {
         if let Some(ustar) = self.as_ustar() {
             ustar.path_bytes()
         } else {
@@ -426,7 +425,7 @@ impl Header {
     ///
     /// Note that this function will convert any `\` characters to directory
     /// separators.
-    pub fn link_name(&self) -> io::Result<Option<Cow<Path>>> {
+    pub fn link_name(&self) -> io::Result<Option<Cow<'_, Path>>> {
         match self.link_name_bytes() {
             Some(bytes) => bytes2path(bytes).map(Some),
             None => Ok(None),
@@ -440,7 +439,7 @@ impl Header {
     ///
     /// Note that this function will convert any `\` characters to directory
     /// separators.
-    pub fn link_name_bytes(&self) -> Option<Cow<[u8]>> {
+    pub fn link_name_bytes(&self) -> Option<Cow<'_, [u8]>> {
         let old = self.as_old();
         if old.linkname[0] != 0 {
             Some(Cow::Borrowed(truncate(&old.linkname)))
@@ -740,7 +739,7 @@ impl Header {
         let len = old.cksum.len();
         self.bytes[0..offset]
             .iter()
-            .chain(iter::repeat(&b' ').take(len))
+            .chain(repeat(&b' ').take(len))
             .chain(&self.bytes[offset + len..])
             .fold(0, |a, b| a + (*b as u32))
     }
@@ -973,7 +972,7 @@ impl fmt::Debug for OldHeader {
 
 impl UstarHeader {
     /// See `Header::path_bytes`
-    pub fn path_bytes(&self) -> Cow<[u8]> {
+    pub fn path_bytes(&self) -> Cow<'_, [u8]> {
         if self.prefix[0] == 0 && !self.name.contains(&b'\\') {
             Cow::Borrowed(truncate(&self.name))
         } else {
@@ -1541,7 +1540,7 @@ fn truncate(slice: &[u8]) -> &[u8] {
 fn copy_into(slot: &mut [u8], bytes: &[u8]) -> io::Result<()> {
     if bytes.len() > slot.len() {
         Err(other("provided value is too long"))
-    } else if bytes.iter().any(|b| *b == 0) {
+    } else if bytes.contains(&0) {
         Err(other("provided value contains a nul byte"))
     } else {
         for (slot, val) in slot.iter_mut().zip(bytes.iter().chain(Some(&0))) {
@@ -1652,7 +1651,7 @@ fn ends_with_slash(p: &Path) -> bool {
 }
 
 #[cfg(any(windows, target_arch = "wasm32"))]
-pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
+pub fn path2bytes(p: &Path) -> io::Result<Cow<'_, [u8]>> {
     p.as_os_str()
         .to_str()
         .map(|s| s.as_bytes())
@@ -1675,7 +1674,7 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
 
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 /// On unix this will never fail
-pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
+pub fn path2bytes(p: &Path) -> io::Result<Cow<'_, [u8]>> {
     Ok(Cow::Borrowed(p.as_os_str().as_bytes()))
 }
 
