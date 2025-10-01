@@ -373,7 +373,10 @@ fn modify_hard_link_just_created() {
     assert!(ar.unpack(&dir).is_err());
 
     let mut contents = Vec::new();
-    t!(File::open(&test)).read_to_end(&mut contents).unwrap();
+    File::open(&test)
+        .unwrap()
+        .read_to_end(&mut contents)
+        .unwrap();
     assert_eq!(contents.len(), 0);
 }
 
@@ -408,6 +411,9 @@ fn modify_symlink_just_created() {
     ar.unpack(&dir).unwrap();
 
     let mut contents = Vec::new();
-    t!(File::open(&test)).read_to_end(&mut contents).unwrap();
+    File::open(&test)
+        .unwrap()
+        .read_to_end(&mut contents)
+        .unwrap();
     assert_eq!(contents.len(), 0);
 }

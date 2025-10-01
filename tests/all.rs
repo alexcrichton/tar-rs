@@ -135,9 +135,10 @@ fn writing_files() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
 
     let path = td.path().join("test");
-    t!(File::create(&path)).write_all(b"test").unwrap();
+    File::create(&path).unwrap().write_all(b"test").unwrap();
 
-    ar.append_file("test2", &mut t!(File::open(&path))).unwrap();
+    ar.append_file("test2", &mut File::open(&path).unwrap())
+        .unwrap();
 
     let data = ar.into_inner().unwrap();
     let mut ar = Archive::new(Cursor::new(data));
@@ -159,7 +160,7 @@ fn large_filename() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
 
     let path = td.path().join("test");
-    t!(File::create(&path)).write_all(b"test").unwrap();
+    File::create(&path).unwrap().write_all(b"test").unwrap();
 
     let filename = "abcd/".repeat(50);
     let mut header = Header::new_ustar();
@@ -168,7 +169,7 @@ fn large_filename() {
     header.set_cksum();
     ar.append(&header, &b"test"[..]).unwrap();
     let too_long = "abcd".repeat(200);
-    ar.append_file(&too_long, &mut t!(File::open(&path)))
+    ar.append_file(&too_long, &mut File::open(&path).unwrap())
         .unwrap();
     ar.append_data(&mut header, &too_long, &b"test"[..])
         .unwrap();
@@ -449,10 +450,10 @@ fn writing_and_extracting_directories() {
 
     let mut ar = Builder::new(Vec::new());
     let tmppath = td.path().join("tmpfile");
-    t!(File::create(&tmppath)).write_all(b"c").unwrap();
+    File::create(&tmppath).unwrap().write_all(b"c").unwrap();
     ar.append_dir("a", ".").unwrap();
     ar.append_dir("a/b", ".").unwrap();
-    ar.append_file("a/c", &mut t!(File::open(&tmppath)))
+    ar.append_file("a/c", &mut File::open(&tmppath).unwrap())
         .unwrap();
     ar.finish().unwrap();
 
@@ -470,7 +471,7 @@ fn writing_and_extracting_directories_complex_permissions() {
     // without reordering of entries.
     let mut ar = Builder::new(Vec::new());
     let tmppath = td.path().join("tmpfile");
-    t!(File::create(&tmppath)).write_all(b"c").unwrap();
+    File::create(&tmppath).unwrap().write_all(b"c").unwrap();
 
     // Root dir with very stringent permissions
     let data: &[u8] = &[];
@@ -490,7 +491,7 @@ fn writing_and_extracting_directories_complex_permissions() {
     ar.append(&header, data).unwrap();
 
     // Nested file.
-    ar.append_file("a/c", &mut t!(File::open(&tmppath)))
+    ar.append_file("a/c", &mut File::open(&tmppath).unwrap())
         .unwrap();
     ar.finish().unwrap();
 
@@ -506,12 +507,14 @@ fn writing_directories_recursively() {
 
     let base_dir = td.path().join("base");
     fs::create_dir(&base_dir).unwrap();
-    t!(File::create(base_dir.join("file1")))
+    File::create(base_dir.join("file1"))
+        .unwrap()
         .write_all(b"file1")
         .unwrap();
     let sub_dir = base_dir.join("sub");
     fs::create_dir(&sub_dir).unwrap();
-    t!(File::create(sub_dir.join("file2")))
+    File::create(sub_dir.join("file2"))
+        .unwrap()
         .write_all(b"file2")
         .unwrap();
 
@@ -541,12 +544,14 @@ fn append_dir_all_blank_dest() {
 
     let base_dir = td.path().join("base");
     fs::create_dir(&base_dir).unwrap();
-    t!(File::create(base_dir.join("file1")))
+    File::create(base_dir.join("file1"))
+        .unwrap()
         .write_all(b"file1")
         .unwrap();
     let sub_dir = base_dir.join("sub");
     fs::create_dir(&sub_dir).unwrap();
-    t!(File::create(sub_dir.join("file2")))
+    File::create(sub_dir.join("file2"))
+        .unwrap()
         .write_all(b"file2")
         .unwrap();
 
@@ -574,7 +579,7 @@ fn append_dir_all_blank_dest() {
 fn append_dir_all_does_not_work_on_non_directory() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
     let path = td.path().join("test");
-    t!(File::create(&path)).write_all(b"test").unwrap();
+    File::create(&path).unwrap().write_all(b"test").unwrap();
 
     let mut ar = Builder::new(Vec::new());
     let result = ar.append_dir_all("test", path);
@@ -764,13 +769,13 @@ fn extracting_malformed_tar_null_blocks() {
     let path2 = td.path().join("tmpfile2");
     File::create(&path1).unwrap();
     File::create(&path2).unwrap();
-    ar.append_file("tmpfile1", &mut t!(File::open(&path1)))
+    ar.append_file("tmpfile1", &mut File::open(&path1).unwrap())
         .unwrap();
     let mut data = ar.into_inner().unwrap();
     let amt = data.len();
     data.truncate(amt - 512);
     let mut ar = Builder::new(data);
-    ar.append_file("tmpfile2", &mut t!(File::open(&path2)))
+    ar.append_file("tmpfile2", &mut File::open(&path2).unwrap())
         .unwrap();
     ar.finish().unwrap();
 
@@ -831,7 +836,7 @@ fn backslash_treated_well() {
     let mut ar = Builder::new(Vec::<u8>::new());
     ar.append_dir("foo\\bar", td.path()).unwrap();
     let mut ar = Archive::new(Cursor::new(ar.into_inner().unwrap()));
-    let f = t!(ar.entries()).next().unwrap().unwrap();
+    let f = ar.entries().unwrap().next().unwrap().unwrap();
     if cfg!(unix) {
         assert_eq!(t!(f.header().path()).to_str(), Some("foo\\bar"));
     } else {
@@ -850,7 +855,7 @@ fn backslash_treated_well() {
     ar.append(&header, &mut io::empty()).unwrap();
     let data = ar.into_inner().unwrap();
     let mut ar = Archive::new(&data[..]);
-    let f = t!(ar.entries()).next().unwrap().unwrap();
+    let f = ar.entries().unwrap().next().unwrap().unwrap();
     assert_eq!(t!(f.header().path()).to_str(), Some("foo\\bar"));
 
     let mut ar = Archive::new(&data[..]);
@@ -991,7 +996,7 @@ fn pax_simple_write() {
     ];
 
     ar.append_pax_extensions(pax_extensions).unwrap();
-    ar.append_file("test2", &mut t!(File::open(&pax_path)))
+    ar.append_file("test2", &mut File::open(&pax_path).unwrap())
         .unwrap();
     ar.finish().unwrap();
     drop(ar);
@@ -1059,7 +1064,7 @@ fn long_name_trailing_nul() {
     let contents = b.into_inner().unwrap();
     let mut a = Archive::new(&contents[..]);
 
-    let e = t!(a.entries()).next().unwrap().unwrap();
+    let e = a.entries().unwrap().next().unwrap().unwrap();
     assert_eq!(&*e.path_bytes(), b"foo");
 }
 
@@ -1084,7 +1089,7 @@ fn long_linkname_trailing_nul() {
     let contents = b.into_inner().unwrap();
     let mut a = Archive::new(&contents[..]);
 
-    let e = t!(a.entries()).next().unwrap().unwrap();
+    let e = a.entries().unwrap().next().unwrap().unwrap();
     assert_eq!(&*e.link_name_bytes().unwrap(), b"foo");
 }
 
@@ -1102,7 +1107,7 @@ fn long_linkname_gnu() {
         let contents = b.into_inner().unwrap();
         let mut a = Archive::new(&contents[..]);
 
-        let e = &t!(a.entries()).next().unwrap().unwrap();
+        let e = &a.entries().unwrap().next().unwrap().unwrap();
         assert_eq!(e.header().entry_type(), t);
         assert_eq!(e.path().unwrap().to_str().unwrap(), path);
         assert_eq!(e.link_name().unwrap().unwrap().to_str().unwrap(), target);
@@ -1124,7 +1129,7 @@ fn linkname_literal() {
         let contents = b.into_inner().unwrap();
         let mut a = Archive::new(&contents[..]);
 
-        let e = &t!(a.entries()).next().unwrap().unwrap();
+        let e = &a.entries().unwrap().next().unwrap().unwrap();
         assert_eq!(e.header().entry_type(), t);
         assert_eq!(e.path().unwrap().to_str().unwrap(), path);
         assert_eq!(e.link_name().unwrap().unwrap().to_str().unwrap(), target);
@@ -1174,17 +1179,18 @@ fn append_writer() {
 fn encoded_long_name_has_trailing_nul() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
     let path = td.path().join("foo");
-    t!(File::create(&path)).write_all(b"test").unwrap();
+    File::create(&path).unwrap().write_all(b"test").unwrap();
 
     let mut b = Builder::new(Vec::<u8>::new());
     let long = "abcd".repeat(200);
 
-    b.append_file(&long, &mut t!(File::open(&path))).unwrap();
+    b.append_file(&long, &mut File::open(&path).unwrap())
+        .unwrap();
 
     let contents = b.into_inner().unwrap();
     let mut a = Archive::new(&contents[..]);
 
-    let mut e = t!(a.entries()).raw(true).next().unwrap().unwrap();
+    let mut e = a.entries().unwrap().raw(true).next().unwrap().unwrap();
     let mut name = Vec::new();
     e.read_to_end(&mut name).unwrap();
     assert_eq!(name[name.len() - 1], 0);
@@ -1251,21 +1257,24 @@ fn extract_sparse() {
     ar.unpack(td.path()).unwrap();
 
     let mut s = String::new();
-    t!(File::open(td.path().join("sparse_begin.txt")))
+    File::open(td.path().join("sparse_begin.txt"))
+        .unwrap()
         .read_to_string(&mut s)
         .unwrap();
     assert_eq!(&s[..5], "test\n");
     assert!(s[5..].chars().all(|x| x == '\u{0}'));
 
     s.truncate(0);
-    t!(File::open(td.path().join("sparse_end.txt")))
+    File::open(td.path().join("sparse_end.txt"))
+        .unwrap()
         .read_to_string(&mut s)
         .unwrap();
     assert!(s[..s.len() - 9].chars().all(|x| x == '\u{0}'));
     assert_eq!(&s[s.len() - 9..], "test_end\n");
 
     s.truncate(0);
-    t!(File::open(td.path().join("sparse_ext.txt")))
+    File::open(td.path().join("sparse_ext.txt"))
+        .unwrap()
         .read_to_string(&mut s)
         .unwrap();
     assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
@@ -1282,7 +1291,8 @@ fn extract_sparse() {
     assert_eq!(&s[0xb000..0xb000 + 5], "text\n");
 
     s.truncate(0);
-    t!(File::open(td.path().join("sparse.txt")))
+    File::open(td.path().join("sparse.txt"))
+        .unwrap()
         .read_to_string(&mut s)
         .unwrap();
     assert!(s[..0x1000].chars().all(|x| x == '\u{0}'));
@@ -1388,7 +1398,7 @@ fn path_separators() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
 
     let path = td.path().join("test");
-    t!(File::create(&path)).write_all(b"test").unwrap();
+    File::create(&path).unwrap().write_all(b"test").unwrap();
 
     let short_path: PathBuf = repeat("abcd").take(2).collect();
     let long_path: PathBuf = repeat("abcd").take(50).collect();
@@ -1406,9 +1416,9 @@ fn path_separators() {
 
     // Make sure GNU headers normalize to Unix path separators,
     // including the `@LongLink` fallback used by `append_file`.
-    ar.append_file(&short_path, &mut t!(File::open(&path)))
+    ar.append_file(&short_path, &mut File::open(&path).unwrap())
         .unwrap();
-    ar.append_file(&long_path, &mut t!(File::open(&path)))
+    ar.append_file(&long_path, &mut File::open(&path).unwrap())
         .unwrap();
 
     let rd = Cursor::new(ar.into_inner().unwrap());
@@ -1522,7 +1532,7 @@ fn insert_local_file_different_name() {
     fs::create_dir(&path).unwrap();
     ar.append_path_with_name(&path, "archive/dir").unwrap();
     let path = td.path().join("file");
-    t!(File::create(&path)).write_all(b"test").unwrap();
+    File::create(&path).unwrap().write_all(b"test").unwrap();
     ar.append_path_with_name(&path, "archive/dir/f").unwrap();
 
     let rd = Cursor::new(ar.into_inner().unwrap());
