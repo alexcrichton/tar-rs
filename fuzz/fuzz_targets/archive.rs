@@ -17,7 +17,6 @@
 use arbitrary::{Arbitrary, Unstructured};
 use cap_std::fs::Dir;
 use cap_std::ambient_authority;
-use derive_arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use std::io::{Cursor, Write};
 use tar::{Archive, Builder, EntryType, Header};
