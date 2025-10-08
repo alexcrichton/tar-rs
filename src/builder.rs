@@ -870,7 +870,18 @@ fn append_dir_all(
     src_path: &Path,
     options: BuilderOptions,
 ) -> io::Result<()> {
-    let mut stack = vec![(src_path.to_path_buf(), true, false)];
+    let src_metadata = if options.follow {
+        fs::metadata(src_path)
+    } else {
+        fs::symlink_metadata(src_path)
+    }?;
+    if !src_metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "append_dir_all() argument not a directory",
+        ));
+    }
+    let mut stack = vec![(src_path.to_path_buf(), true, src_metadata.is_symlink())];
     while let Some((src, is_dir, is_symlink)) = stack.pop() {
         let dest = path.join(src.strip_prefix(src_path).unwrap());
         // In case of a symlink pointing to a directory, is_dir is false, but src.is_dir() will return true
