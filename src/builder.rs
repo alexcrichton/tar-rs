@@ -606,20 +606,16 @@ fn append_path_with_name(
     options: BuilderOptions,
 ) -> io::Result<()> {
     let stat = if options.follow {
-        fs::metadata(path).map_err(|err| {
-            io::Error::new(
-                err.kind(),
-                format!("{} when getting metadata for {}", err, path.display()),
-            )
-        })?
+        fs::metadata(path)
     } else {
-        fs::symlink_metadata(path).map_err(|err| {
-            io::Error::new(
-                err.kind(),
-                format!("{} when getting metadata for {}", err, path.display()),
-            )
-        })?
-    };
+        fs::symlink_metadata(path)
+    }
+    .map_err(|err| {
+        io::Error::new(
+            err.kind(),
+            format!("{} when getting metadata for {}", err, path.display()),
+        )
+    })?;
     let ar_name = name.unwrap_or(path);
     if stat.is_file() {
         append_file(dst, ar_name, &mut fs::File::open(path)?, options)
