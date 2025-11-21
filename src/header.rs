@@ -47,7 +47,11 @@ pub enum HeaderMode {
 
     /// Only metadata that is directly relevant to the identity of a file will
     /// be included. In particular, ownership and mod/access times are excluded.
-    Deterministic,
+    Deterministic {
+        ///If the `mtime` param is `Some(..)`, the value will be used instead of
+        /// [DETERMINISTIC_TIMESTAMP]
+        mtime: Option<u64>,
+    },
 }
 
 /// Representation of the header of an entry in an archive
@@ -777,12 +781,12 @@ impl Header {
                 self.set_gid(meta.gid() as u64);
                 self.set_mode(meta.mode());
             }
-            HeaderMode::Deterministic => {
-                // We could in theory set the mtime to zero here, but not all tools seem to behave
+            HeaderMode::Deterministic { mtime } => {
+                // We could in theory default the mtime to zero here, but not all tools seem to behave
                 // well when ingesting files with a 0 timestamp.
                 // For example, rust-lang/cargo#9512 shows that lldb doesn't ingest files with a
                 // zero timestamp correctly.
-                self.set_mtime(DETERMINISTIC_TIMESTAMP);
+                self.set_mtime(mtime.unwrap_or(DETERMINISTIC_TIMESTAMP));
 
                 self.set_uid(0);
                 self.set_gid(0);
@@ -847,10 +851,10 @@ impl Header {
                 };
                 self.set_mode(fs_mode);
             }
-            HeaderMode::Deterministic => {
+            HeaderMode::Deterministic { mtime } => {
                 self.set_uid(0);
                 self.set_gid(0);
-                self.set_mtime(DETERMINISTIC_TIMESTAMP); // see above in unix
+                self.set_mtime(mtime.unwrap_or(DETERMINISTIC_TIMESTAMP)); // see above in unix
                 let fs_mode = if meta.is_dir() { 0o755 } else { 0o644 };
                 self.set_mode(fs_mode);
             }
