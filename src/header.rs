@@ -160,6 +160,7 @@ impl Header {
             gnu.magic = *b"ustar ";
             gnu.version = *b" \0";
         }
+        header.set_entry_type(EntryType::Regular);
         header.set_mtime(0);
         header
     }
@@ -180,6 +181,7 @@ impl Header {
             gnu.magic = *b"ustar\0";
             gnu.version = *b"00";
         }
+        header.set_entry_type(EntryType::Regular);
         header.set_mtime(0);
         header
     }

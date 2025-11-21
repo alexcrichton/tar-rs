@@ -5,6 +5,8 @@
 /// distinguish between types of content.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EntryType {
+    /// Legacy Regular file
+    LegacyRegular,
     /// Regular file
     Regular,
     /// Hard link
@@ -47,7 +49,8 @@ impl EntryType {
     /// appropriate to create a file type from.
     pub fn new(byte: u8) -> EntryType {
         match byte {
-            b'\x00' | b'0' => EntryType::Regular,
+            b'\x00' => EntryType::LegacyRegular,
+            b'0' => EntryType::Regular,
             b'1' => EntryType::Link,
             b'2' => EntryType::Symlink,
             b'3' => EntryType::Char,
@@ -67,6 +70,7 @@ impl EntryType {
     /// Returns the raw underlying byte that this entry type represents.
     pub fn as_byte(&self) -> u8 {
         match *self {
+            EntryType::LegacyRegular => b'\x00',
             EntryType::Regular => b'0',
             EntryType::Link => b'1',
             EntryType::Symlink => b'2',
@@ -126,7 +130,7 @@ impl EntryType {
 
     /// Returns whether this type represents a regular file.
     pub fn is_file(&self) -> bool {
-        self == &EntryType::Regular
+        matches!(self, &EntryType::Regular | &EntryType::LegacyRegular)
     }
 
     /// Returns whether this type represents a hard link.
