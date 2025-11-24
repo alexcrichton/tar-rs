@@ -804,7 +804,7 @@ fn zero_file_times() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
 
     let mut ar = Builder::new(Vec::new());
-    ar.mode(HeaderMode::Deterministic { mtime: None });
+    ar.mode(HeaderMode::Deterministic);
     let path = td.path().join("tmpfile");
     File::create(&path).unwrap();
     ar.append_path_with_name(&path, "a").unwrap();
