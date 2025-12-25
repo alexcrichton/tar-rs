@@ -37,13 +37,13 @@ fn goto_ustar() {
 #[test]
 fn link_name() {
     let mut h = Header::new_gnu();
-    h.set_link_name("foo").unwrap();
+    h.set_link_name("foo", false).unwrap();
     assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo"));
-    h.set_link_name("../foo").unwrap();
+    h.set_link_name("../foo", false).unwrap();
     assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("../foo"));
-    h.set_link_name("foo/bar").unwrap();
+    h.set_link_name("foo/bar", false).unwrap();
     assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo/bar"));
-    h.set_link_name("foo\\ba").unwrap();
+    h.set_link_name("foo\\ba", false).unwrap();
     if cfg!(windows) {
         assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo/ba"));
     } else {
@@ -56,7 +56,7 @@ fn link_name() {
     }
     assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo\\bar"));
 
-    assert!(h.set_link_name("\0").is_err());
+    assert!(h.set_link_name("\0", false).is_err());
 }
 
 #[test]
@@ -126,13 +126,13 @@ fn dev_major_minor() {
 #[test]
 fn set_path() {
     let mut h = Header::new_gnu();
-    h.set_path("foo").unwrap();
+    h.set_path("foo", false).unwrap();
     assert_eq!(h.path().unwrap().to_str(), Some("foo"));
-    h.set_path("foo/").unwrap();
+    h.set_path("foo/", false).unwrap();
     assert_eq!(h.path().unwrap().to_str(), Some("foo/"));
-    h.set_path("foo/bar").unwrap();
+    h.set_path("foo/bar", false).unwrap();
     assert_eq!(h.path().unwrap().to_str(), Some("foo/bar"));
-    h.set_path("foo\\bar").unwrap();
+    h.set_path("foo\\bar", false).unwrap();
     if cfg!(windows) {
         assert_eq!(h.path().unwrap().to_str(), Some("foo/bar"));
     } else {
@@ -142,29 +142,29 @@ fn set_path() {
     // set_path documentation explicitly states it removes any ".", signifying the
     // current directory, from the path. This test ensures that documented
     // behavior occurs
-    h.set_path("./control").unwrap();
+    h.set_path("./control", false).unwrap();
     assert_eq!(h.path().unwrap().to_str(), Some("control"));
 
     let long_name = "foo".repeat(100);
     let medium1 = "foo".repeat(52);
     let medium2 = "fo/".repeat(52);
 
-    assert!(h.set_path(&long_name).is_err());
-    assert!(h.set_path(&medium1).is_err());
-    assert!(h.set_path(&medium2).is_err());
-    assert!(h.set_path("\0").is_err());
+    assert!(h.set_path(&long_name, false).is_err());
+    assert!(h.set_path(&medium1, false).is_err());
+    assert!(h.set_path(&medium2, false).is_err());
+    assert!(h.set_path("\0", false).is_err());
 
-    assert!(h.set_path("..").is_err());
-    assert!(h.set_path("foo/..").is_err());
-    assert!(h.set_path("foo/../bar").is_err());
+    assert!(h.set_path("..", false).is_err());
+    assert!(h.set_path("foo/..", false).is_err());
+    assert!(h.set_path("foo/../bar", false).is_err());
 
     h = Header::new_ustar();
-    h.set_path("foo").unwrap();
+    h.set_path("foo", false).unwrap();
     assert_eq!(h.path().unwrap().to_str(), Some("foo"));
 
-    assert!(h.set_path(&long_name).is_err());
-    assert!(h.set_path(&medium1).is_err());
-    h.set_path(&medium2).unwrap();
+    assert!(h.set_path(&long_name, false).is_err());
+    assert!(h.set_path(&medium1, false).is_err());
+    h.set_path(&medium2, false).unwrap();
     assert_eq!(h.path().unwrap().to_str(), Some(&medium2[..]));
 }
 
@@ -172,7 +172,7 @@ fn set_path() {
 fn set_ustar_path_hard() {
     let mut h = Header::new_ustar();
     let p = Path::new("a").join(vec!["a"; 100].join(""));
-    h.set_path(&p).unwrap();
+    h.set_path(&p, false).unwrap();
     assert_eq!(h.path().unwrap(), p);
 }
 

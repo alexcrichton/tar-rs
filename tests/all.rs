@@ -155,14 +155,14 @@ fn large_filename() {
 
     let filename = "abcd/".repeat(50);
     let mut header = Header::new_ustar();
-    header.set_path(&filename).unwrap();
+    header.set_path(&filename, false).unwrap();
     header.set_metadata(&fs::metadata(&path).unwrap());
     header.set_cksum();
     ar.append(&header, &b"test"[..]).unwrap();
     let too_long = "abcd".repeat(200);
     ar.append_file(&too_long, &mut File::open(&path).unwrap())
         .unwrap();
-    ar.append_data(&mut header, &too_long, &b"test"[..])
+    ar.append_data(&mut header, &too_long, &b"test"[..], false)
         .unwrap();
 
     let rd = Cursor::new(ar.into_inner().unwrap());
@@ -211,8 +211,13 @@ fn large_filename_with_dot_dot_at_100_byte_mark() {
     let mut long_name_with_dot_dot = "tdir/".repeat(19);
     long_name_with_dot_dot.push_str("tt/..file");
 
-    ar.append_data(&mut header, &long_name_with_dot_dot, b"test".as_slice())
-        .unwrap();
+    ar.append_data(
+        &mut header,
+        &long_name_with_dot_dot,
+        b"test".as_slice(),
+        false,
+    )
+    .unwrap();
 
     let rd = Cursor::new(ar.into_inner().unwrap());
     let mut ar = Archive::new(rd);
@@ -455,6 +460,42 @@ fn writing_and_extracting_directories() {
 }
 
 #[test]
+fn writing_files_absolute_path_fail() {
+    let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
+    let mut ar = Builder::new(Vec::new());
+
+    let td_abs_path = td.path().display().to_string();
+    if let Err(res) = ar.append_dir(&td_abs_path, &td_abs_path) {
+        assert!(res
+            .to_string()
+            .contains("paths in archives must be relative when setting path for"));
+        return;
+    }
+
+    panic!("Expected error");
+}
+
+#[test]
+fn writing_files_absolute_path_succeed() {
+    let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
+
+    let mut ar = Builder::new(Vec::new());
+    ar.preserve_absolute(true);
+
+    let td_abs_path = td.path().display().to_string();
+    ar.append_dir(&td_abs_path, &td_abs_path).unwrap();
+    ar.finish().unwrap();
+
+    let rdr = Cursor::new(ar.into_inner().unwrap());
+    let mut ar = Archive::new(rdr);
+    assert!(ar
+        .entries()
+        .unwrap()
+        .map(|e| e.unwrap().path().unwrap().display().to_string())
+        .any(|e| e == td_abs_path.to_string()));
+}
+
+#[test]
 fn writing_and_extracting_directories_complex_permissions() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
 
@@ -469,7 +510,7 @@ fn writing_and_extracting_directories_complex_permissions() {
     let mut header = Header::new_gnu();
     header.set_mode(0o555);
     header.set_entry_type(EntryType::Directory);
-    header.set_path("a").unwrap();
+    header.set_path("a", false).unwrap();
     header.set_size(0);
     header.set_cksum();
     ar.append(&header, data).unwrap();
@@ -477,7 +518,7 @@ fn writing_and_extracting_directories_complex_permissions() {
     // Nested dir
     header.set_mode(0o777);
     header.set_entry_type(EntryType::Directory);
-    header.set_path("a/b").unwrap();
+    header.set_path("a/b", false).unwrap();
     header.set_cksum();
     ar.append(&header, data).unwrap();
 
@@ -596,7 +637,7 @@ fn unpack_old_style_bsd_dir() {
 
     let mut header = Header::new_old();
     header.set_entry_type(EntryType::Regular);
-    header.set_path("testdir/").unwrap();
+    header.set_path("testdir/", false).unwrap();
     header.set_size(0);
     header.set_cksum();
     ar.append(&header, &mut io::empty()).unwrap();
@@ -624,7 +665,7 @@ fn handling_incorrect_file_size() {
     File::create(&path).unwrap();
     let mut file = File::open(&path).unwrap();
     let mut header = Header::new_old();
-    header.set_path("somepath").unwrap();
+    header.set_path("somepath", false).unwrap();
     header.set_metadata(&file.metadata().unwrap());
     header.set_size(2048); // past the end of file null blocks
     header.set_cksum();
@@ -651,7 +692,7 @@ fn extracting_malicious_tarball() {
         let mut a = Builder::new(&mut evil_tar);
         let mut append = |path: &str| {
             let mut header = Header::new_gnu();
-            assert!(header.set_path(path).is_err(), "was ok: {:?}", path);
+            assert!(header.set_path(path, false).is_err(), "was ok: {:?}", path);
             {
                 let h = header.as_gnu_mut().unwrap();
                 for (a, b) in h.name.iter_mut().zip(path.as_bytes()) {
@@ -863,7 +904,7 @@ fn set_mask() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo").unwrap();
+    header.set_path("foo", false).unwrap();
     header.set_mode(0o777);
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
@@ -871,7 +912,7 @@ fn set_mask() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("bar").unwrap();
+    header.set_path("bar", false).unwrap();
     header.set_mode(0o421);
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
@@ -1039,14 +1080,14 @@ fn long_name_trailing_nul() {
     let mut b = Builder::new(Vec::<u8>::new());
 
     let mut h = Header::new_gnu();
-    h.set_path("././@LongLink").unwrap();
+    h.set_path("././@LongLink", false).unwrap();
     h.set_size(4);
     h.set_entry_type(EntryType::new(b'L'));
     h.set_cksum();
     b.append(&h, "foo\0".as_bytes()).unwrap();
     let mut h = Header::new_gnu();
 
-    h.set_path("bar").unwrap();
+    h.set_path("bar", false).unwrap();
     h.set_size(6);
     h.set_entry_type(EntryType::file());
     h.set_cksum();
@@ -1064,14 +1105,14 @@ fn long_linkname_trailing_nul() {
     let mut b = Builder::new(Vec::<u8>::new());
 
     let mut h = Header::new_gnu();
-    h.set_path("././@LongLink").unwrap();
+    h.set_path("././@LongLink", false).unwrap();
     h.set_size(4);
     h.set_entry_type(EntryType::new(b'K'));
     h.set_cksum();
     b.append(&h, "foo\0".as_bytes()).unwrap();
     let mut h = Header::new_gnu();
 
-    h.set_path("bar").unwrap();
+    h.set_path("bar", false).unwrap();
     h.set_size(6);
     h.set_entry_type(EntryType::file());
     h.set_cksum();
@@ -1115,7 +1156,8 @@ fn linkname_literal() {
         let path = "usr/lib/systemd/systemd-sysv-install";
         let target = "../../..//sbin/chkconfig";
         h.set_link_name_literal(target).unwrap();
-        b.append_data(&mut h, path, std::io::empty()).unwrap();
+        b.append_data(&mut h, path, std::io::empty(), false)
+            .unwrap();
 
         let contents = b.into_inner().unwrap();
         let mut a = Archive::new(&contents[..]);
@@ -1133,7 +1175,7 @@ fn append_writer() {
 
     let mut h = Header::new_gnu();
     h.set_uid(42);
-    let mut writer = b.append_writer(&mut h, "file1").unwrap();
+    let mut writer = b.append_writer(&mut h, "file1", false).unwrap();
     writer.write_all(b"foo").unwrap();
     writer.write_all(b"barbaz").unwrap();
     writer.finish().unwrap();
@@ -1141,7 +1183,7 @@ fn append_writer() {
     let mut h = Header::new_gnu();
     h.set_uid(43);
     let long_path: PathBuf = repeat("abcd").take(50).collect();
-    let mut writer = b.append_writer(&mut h, &long_path).unwrap();
+    let mut writer = b.append_writer(&mut h, &long_path, false).unwrap();
     let long_data = repeat(b'x').take(513).collect::<Vec<u8>>();
     writer.write_all(&long_data).unwrap();
     writer.finish().unwrap();
@@ -1397,11 +1439,11 @@ fn path_separators() {
     // Make sure UStar headers normalize to Unix path separators
     let mut header = Header::new_ustar();
 
-    header.set_path(&short_path).unwrap();
+    header.set_path(&short_path, false).unwrap();
     assert_eq!(header.path().unwrap(), short_path);
     assert!(!header.path_bytes().contains(&b'\\'));
 
-    header.set_path(&long_path).unwrap();
+    header.set_path(&long_path, false).unwrap();
     assert_eq!(header.path().unwrap(), long_path);
     assert!(!header.path_bytes().contains(&b'\\'));
 
@@ -1489,7 +1531,7 @@ fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
     let mut ar = Builder::new(Vec::new());
 
     let mut h = Header::new_gnu();
-    h.set_path("././@LongLink").unwrap();
+    h.set_path("././@LongLink", false).unwrap();
     h.set_size(4);
     h.set_entry_type(EntryType::new(b'L'));
     h.set_cksum();
@@ -1497,7 +1539,7 @@ fn name_with_slash_doesnt_fool_long_link_and_bsd_compat() {
 
     let mut header = Header::new_gnu();
     header.set_entry_type(EntryType::Regular);
-    header.set_path("testdir/").unwrap();
+    header.set_path("testdir/", false).unwrap();
     header.set_size(0);
     header.set_cksum();
     ar.append(&header, &mut io::empty()).unwrap();
@@ -1585,7 +1627,8 @@ fn append_long_multibyte() {
     for _ in 0..512 {
         name.push('a');
         name.push('𑢮');
-        x.append_data(&mut Header::new_gnu(), &name, data).unwrap();
+        x.append_data(&mut Header::new_gnu(), &name, data, false)
+            .unwrap();
         name.pop();
     }
 }
@@ -1597,7 +1640,7 @@ fn read_only_directory_containing_files() {
     let mut b = Builder::new(Vec::<u8>::new());
 
     let mut h = Header::new_gnu();
-    h.set_path("dir/").unwrap();
+    h.set_path("dir/", false).unwrap();
     h.set_size(0);
     h.set_entry_type(EntryType::dir());
     h.set_mode(0o444);
@@ -1605,7 +1648,7 @@ fn read_only_directory_containing_files() {
     b.append(&h, "".as_bytes()).unwrap();
 
     let mut h = Header::new_gnu();
-    h.set_path("dir/file").unwrap();
+    h.set_path("dir/file", false).unwrap();
     h.set_size(2);
     h.set_entry_type(EntryType::file());
     h.set_cksum();
@@ -1698,33 +1741,33 @@ fn ownership_preserving() {
     // file 1 with uid = 580800000, gid = 580800000
     header.set_gid(580800000);
     header.set_uid(580800000);
-    header.set_path("iamuid580800000").unwrap();
+    header.set_path("iamuid580800000", false).unwrap();
     header.set_size(0);
     header.set_cksum();
     ar.append(&header, data).unwrap();
     // file 2 with uid = 580800001, gid = 580800000
     header.set_uid(580800001);
-    header.set_path("iamuid580800001").unwrap();
+    header.set_path("iamuid580800001", false).unwrap();
     header.set_cksum();
     ar.append(&header, data).unwrap();
     // file 3 with uid = 580800002, gid = 580800002
     header.set_gid(580800002);
     header.set_uid(580800002);
-    header.set_path("iamuid580800002").unwrap();
+    header.set_path("iamuid580800002", false).unwrap();
     header.set_cksum();
     ar.append(&header, data).unwrap();
     // directory 1 with uid = 580800002, gid = 580800002
     header.set_entry_type(EntryType::Directory);
     header.set_gid(580800002);
     header.set_uid(580800002);
-    header.set_path("iamuid580800002dir").unwrap();
+    header.set_path("iamuid580800002dir", false).unwrap();
     header.set_cksum();
     ar.append(&header, data).unwrap();
     // symlink to file 1
     header.set_entry_type(EntryType::Symlink);
     header.set_gid(580800002);
     header.set_uid(580800002);
-    header.set_path("iamuid580800000symlink").unwrap();
+    header.set_path("iamuid580800000symlink", false).unwrap();
     header.set_cksum();
     ar.append_link(&mut header, "iamuid580800000symlink", "iamuid580800000")
         .unwrap();

@@ -386,8 +386,8 @@ impl Header {
     /// over 255 bytes, even for formats that support longer names. Instead,
     /// use `Builder` methods to insert a long-name extension at the same time
     /// as the file content.
-    pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
-        self.set_path_inner(p.as_ref(), false)
+    pub fn set_path<P: AsRef<Path>>(&mut self, p: P, allow_absolute: bool) -> io::Result<()> {
+        self.set_path_inner(p.as_ref(), false, allow_absolute)
     }
 
     // Sets the truncated path for GNU header
@@ -396,18 +396,24 @@ impl Header {
     pub(crate) fn set_truncated_path_for_gnu_header<P: AsRef<Path>>(
         &mut self,
         p: P,
+        allow_absolute: bool,
     ) -> io::Result<()> {
-        self.set_path_inner(p.as_ref(), true)
+        self.set_path_inner(p.as_ref(), true, allow_absolute)
     }
 
-    fn set_path_inner(&mut self, path: &Path, is_truncated_gnu_long_path: bool) -> io::Result<()> {
+    fn set_path_inner(
+        &mut self,
+        path: &Path,
+        is_truncated_gnu_long_path: bool,
+        allow_absolute: bool,
+    ) -> io::Result<()> {
         if let Some(ustar) = self.as_ustar_mut() {
-            return ustar.set_path(path);
+            return ustar.set_path(path, allow_absolute);
         }
         if is_truncated_gnu_long_path {
-            copy_path_into_gnu_long(&mut self.as_old_mut().name, path, false)
+            copy_path_into_gnu_long(&mut self.as_old_mut().name, path, false, allow_absolute)
         } else {
-            copy_path_into(&mut self.as_old_mut().name, path, false)
+            copy_path_into(&mut self.as_old_mut().name, path, false, allow_absolute)
         }
         .map_err(|err| {
             io::Error::new(
@@ -456,12 +462,12 @@ impl Header {
     /// strip out any "." path component, which signifies the current directory.
     ///
     /// To use GNU long link names, prefer instead [`crate::Builder::append_link`].
-    pub fn set_link_name<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
-        self._set_link_name(p.as_ref())
+    pub fn set_link_name<P: AsRef<Path>>(&mut self, p: P, allow_absolute: bool) -> io::Result<()> {
+        self._set_link_name(p.as_ref(), allow_absolute)
     }
 
-    fn _set_link_name(&mut self, path: &Path) -> io::Result<()> {
-        copy_path_into(&mut self.as_old_mut().linkname, path, true).map_err(|err| {
+    fn _set_link_name(&mut self, path: &Path, allow_absolute: bool) -> io::Result<()> {
+        copy_path_into(&mut self.as_old_mut().linkname, path, true, allow_absolute).map_err(|err| {
             io::Error::new(
                 err.kind(),
                 format!("{} when setting link name for {}", err, self.path_lossy()),
@@ -993,11 +999,11 @@ impl UstarHeader {
     }
 
     /// See `Header::set_path`
-    pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
-        self._set_path(p.as_ref())
+    pub fn set_path<P: AsRef<Path>>(&mut self, p: P, allow_absolute: bool) -> io::Result<()> {
+        self._set_path(p.as_ref(), allow_absolute)
     }
 
-    fn _set_path(&mut self, path: &Path) -> io::Result<()> {
+    fn _set_path(&mut self, path: &Path, allow_absolute: bool) -> io::Result<()> {
         // This can probably be optimized quite a bit more, but for now just do
         // something that's relatively easy and readable.
         //
@@ -1009,7 +1015,7 @@ impl UstarHeader {
         let bytes = path2bytes(path)?;
         let (maxnamelen, maxprefixlen) = (self.name.len(), self.prefix.len());
         if bytes.len() <= maxnamelen {
-            copy_path_into(&mut self.name, path, false).map_err(|err| {
+            copy_path_into(&mut self.name, path, false, allow_absolute).map_err(|err| {
                 io::Error::new(
                     err.kind(),
                     format!("{} when setting path for {}", err, self.path_lossy()),
@@ -1033,14 +1039,14 @@ impl UstarHeader {
                     break;
                 }
             }
-            copy_path_into(&mut self.prefix, prefix, false).map_err(|err| {
+            copy_path_into(&mut self.prefix, prefix, false, allow_absolute).map_err(|err| {
                 io::Error::new(
                     err.kind(),
                     format!("{} when setting path for {}", err, self.path_lossy()),
                 )
             })?;
             let path = bytes2path(Cow::Borrowed(&bytes[prefixlen + 1..]))?;
-            copy_path_into(&mut self.name, &path, false).map_err(|err| {
+            copy_path_into(&mut self.name, &path, false, allow_absolute).map_err(|err| {
                 io::Error::new(
                     err.kind(),
                     format!("{} when setting path for {}", err, self.path_lossy()),
@@ -1555,17 +1561,18 @@ fn copy_path_into_inner(
     path: &Path,
     is_link_name: bool,
     is_truncated_gnu_long_path: bool,
+    allow_absolute: bool,
 ) -> io::Result<()> {
     let mut emitted = false;
     let mut needs_slash = false;
     let mut iter = path.components().peekable();
     while let Some(component) = iter.next() {
         let bytes = path2bytes(Path::new(component.as_os_str()))?;
-        match (component, is_link_name) {
-            (Component::Prefix(..), false) | (Component::RootDir, false) => {
+        match (component, is_link_name, allow_absolute) {
+            (Component::Prefix(..), false, false) | (Component::RootDir, false, false) => {
                 return Err(other("paths in archives must be relative"));
             }
-            (Component::ParentDir, false) => {
+            (Component::ParentDir, false, _) => {
                 // If it's last component of a gnu long path we know that there might be more
                 // to the component than .. (the rest is stored elsewhere)
                 // Otherwise it's a clear error
@@ -1574,9 +1581,12 @@ fn copy_path_into_inner(
                 }
             }
             // Allow "./" as the path
-            (Component::CurDir, false) if path.components().count() == 1 => {}
-            (Component::CurDir, false) => continue,
-            (Component::Normal(_), _) | (_, true) => {}
+            (Component::CurDir, false, _) if path.components().count() == 1 => {}
+            (Component::CurDir, false, _) => continue,
+            (Component::Normal(_), _, _)
+            | (_, true, _)
+            | (Component::Prefix(_), false, true)
+            | (Component::RootDir, false, true) => {}
         };
         if needs_slash {
             copy(&mut slot, b"/")?;
@@ -1616,8 +1626,13 @@ fn copy_path_into_inner(
 /// * a nul byte was found
 /// * an invalid path component is encountered (e.g. a root path or parent dir)
 /// * the path itself is empty
-fn copy_path_into(slot: &mut [u8], path: &Path, is_link_name: bool) -> io::Result<()> {
-    copy_path_into_inner(slot, path, is_link_name, false)
+fn copy_path_into(
+    slot: &mut [u8],
+    path: &Path,
+    is_link_name: bool,
+    allow_absolute: bool,
+) -> io::Result<()> {
+    copy_path_into_inner(slot, path, is_link_name, false, allow_absolute)
 }
 
 /// Copies `path` into the `slot` provided
@@ -1630,8 +1645,13 @@ fn copy_path_into(slot: &mut [u8], path: &Path, is_link_name: bool) -> io::Resul
 /// * the path itself is empty
 ///
 /// This is less restrictive version meant to be used for truncated GNU paths.
-fn copy_path_into_gnu_long(slot: &mut [u8], path: &Path, is_link_name: bool) -> io::Result<()> {
-    copy_path_into_inner(slot, path, is_link_name, true)
+fn copy_path_into_gnu_long(
+    slot: &mut [u8],
+    path: &Path,
+    is_link_name: bool,
+    allow_absolute: bool,
+) -> io::Result<()> {
+    copy_path_into_inner(slot, path, is_link_name, true, allow_absolute)
 }
 
 #[cfg(target_arch = "wasm32")]

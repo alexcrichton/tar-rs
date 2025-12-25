@@ -14,8 +14,8 @@ fn absolute_symlink() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
-    header.set_path("foo").unwrap();
-    header.set_link_name("/bar").unwrap();
+    header.set_path("foo", false).unwrap();
+    header.set_link_name("/bar", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -41,16 +41,16 @@ fn absolute_hardlink() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo").unwrap();
+    header.set_path("foo", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Link);
-    header.set_path("bar").unwrap();
+    header.set_path("bar", false).unwrap();
     // This absolute path under tempdir will be created at unpack time
-    header.set_link_name(td.path().join("foo")).unwrap();
+    header.set_link_name(td.path().join("foo"), false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -69,15 +69,15 @@ fn relative_hardlink() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo").unwrap();
+    header.set_path("foo", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Link);
-    header.set_path("bar").unwrap();
-    header.set_link_name("foo").unwrap();
+    header.set_path("bar", false).unwrap();
+    header.set_link_name("foo", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -97,15 +97,15 @@ fn absolute_link_deref_error() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
-    header.set_path("foo").unwrap();
-    header.set_link_name("/").unwrap();
+    header.set_path("foo", false).unwrap();
+    header.set_link_name("/", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo/bar").unwrap();
+    header.set_path("foo/bar", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -125,15 +125,15 @@ fn relative_link_deref_error() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
-    header.set_path("foo").unwrap();
-    header.set_link_name("../../../../").unwrap();
+    header.set_path("foo", false).unwrap();
+    header.set_link_name("../../../../", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo/bar").unwrap();
+    header.set_path("foo/bar", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -156,7 +156,7 @@ fn directory_maintains_permissions() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Directory);
-    header.set_path("foo").unwrap();
+    header.set_path("foo", false).unwrap();
     header.set_mode(0o777);
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
@@ -182,7 +182,7 @@ fn set_entry_mask() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo").unwrap();
+    header.set_path("foo", false).unwrap();
     header.set_mode(0o777);
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
@@ -211,22 +211,22 @@ fn modify_link_just_created() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
-    header.set_path("foo").unwrap();
-    header.set_link_name("bar").unwrap();
+    header.set_path("foo", false).unwrap();
+    header.set_link_name("bar", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("bar/foo").unwrap();
+    header.set_path("bar/foo", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo/bar").unwrap();
+    header.set_path("foo/bar", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -250,15 +250,15 @@ fn modify_outside_with_relative_symlink() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
-    header.set_path("symlink").unwrap();
-    header.set_link_name("..").unwrap();
+    header.set_path("symlink", false).unwrap();
+    header.set_link_name("..", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("symlink/foo/bar").unwrap();
+    header.set_path("symlink/foo/bar", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -279,15 +279,15 @@ fn parent_paths_error() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
-    header.set_path("foo").unwrap();
-    header.set_link_name("..").unwrap();
+    header.set_path("foo", false).unwrap();
+    header.set_link_name("..", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo/bar").unwrap();
+    header.set_path("foo/bar", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -309,9 +309,11 @@ fn good_parent_paths_ok() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
-    header.set_path(PathBuf::from("foo").join("bar")).unwrap();
     header
-        .set_link_name(PathBuf::from("..").join("bar"))
+        .set_path(PathBuf::from("foo").join("bar"), false)
+        .unwrap();
+    header
+        .set_link_name(PathBuf::from("..").join("bar"), false)
         .unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
@@ -319,7 +321,7 @@ fn good_parent_paths_ok() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("bar").unwrap();
+    header.set_path("bar", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -340,15 +342,15 @@ fn modify_hard_link_just_created() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Link);
-    header.set_path("foo").unwrap();
-    header.set_link_name("../test").unwrap();
+    header.set_path("foo", false).unwrap();
+    header.set_link_name("../test", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(1);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo").unwrap();
+    header.set_path("foo", false).unwrap();
     header.set_cksum();
     ar.append(&header, &b"x"[..]).unwrap();
 
@@ -378,15 +380,15 @@ fn modify_symlink_just_created() {
     let mut header = tar::Header::new_gnu();
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
-    header.set_path("foo").unwrap();
-    header.set_link_name("../test").unwrap();
+    header.set_path("foo", false).unwrap();
+    header.set_link_name("../test", false).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
     let mut header = tar::Header::new_gnu();
     header.set_size(1);
     header.set_entry_type(tar::EntryType::Regular);
-    header.set_path("foo").unwrap();
+    header.set_path("foo", false).unwrap();
     header.set_cksum();
     ar.append(&header, &b"x"[..]).unwrap();
 
