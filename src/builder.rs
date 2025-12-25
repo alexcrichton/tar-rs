@@ -23,6 +23,7 @@ pub struct Builder<W: Write> {
 #[derive(Clone, Copy)]
 struct BuilderOptions {
     mode: HeaderMode,
+    preserve_absolute: bool,
     follow: bool,
     sparse: bool,
 }
@@ -35,6 +36,7 @@ impl<W: Write> Builder<W> {
         Builder {
             options: BuilderOptions {
                 mode: HeaderMode::Complete,
+                preserve_absolute: false,
                 follow: true,
                 sparse: true,
             },
@@ -48,6 +50,11 @@ impl<W: Write> Builder<W> {
     /// does _not_ apply to `append(Header)`.
     pub fn mode(&mut self, mode: HeaderMode) {
         self.options.mode = mode;
+    }
+
+    /// Peserve absolute path while creating an archive
+    pub fn preserve_absolute(&mut self, preserve: bool) {
+        self.options.preserve_absolute = preserve;
     }
 
     /// Follow symlinks, archiving the contents of the file they point to rather
@@ -179,7 +186,8 @@ impl<W: Write> Builder<W> {
         path: P,
         data: R,
     ) -> io::Result<()> {
-        prepare_header_path(self.get_mut(), header, path.as_ref())?;
+        let allow_absolute = self.options.preserve_absolute;
+        prepare_header_path(self.get_mut(), header, path.as_ref(), allow_absolute)?;
         header.set_cksum();
         self.append(header, data)
     }
@@ -222,7 +230,8 @@ impl<W: Write> Builder<W> {
     where
         W: Seek,
     {
-        EntryWriter::start(self.get_mut(), header, path.as_ref())
+        let allow_absolute = self.options.preserve_absolute;
+        EntryWriter::start(self.get_mut(), header, path.as_ref(), allow_absolute)
     }
 
     /// Adds a new link (symbolic or hard) entry to this archive with the specified path and target.
@@ -267,7 +276,8 @@ impl<W: Write> Builder<W> {
     }
 
     fn _append_link(&mut self, header: &mut Header, path: &Path, target: &Path) -> io::Result<()> {
-        prepare_header_path(self.get_mut(), header, path)?;
+        let allow_abolute = self.options.preserve_absolute;
+        prepare_header_path(self.get_mut(), header, path, allow_abolute)?;
         prepare_header_link(self.get_mut(), header, target)?;
         header.set_cksum();
         self.append(header, std::io::empty())
@@ -515,8 +525,9 @@ impl EntryWriter<'_> {
         obj: &'a mut dyn SeekWrite,
         header: &'a mut Header,
         path: &Path,
+        allow_absolute: bool,
     ) -> io::Result<EntryWriter<'a>> {
-        prepare_header_path(obj.as_write(), header, path)?;
+        prepare_header_path(obj.as_write(), header, path, allow_absolute)?;
 
         // Reserve space for header, will be overwritten once data is written.
         obj.write_all([0u8; BLOCK_SIZE as usize].as_ref())?;
@@ -624,14 +635,28 @@ fn append_path_with_name(
     if stat.is_file() {
         append_file(dst, ar_name, &mut fs::File::open(path)?, options)
     } else if stat.is_dir() {
-        append_fs(dst, ar_name, &stat, options.mode, None)
+        append_fs(
+            dst,
+            ar_name,
+            &stat,
+            options.mode,
+            options.preserve_absolute,
+            None,
+        )
     } else if stat.file_type().is_symlink() {
         let link_name = fs::read_link(path)?;
-        append_fs(dst, ar_name, &stat, options.mode, Some(&link_name))
+        append_fs(
+            dst,
+            ar_name,
+            &stat,
+            options.mode,
+            options.preserve_absolute,
+            Some(&link_name),
+        )
     } else {
         #[cfg(unix)]
         {
-            append_special(dst, path, &stat, options.mode)
+            append_special(dst, path, &stat, options.mode, options.preserve_absolute)
         }
         #[cfg(not(unix))]
         {
@@ -646,6 +671,7 @@ fn append_special(
     path: &Path,
     stat: &fs::Metadata,
     mode: HeaderMode,
+    allow_absolute: bool,
 ) -> io::Result<()> {
     use ::std::os::unix::fs::{FileTypeExt, MetadataExt};
 
@@ -669,7 +695,7 @@ fn append_special(
 
     let mut header = Header::new_gnu();
     header.set_metadata_in_mode(stat, mode);
-    prepare_header_path(dst, &mut header, path)?;
+    prepare_header_path(dst, &mut header, path, allow_absolute)?;
 
     header.set_entry_type(entry_type);
     let dev_id = stat.rdev();
@@ -693,7 +719,7 @@ fn append_file(
     let stat = file.metadata()?;
     let mut header = Header::new_gnu();
 
-    prepare_header_path(dst, &mut header, path)?;
+    prepare_header_path(dst, &mut header, path, options.preserve_absolute)?;
     header.set_metadata_in_mode(&stat, options.mode);
     let sparse_entries = if options.sparse {
         prepare_header_sparse(file, &stat, &mut header)?
@@ -725,7 +751,14 @@ fn append_dir(
     options: BuilderOptions,
 ) -> io::Result<()> {
     let stat = fs::metadata(src_path)?;
-    append_fs(dst, path, &stat, options.mode, None)
+    append_fs(
+        dst,
+        path,
+        &stat,
+        options.mode,
+        options.preserve_absolute,
+        None,
+    )
 }
 
 fn prepare_header(size: u64, entry_type: u8) -> Header {
@@ -743,12 +776,23 @@ fn prepare_header(size: u64, entry_type: u8) -> Header {
     header
 }
 
-fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) -> io::Result<()> {
+fn prepare_header_path(
+    dst: &mut dyn Write,
+    header: &mut Header,
+    path: &Path,
+    allow_absolute: bool,
+) -> io::Result<()> {
     // Try to encode the path directly in the header, but if it ends up not
     // working (probably because it's too long) then try to use the GNU-specific
     // long name extension by emitting an entry which indicates that it's the
     // filename.
-    if let Err(e) = header.set_path(path) {
+    let result = if allow_absolute {
+        header.set_path_absolute(path)
+    } else {
+        header.set_path(path)
+    };
+
+    if let Err(e) = result {
         let data = path2bytes(path)?;
         let max = header.as_old().name.len();
         // Since `e` isn't specific enough to let us know the path is indeed too
@@ -769,7 +813,7 @@ fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) ->
             Ok(s) => s,
             Err(e) => str::from_utf8(&data[..e.valid_up_to()]).unwrap(),
         };
-        header.set_truncated_path_for_gnu_header(truncated)?;
+        header.set_truncated_path_for_gnu_header(truncated, allow_absolute)?;
 
         let header2 = prepare_header(data.len() as u64, b'L');
         // null-terminated string
@@ -859,11 +903,12 @@ fn append_fs(
     path: &Path,
     meta: &fs::Metadata,
     mode: HeaderMode,
+    allow_absolute: bool,
     link_name: Option<&Path>,
 ) -> io::Result<()> {
     let mut header = Header::new_gnu();
 
-    prepare_header_path(dst, &mut header, path)?;
+    prepare_header_path(dst, &mut header, path, allow_absolute)?;
     header.set_metadata_in_mode(meta, mode);
     if let Some(link_name) = link_name {
         prepare_header_link(dst, &mut header, link_name)?;
@@ -894,13 +939,20 @@ fn append_dir_all(
         } else if !options.follow && is_symlink {
             let stat = fs::symlink_metadata(&src)?;
             let link_name = fs::read_link(&src)?;
-            append_fs(dst, &dest, &stat, options.mode, Some(&link_name))?;
+            append_fs(
+                dst,
+                &dest,
+                &stat,
+                options.mode,
+                options.preserve_absolute,
+                Some(&link_name),
+            )?;
         } else {
             #[cfg(unix)]
             {
                 let stat = fs::metadata(&src)?;
                 if !stat.is_file() {
-                    append_special(dst, &dest, &stat, options.mode)?;
+                    append_special(dst, &dest, &stat, options.mode, options.preserve_absolute)?;
                     continue;
                 }
             }
