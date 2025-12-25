@@ -482,17 +482,19 @@ fn writing_files_absolute_path_succeed() {
     let mut ar = Builder::new(Vec::new());
     ar.preserve_absolute(true);
 
-    let td_abs_path = td.path().display().to_string();
+    let td_abs_path = td.path().to_path_buf();
     ar.append_dir(&td_abs_path, &td_abs_path).unwrap();
     ar.finish().unwrap();
 
     let rdr = Cursor::new(ar.into_inner().unwrap());
     let mut ar = Archive::new(rdr);
-    assert!(ar
+    let actual: Vec<PathBuf> = ar
         .entries()
         .unwrap()
-        .map(|e| e.unwrap().path().unwrap().display().to_string())
-        .any(|e| e == td_abs_path.to_string()));
+        .map(|e| e.unwrap().path().unwrap().into_owned())
+        .collect();
+
+    assert_eq!(actual, vec![td_abs_path]);
 }
 
 #[test]
