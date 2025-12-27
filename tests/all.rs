@@ -8,7 +8,8 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{self, BufWriter, Cursor};
 use std::iter::repeat;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 use filetime::FileTime;
 use tar::{Archive, Builder, Entries, Entry, EntryType, Header, HeaderMode};
@@ -464,7 +465,7 @@ fn writing_files_absolute_path_fail() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
     let mut ar = Builder::new(Vec::new());
 
-    let td_abs_path = td.path().display().to_string();
+    let td_abs_path = td.path().to_path_buf();
     if let Err(res) = ar.append_dir(&td_abs_path, &td_abs_path) {
         assert!(res
             .to_string()
@@ -495,6 +496,45 @@ fn writing_files_absolute_path_succeed() {
         .collect();
 
     assert_eq!(actual, vec![td_abs_path]);
+}
+
+#[test]
+fn extract_absolute_path_gnu_tar() {
+    let td_abs_path = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
+
+    let test_file = td_abs_path.path().join("tmpfile");
+    File::create(&test_file)
+        .unwrap()
+        .write_all(b"content")
+        .unwrap();
+
+    let test_arr = td_abs_path.path().join("arr.tar");
+
+    Command::new("tar")
+        .args([
+            "-cf",
+            &test_arr.display().to_string(),
+            "-P",
+            &test_file.display().to_string(),
+        ])
+        .status()
+        .expect("Failed to create an archive via GNU tar");
+
+    assert!(fs::metadata(&test_arr).is_ok());
+
+    fs::remove_file(&test_file).unwrap();
+    assert!(fs::metadata(&test_file).is_err());
+
+    let mut ar = Archive::new(File::open(&test_arr).unwrap());
+    ar.unpack(&td_abs_path).unwrap();
+
+    let unpacked_path = td_abs_path.path().join(
+        test_file
+            .components()
+            .skip_while(|c| matches!(c, Component::RootDir | Component::Prefix(_)))
+            .collect::<PathBuf>(),
+    );
+    assert!(fs::metadata(&unpacked_path).is_ok());
 }
 
 #[test]
