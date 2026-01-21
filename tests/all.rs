@@ -163,7 +163,7 @@ fn large_filename() {
     let too_long = "abcd".repeat(200);
     ar.append_file(&too_long, &mut File::open(&path).unwrap())
         .unwrap();
-    ar.append_data(&mut header, &too_long, &b"test"[..], false)
+    ar.append_data(&mut header, &too_long, &b"test"[..])
         .unwrap();
 
     let rd = Cursor::new(ar.into_inner().unwrap());
@@ -212,13 +212,8 @@ fn large_filename_with_dot_dot_at_100_byte_mark() {
     let mut long_name_with_dot_dot = "tdir/".repeat(19);
     long_name_with_dot_dot.push_str("tt/..file");
 
-    ar.append_data(
-        &mut header,
-        &long_name_with_dot_dot,
-        b"test".as_slice(),
-        false,
-    )
-    .unwrap();
+    ar.append_data(&mut header, &long_name_with_dot_dot, b"test".as_slice())
+        .unwrap();
 
     let rd = Cursor::new(ar.into_inner().unwrap());
     let mut ar = Archive::new(rd);
@@ -1198,8 +1193,7 @@ fn linkname_literal() {
         let path = "usr/lib/systemd/systemd-sysv-install";
         let target = "../../..//sbin/chkconfig";
         h.set_link_name_literal(target).unwrap();
-        b.append_data(&mut h, path, std::io::empty(), false)
-            .unwrap();
+        b.append_data(&mut h, path, std::io::empty()).unwrap();
 
         let contents = b.into_inner().unwrap();
         let mut a = Archive::new(&contents[..]);
@@ -1217,7 +1211,7 @@ fn append_writer() {
 
     let mut h = Header::new_gnu();
     h.set_uid(42);
-    let mut writer = b.append_writer(&mut h, "file1", false).unwrap();
+    let mut writer = b.append_writer(&mut h, "file1").unwrap();
     writer.write_all(b"foo").unwrap();
     writer.write_all(b"barbaz").unwrap();
     writer.finish().unwrap();
@@ -1225,7 +1219,7 @@ fn append_writer() {
     let mut h = Header::new_gnu();
     h.set_uid(43);
     let long_path: PathBuf = repeat("abcd").take(50).collect();
-    let mut writer = b.append_writer(&mut h, &long_path, false).unwrap();
+    let mut writer = b.append_writer(&mut h, &long_path).unwrap();
     let long_data = repeat(b'x').take(513).collect::<Vec<u8>>();
     writer.write_all(&long_data).unwrap();
     writer.finish().unwrap();
@@ -1669,8 +1663,7 @@ fn append_long_multibyte() {
     for _ in 0..512 {
         name.push('a');
         name.push('𑢮');
-        x.append_data(&mut Header::new_gnu(), &name, data, false)
-            .unwrap();
+        x.append_data(&mut Header::new_gnu(), &name, data).unwrap();
         name.pop();
     }
 }

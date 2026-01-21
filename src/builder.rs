@@ -177,7 +177,7 @@ impl<W: Write> Builder<W> {
     /// let mut data: &[u8] = &[1, 2, 3, 4];
     ///
     /// let mut ar = Builder::new(Vec::new());
-    /// ar.append_data(&mut header, "really/long/path/to/foo", data, false).unwrap();
+    /// ar.append_data(&mut header, "really/long/path/to/foo", data).unwrap();
     /// let data = ar.into_inner().unwrap();
     /// ```
     pub fn append_data<P: AsRef<Path>, R: Read>(
@@ -185,8 +185,8 @@ impl<W: Write> Builder<W> {
         header: &mut Header,
         path: P,
         data: R,
-        allow_absolute: bool,
     ) -> io::Result<()> {
+        let allow_absolute = self.options.preserve_absolute;
         prepare_header_path(self.get_mut(), header, path.as_ref(), allow_absolute)?;
         header.set_cksum();
         self.append(header, data)
@@ -217,7 +217,7 @@ impl<W: Write> Builder<W> {
     /// let mut header = Header::new_gnu();
     ///
     /// let mut ar = Builder::new(Cursor::new(Vec::new()));
-    /// let mut entry = ar.append_writer(&mut header, "hi.txt", false).unwrap();
+    /// let mut entry = ar.append_writer(&mut header, "hi.txt").unwrap();
     /// entry.write_all(b"Hello, ").unwrap();
     /// entry.write_all(b"world!\n").unwrap();
     /// entry.finish().unwrap();
@@ -226,11 +226,11 @@ impl<W: Write> Builder<W> {
         &'a mut self,
         header: &'a mut Header,
         path: P,
-        allow_absolute: bool,
     ) -> io::Result<EntryWriter<'a>>
     where
         W: Seek,
     {
+        let allow_absolute = self.options.preserve_absolute;
         EntryWriter::start(self.get_mut(), header, path.as_ref(), allow_absolute)
     }
 
