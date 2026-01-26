@@ -386,8 +386,15 @@ impl Header {
     /// over 255 bytes, even for formats that support longer names. Instead,
     /// use `Builder` methods to insert a long-name extension at the same time
     /// as the file content.
-    pub fn set_path<P: AsRef<Path>>(&mut self, p: P, allow_absolute: bool) -> io::Result<()> {
-        self.set_path_inner(p.as_ref(), false, allow_absolute)
+    pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        self.set_path_inner(p.as_ref(), false, false)
+    }
+
+    /// Sets the path name for this header.
+    ///
+    /// Same as set_path but allows abosolut paths
+    pub fn set_path_absolute<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        self.set_path_inner(p.as_ref(), false, true)
     }
 
     // Sets the truncated path for GNU header
@@ -408,7 +415,11 @@ impl Header {
         allow_absolute: bool,
     ) -> io::Result<()> {
         if let Some(ustar) = self.as_ustar_mut() {
-            return ustar.set_path(path, allow_absolute);
+            return if allow_absolute {
+                ustar.set_path_absolute(path)
+            } else {
+                ustar.set_path(path)
+            };
         }
         if is_truncated_gnu_long_path {
             copy_path_into_gnu_long(&mut self.as_old_mut().name, path, false, allow_absolute)
@@ -999,8 +1010,13 @@ impl UstarHeader {
     }
 
     /// See `Header::set_path`
-    pub fn set_path<P: AsRef<Path>>(&mut self, p: P, allow_absolute: bool) -> io::Result<()> {
-        self._set_path(p.as_ref(), allow_absolute)
+    pub fn set_path<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        self._set_path(p.as_ref(), false)
+    }
+
+    /// See `Header::set_path_absolute`
+    pub fn set_path_absolute<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        self._set_path(p.as_ref(), true)
     }
 
     fn _set_path(&mut self, path: &Path, allow_absolute: bool) -> io::Result<()> {

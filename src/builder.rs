@@ -126,7 +126,7 @@ impl<W: Write> Builder<W> {
     /// use tar::{Builder, Header};
     ///
     /// let mut header = Header::new_gnu();
-    /// header.set_path("foo", false).unwrap();
+    /// header.set_path("foo").unwrap();
     /// header.set_size(4);
     /// header.set_cksum();
     ///
@@ -786,7 +786,13 @@ fn prepare_header_path(
     // working (probably because it's too long) then try to use the GNU-specific
     // long name extension by emitting an entry which indicates that it's the
     // filename.
-    if let Err(e) = header.set_path(path, allow_absolute) {
+    let result = if allow_absolute {
+        header.set_path_absolute(path)
+    } else {
+        header.set_path(path)
+    };
+
+    if let Err(e) = result {
         let data = path2bytes(path)?;
         let max = header.as_old().name.len();
         // Since `e` isn't specific enough to let us know the path is indeed too
