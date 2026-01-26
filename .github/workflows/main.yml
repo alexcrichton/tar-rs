@@ -52,6 +52,16 @@ jobs:
       run: rustup update stable && rustup default stable && rustup component add rustfmt
     - run: cargo fmt -- --check
 
+  semver-checks:
+    name: Semver Checks
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@master
+    - uses: obi1kenobi/cargo-semver-checks-action@v2
+      with:
+        # Pinned until cargo-semver-checks supports rustdoc format v57 (Rust 1.93+)
+        rust-toolchain: "1.92.0"
+
   publish_docs:
     name: Publish Documentation
     runs-on: ubuntu-latest
