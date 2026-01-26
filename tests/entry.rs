@@ -15,7 +15,7 @@ fn absolute_symlink() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
     header.set_path("foo").unwrap();
-    header.set_link_name("/bar", false).unwrap();
+    header.set_link_name("/bar").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -50,7 +50,7 @@ fn absolute_hardlink() {
     header.set_entry_type(tar::EntryType::Link);
     header.set_path("bar").unwrap();
     // This absolute path under tempdir will be created at unpack time
-    header.set_link_name(td.path().join("foo"), false).unwrap();
+    header.set_link_name(td.path().join("foo")).unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -77,7 +77,7 @@ fn relative_hardlink() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Link);
     header.set_path("bar").unwrap();
-    header.set_link_name("foo", false).unwrap();
+    header.set_link_name("foo").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -98,7 +98,7 @@ fn absolute_link_deref_error() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
     header.set_path("foo").unwrap();
-    header.set_link_name("/", false).unwrap();
+    header.set_link_name("/").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -126,7 +126,7 @@ fn relative_link_deref_error() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
     header.set_path("foo").unwrap();
-    header.set_link_name("../../../../", false).unwrap();
+    header.set_link_name("../../../../").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -212,7 +212,7 @@ fn modify_link_just_created() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
     header.set_path("foo").unwrap();
-    header.set_link_name("bar", false).unwrap();
+    header.set_link_name("bar").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -251,7 +251,7 @@ fn modify_outside_with_relative_symlink() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
     header.set_path("symlink").unwrap();
-    header.set_link_name("..", false).unwrap();
+    header.set_link_name("..").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -280,7 +280,7 @@ fn parent_paths_error() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
     header.set_path("foo").unwrap();
-    header.set_link_name("..", false).unwrap();
+    header.set_link_name("..").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -311,7 +311,7 @@ fn good_parent_paths_ok() {
     header.set_entry_type(tar::EntryType::Symlink);
     header.set_path(PathBuf::from("foo").join("bar")).unwrap();
     header
-        .set_link_name(PathBuf::from("..").join("bar"), false)
+        .set_link_name(PathBuf::from("..").join("bar"))
         .unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
@@ -341,7 +341,7 @@ fn modify_hard_link_just_created() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Link);
     header.set_path("foo").unwrap();
-    header.set_link_name("../test", false).unwrap();
+    header.set_link_name("../test").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 
@@ -379,7 +379,7 @@ fn modify_symlink_just_created() {
     header.set_size(0);
     header.set_entry_type(tar::EntryType::Symlink);
     header.set_path("foo").unwrap();
-    header.set_link_name("../test", false).unwrap();
+    header.set_link_name("../test").unwrap();
     header.set_cksum();
     ar.append(&header, &[][..]).unwrap();
 

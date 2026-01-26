@@ -473,12 +473,12 @@ impl Header {
     /// strip out any "." path component, which signifies the current directory.
     ///
     /// To use GNU long link names, prefer instead [`crate::Builder::append_link`].
-    pub fn set_link_name<P: AsRef<Path>>(&mut self, p: P, allow_absolute: bool) -> io::Result<()> {
-        self._set_link_name(p.as_ref(), allow_absolute)
+    pub fn set_link_name<P: AsRef<Path>>(&mut self, p: P) -> io::Result<()> {
+        self._set_link_name(p.as_ref())
     }
 
-    fn _set_link_name(&mut self, path: &Path, allow_absolute: bool) -> io::Result<()> {
-        copy_path_into(&mut self.as_old_mut().linkname, path, true, allow_absolute).map_err(|err| {
+    fn _set_link_name(&mut self, path: &Path) -> io::Result<()> {
+        copy_path_into(&mut self.as_old_mut().linkname, path, true, true).map_err(|err| {
             io::Error::new(
                 err.kind(),
                 format!("{} when setting link name for {}", err, self.path_lossy()),

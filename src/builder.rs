@@ -278,7 +278,7 @@ impl<W: Write> Builder<W> {
     fn _append_link(&mut self, header: &mut Header, path: &Path, target: &Path) -> io::Result<()> {
         let allow_abolute = self.options.preserve_absolute;
         prepare_header_path(self.get_mut(), header, path, allow_abolute)?;
-        prepare_header_link(self.get_mut(), header, target, allow_abolute)?;
+        prepare_header_link(self.get_mut(), header, target)?;
         header.set_cksum();
         self.append(header, std::io::empty())
     }
@@ -823,10 +823,9 @@ fn prepare_header_link(
     dst: &mut dyn Write,
     header: &mut Header,
     link_name: &Path,
-    allow_absolute: bool,
 ) -> io::Result<()> {
     // Same as previous function but for linkname
-    if let Err(e) = header.set_link_name(link_name, allow_absolute) {
+    if let Err(e) = header.set_link_name(link_name) {
         let data = path2bytes(link_name)?;
         if data.len() < header.as_old().linkname.len() {
             return Err(e);
@@ -908,7 +907,7 @@ fn append_fs(
     prepare_header_path(dst, &mut header, path, allow_absolute)?;
     header.set_metadata_in_mode(meta, mode);
     if let Some(link_name) = link_name {
-        prepare_header_link(dst, &mut header, link_name, allow_absolute)?;
+        prepare_header_link(dst, &mut header, link_name)?;
     }
     header.set_cksum();
     dst.write_all(header.as_bytes())

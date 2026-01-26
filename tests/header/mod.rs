@@ -37,13 +37,13 @@ fn goto_ustar() {
 #[test]
 fn link_name() {
     let mut h = Header::new_gnu();
-    h.set_link_name("foo", false).unwrap();
+    h.set_link_name("foo").unwrap();
     assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo"));
-    h.set_link_name("../foo", false).unwrap();
+    h.set_link_name("../foo").unwrap();
     assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("../foo"));
-    h.set_link_name("foo/bar", false).unwrap();
+    h.set_link_name("foo/bar").unwrap();
     assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo/bar"));
-    h.set_link_name("foo\\ba", false).unwrap();
+    h.set_link_name("foo\\ba").unwrap();
     if cfg!(windows) {
         assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo/ba"));
     } else {
@@ -56,7 +56,10 @@ fn link_name() {
     }
     assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("foo\\bar"));
 
-    assert!(h.set_link_name("\0", false).is_err());
+    assert!(h.set_link_name("\0").is_err());
+
+    h.set_link_name("/foo").unwrap();
+    assert_eq!(h.link_name().unwrap().unwrap().to_str(), Some("/foo"));
 }
 
 #[test]
