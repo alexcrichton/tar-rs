@@ -212,8 +212,9 @@ impl<'a, R: Read> Entry<'a, R> {
     /// also be propagated to the path `dst`. Any existing file at the location
     /// `dst` will be overwritten.
     ///
-    /// This function carefully avoids writing outside of `dst`. If the file has
-    /// a '..' in its path, this function will skip it and return false.
+    /// # Security
+    ///
+    /// See [`Archive::unpack`].
     ///
     /// # Examples
     ///
@@ -446,7 +447,7 @@ impl<'a> EntryFields<'a> {
         // If the directory already exists just let it slide
         fs::create_dir(dst).or_else(|err| {
             if err.kind() == ErrorKind::AlreadyExists {
-                let prev = fs::metadata(dst);
+                let prev = fs::symlink_metadata(dst);
                 if prev.map(|m| m.is_dir()).unwrap_or(false) {
                     return Ok(());
                 }
