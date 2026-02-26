@@ -1787,3 +1787,42 @@ fn pax_and_gnu_uid_gid() {
         }
     }
 }
+
+#[test]
+fn append_data_error_does_not_corrupt_subsequent_entries() {
+    // When append_data fails (e.g., path contains ".."), subsequent
+    // successful writes must not be corrupted by an orphaned GNU
+    // long-name extension entry left in the stream.
+    let mut ar = Builder::new(Vec::new());
+
+    // First write: a long path (>100 bytes to trigger GNU long-name extension)
+    // containing ".." not as the last component, which will fail validation
+    // in set_truncated_path_for_gnu_header.
+    let dotdot_path = "a/../b/".to_string() + &"c".repeat(100);
+    let mut header = Header::new_gnu();
+    header.set_size(5);
+    header.set_cksum();
+    let result = ar.append_data(&mut header, &dotdot_path, &b"first"[..]);
+    assert!(result.is_err());
+
+    // Second write: a clean path that should succeed normally.
+    let mut header = Header::new_gnu();
+    header.set_size(6);
+    header.set_cksum();
+    ar.append_data(&mut header, "clean.txt", &b"second"[..])
+        .unwrap();
+
+    // Verify: the archive should contain exactly one entry at "clean.txt"
+    // with content "second". Before the fix, it contained an entry at the
+    // dotdot path with content "second" — the orphaned long-name stole the data.
+    let data = ar.into_inner().unwrap();
+    let mut archive = Archive::new(&data[..]);
+    let entries: Vec<_> = archive
+        .entries()
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].path().unwrap().to_str().unwrap(), "clean.txt");
+}

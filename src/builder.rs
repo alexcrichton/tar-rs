@@ -756,21 +756,25 @@ fn prepare_header_path(dst: &mut dyn Write, header: &mut Header, path: &Path) ->
         if data.len() < max {
             return Err(e);
         }
-        let header2 = prepare_header(data.len() as u64, b'L');
-        // null-terminated string
-        let mut data2 = data.chain(io::repeat(0).take(1));
-        append(dst, &header2, &mut data2)?;
-
         // Truncate the path to store in the header we're about to emit to
         // ensure we've got something at least mentioned. Note that we use
         // `str`-encoding to be compatible with Windows, but in general the
         // entry in the header itself shouldn't matter too much since extraction
         // doesn't look at it.
+        //
+        // Validate the truncated path BEFORE writing the long-name extension
+        // to the stream. If validation fails after writing, the orphaned
+        // extension entry corrupts subsequent archive entries.
         let truncated = match str::from_utf8(&data[..max]) {
             Ok(s) => s,
             Err(e) => str::from_utf8(&data[..e.valid_up_to()]).unwrap(),
         };
         header.set_truncated_path_for_gnu_header(truncated)?;
+
+        let header2 = prepare_header(data.len() as u64, b'L');
+        // null-terminated string
+        let mut data2 = data.chain(io::repeat(0).take(1));
+        append(dst, &header2, &mut data2)?;
     }
     Ok(())
 }
