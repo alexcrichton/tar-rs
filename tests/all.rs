@@ -11,7 +11,9 @@ use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
-use tar::{Archive, Builder, Entries, Entry, EntryType, Header, HeaderMode};
+use tar::{
+    Archive, Builder, Entries, Entry, EntryType, Header, HeaderMode, SeekFromSparse, SeekSparse,
+};
 use tempfile::{Builder as TempBuilder, TempDir};
 
 macro_rules! tar {
@@ -1377,7 +1379,306 @@ fn writing_sparse() {
 
         let expected = fs::read_to_string(&path).unwrap();
 
-        assert!(s == expected, "path: {path:?}");
+        assert!(
+            s == expected,
+            "path: {path:?}, actual len = {}, expected len = {}",
+            s.len(),
+            expected.len()
+        );
+    }
+
+    assert!(entries.next().is_none());
+}
+
+#[derive(Clone, Debug)]
+struct SparseSegments<'a> {
+    segments: &'a [SparseSegment],
+    logical_size: u64,
+    data_size: u64,
+    pos: u64,
+}
+
+#[derive(Clone, Debug)]
+struct SparseSegment {
+    offset: u64,
+    data: Vec<u8>,
+}
+
+impl SparseSegment {
+    #[allow(clippy::option_map_unit_fn)]
+    fn new(offset: u64, len: usize, fill_byte: u8) -> Self {
+        let mut data = vec![fill_byte; len];
+        data.first_mut().map(|x| *x = b'[');
+        data.last_mut().map(|x| *x = b']');
+
+        Self { offset, data }
+    }
+
+    fn end(&self) -> u64 {
+        self.offset + self.data.len() as u64
+    }
+}
+
+impl<'a> SparseSegments<'a> {
+    // assuming that chunks are in order (this is fine for testing)
+    fn new(segments: &'a [SparseSegment]) -> SparseSegments<'a> {
+        let mut logical_size: u64 = 0;
+        let mut data_size: u64 = 0;
+
+        for segment in segments {
+            logical_size = logical_size.max(segment.end());
+            data_size += segment.data.len() as u64;
+        }
+
+        SparseSegments {
+            segments,
+            logical_size,
+            data_size,
+            pos: 0,
+        }
+    }
+
+    fn segment_containing(&self, position: u64) -> Option<&SparseSegment> {
+        self.segments
+            .iter()
+            .find(|segment| position >= segment.offset && position < segment.end())
+    }
+
+    fn next_segment_offset(&self, position: u64) -> u64 {
+        self.segments
+            .iter()
+            .find(|segment| position < segment.offset)
+            .map(|segment| segment.offset)
+            .unwrap_or(self.logical_size)
+    }
+}
+
+impl<'a> Read for SparseSegments<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.pos >= self.logical_size {
+            return Ok(0);
+        }
+
+        let mut written = 0usize;
+
+        while written < buf.len() && self.pos < self.logical_size {
+            if let Some(segment) = self.segment_containing(self.pos) {
+                let seg_offset = (self.pos - segment.offset) as usize;
+                let available = segment.data.len() - seg_offset;
+                let to_copy = available.min(buf.len() - written);
+                buf[written..written + to_copy]
+                    .copy_from_slice(&segment.data[seg_offset..seg_offset + to_copy]);
+                self.pos += to_copy as u64;
+                written += to_copy;
+            } else {
+                let next_offset = self.next_segment_offset(self.pos);
+                let hole_len = (next_offset - self.pos) as usize;
+                let to_fill = hole_len.min(buf.len() - written);
+                buf[written..written + to_fill].fill(0);
+                self.pos += to_fill as u64;
+                written += to_fill;
+            }
+        }
+
+        Ok(written)
+    }
+}
+
+impl<'a> Seek for SparseSegments<'a> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        let target = match pos {
+            io::SeekFrom::Start(offset) => offset,
+            io::SeekFrom::Current(offset) => {
+                if offset >= 0 {
+                    self.pos.checked_add(offset as u64).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "invalid seek past u64 max")
+                    })?
+                } else {
+                    let abs = (-offset) as u64;
+                    self.pos.checked_sub(abs).ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "invalid seek before start of sparse segments",
+                        )
+                    })?
+                }
+            }
+            io::SeekFrom::End(offset) => {
+                if offset >= 0 {
+                    self.logical_size
+                        .checked_add(offset as u64)
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "invalid seek past end of sparse segments",
+                            )
+                        })?
+                } else {
+                    let abs = (-offset) as u64;
+                    self.logical_size.checked_sub(abs).ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "invalid seek before start of sparse segments",
+                        )
+                    })?
+                }
+            }
+        };
+
+        if target > self.logical_size {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid seek"));
+        }
+
+        self.pos = target;
+        Ok(self.pos)
+    }
+}
+
+impl<'a> SeekSparse for SparseSegments<'a> {
+    fn seek_sparse(&mut self, pos: SeekFromSparse) -> io::Result<u64> {
+        match pos {
+            SeekFromSparse::NextData(offset) => {
+                for segment in self.segments {
+                    if segment.data.is_empty() {
+                        // then this is actually just used to create a hole
+                        // and does NOT count as data
+                        continue;
+                    }
+
+                    if offset < segment.offset {
+                        return Ok(segment.offset);
+                    }
+                    if offset < segment.end() {
+                        return Ok(offset);
+                    }
+                }
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "no more data segments",
+                ))
+            }
+            SeekFromSparse::NextHole(offset) => {
+                if offset > self.logical_size {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "offset beyond logical size",
+                    ));
+                }
+
+                if offset == self.logical_size {
+                    return Ok(offset);
+                }
+
+                for segment in self.segments {
+                    if segment.data.is_empty() {
+                        // then this is actually just used to create a hole
+                        continue;
+                    }
+
+                    if offset < segment.offset {
+                        return Ok(offset);
+                    }
+                    if offset < segment.end() {
+                        return Ok(segment.end());
+                    }
+                }
+
+                Ok(offset)
+            }
+        }
+    }
+
+    fn logical_size(&self) -> u64 {
+        self.logical_size
+    }
+
+    fn data_size(&self) -> u64 {
+        self.data_size
+    }
+}
+
+#[test]
+fn writing_sparse_data() {
+    let mut ar = Builder::new(Vec::new());
+
+    let cases: Vec<(&str, Vec<SparseSegment>)> = vec![
+        ("empty", vec![]),
+        ("full_sparse", vec![SparseSegment::new(0x20_000, 0, b'a')]),
+        ("_x", vec![SparseSegment::new(0x20_000, 0x1_000, b'a')]),
+        (
+            "x_",
+            vec![
+                SparseSegment::new(0, 0x1_000, b'b'),
+                SparseSegment::new(0x20_000, 0, b'b'),
+            ],
+        ),
+        (
+            "_x_x",
+            vec![
+                SparseSegment::new(0x20_000, 0x1_000, b'c'),
+                SparseSegment::new(0x40_000, 0x1_000, b'd'),
+            ],
+        ),
+        (
+            "x_x_",
+            vec![
+                SparseSegment::new(0, 0x1_000, b'e'),
+                SparseSegment::new(0x20_000, 0x1_000, b'f'),
+                SparseSegment::new(0x40_000, 0, b'f'),
+            ],
+        ),
+        (
+            "uneven",
+            vec![
+                SparseSegment::new(0x20_333, 0x555, b'u'),
+                SparseSegment::new(0x40_777, 0x999, b'v'),
+            ],
+        ),
+    ];
+
+    let mut expected = Vec::new();
+
+    for (name, segments) in &cases {
+        let mut data = SparseSegments::new(segments);
+        let mut expected_bytes = Vec::new();
+        data.read_to_end(&mut expected_bytes).unwrap();
+        data.seek(io::SeekFrom::Start(0)).unwrap();
+
+        let mut header = Header::new_gnu();
+        header.set_mode(0o644);
+
+        ar.append_sparse_data(header, name, data).expect(name);
+        expected.push((*name, expected_bytes));
+    }
+
+    ar.finish().unwrap();
+
+    let data = ar.into_inner().unwrap();
+
+    #[cfg(target_os = "linux")]
+    assert!(data.len() <= 37 * 1024);
+    #[cfg(target_os = "freebsd")]
+    assert!(data.len() <= 273 * 1024);
+
+    let mut ar = Archive::new(&data[..]);
+    let mut entries = ar.entries().unwrap();
+
+    for (expected_name, expected_contents) in expected {
+        let mut entry = entries.next().unwrap().expect(expected_name);
+        assert_eq!(
+            &*entry.header().path_bytes(),
+            expected_name.as_bytes(),
+            "path mismatch",
+        );
+
+        let mut contents = Vec::new();
+        entry.read_to_end(&mut contents).unwrap();
+        assert!(
+            contents == expected_contents,
+            "path: {expected_name}, actual len = {}, expected len = {}",
+            contents.len(),
+            expected_contents.len()
+        );
     }
 
     assert!(entries.next().is_none());
