@@ -1,0 +1,22 @@
+name: Reverse dependency testing
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  revdep:
+    name: Reverse deps
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v6
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: xtask
+    - name: Test reverse dependencies
+      run: cargo xtask revdep-test
+    - name: Verify tests catch regressions
+      run: cargo xtask revdep-test --self-test
