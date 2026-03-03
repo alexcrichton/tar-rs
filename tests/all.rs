@@ -11,8 +11,59 @@ use std::iter::repeat;
 use std::path::{Path, PathBuf};
 
 use filetime::FileTime;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 use tar::{Archive, Builder, Entries, Entry, EntryType, Header, HeaderMode};
 use tempfile::{Builder as TempBuilder, TempDir};
+
+/// A reader wrapper that returns partial results from `read()` to exercise
+/// parsers that might assume `read()` fills the entire buffer.
+///
+/// Each call returns between 1 and buf.len() bytes, biased toward small
+/// reads by taking the minimum of two uniform samples. This gives roughly
+/// quadratic density toward 1, so small reads (1-10 bytes) occur frequently
+/// while large reads still happen. Uses a deterministic seeded RNG so
+/// tests remain reproducible.
+struct RandomReader<R> {
+    inner: R,
+    rng: SmallRng,
+}
+
+impl<R> RandomReader<R> {
+    fn new(inner: R) -> Self {
+        RandomReader {
+            inner,
+            rng: SmallRng::seed_from_u64(0),
+        }
+    }
+}
+
+impl<R: Read> Read for RandomReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return self.inner.read(buf);
+        }
+        // Take the min of two uniform samples to bias toward small reads.
+        let a = self.rng.gen_range(1..=buf.len());
+        let b = self.rng.gen_range(1..=buf.len());
+        self.inner.read(&mut buf[..a.min(b)])
+    }
+}
+
+/// Convenience: wrap a byte slice in a RandomReader<Cursor<_>>.
+///
+/// The RNG is seeded from a hash of the data, so different archives
+/// exercise different read-size sequences while remaining deterministic.
+fn random_cursor_reader<D: AsRef<[u8]>>(data: D) -> RandomReader<Cursor<D>> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    data.as_ref().hash(&mut hasher);
+    let seed = hasher.finish();
+    RandomReader {
+        inner: Cursor::new(data),
+        rng: SmallRng::seed_from_u64(seed),
+    }
+}
 
 macro_rules! tar {
     ($e:expr) => {
@@ -30,14 +81,15 @@ fn simple_concat() {
     let mut archive_bytes = Vec::new();
     archive_bytes.extend(bytes);
 
-    let original_names: Vec<String> = decode_names(&mut Archive::new(Cursor::new(&archive_bytes)));
+    let original_names: Vec<String> =
+        decode_names(&mut Archive::new(random_cursor_reader(&archive_bytes)));
     let expected: Vec<&str> = original_names.iter().map(|n| n.as_str()).collect();
 
     // concat two archives (with null in-between);
     archive_bytes.extend(bytes);
 
     // test now that when we read the archive, it stops processing at the first zero header.
-    let actual = decode_names(&mut Archive::new(Cursor::new(&archive_bytes)));
+    let actual = decode_names(&mut Archive::new(random_cursor_reader(&archive_bytes)));
     assert_eq!(expected, actual);
 
     // extend expected by itself.
@@ -48,7 +100,7 @@ fn simple_concat() {
         o
     };
 
-    let mut ar = Archive::new(Cursor::new(&archive_bytes));
+    let mut ar = Archive::new(random_cursor_reader(&archive_bytes));
     ar.set_ignore_zeros(true);
 
     let actual = decode_names(&mut ar);
@@ -71,7 +123,7 @@ fn simple_concat() {
 
 #[test]
 fn header_impls() {
-    let mut ar = Archive::new(Cursor::new(tar!("simple.tar")));
+    let mut ar = Archive::new(random_cursor_reader(tar!("simple.tar")));
     let hn = Header::new_old();
     let hnb = hn.as_bytes();
     for file in ar.entries().unwrap() {
@@ -86,7 +138,7 @@ fn header_impls() {
 
 #[test]
 fn header_impls_missing_last_header() {
-    let mut ar = Archive::new(Cursor::new(tar!("simple_missing_last_header.tar")));
+    let mut ar = Archive::new(random_cursor_reader(tar!("simple_missing_last_header.tar")));
     let hn = Header::new_old();
     let hnb = hn.as_bytes();
     for file in ar.entries().unwrap() {
@@ -101,7 +153,7 @@ fn header_impls_missing_last_header() {
 
 #[test]
 fn reading_files() {
-    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let rdr = random_cursor_reader(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
     let mut entries = ar.entries().unwrap();
 
@@ -247,7 +299,7 @@ fn reading_entries_common<R: Read>(mut entries: Entries<R>) {
 
 #[test]
 fn reading_entries() {
-    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let rdr = random_cursor_reader(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
     reading_entries_common(ar.entries().unwrap());
 }
@@ -321,7 +373,7 @@ fn check_dirtree(td: &TempDir) {
 #[test]
 fn extracting_directories() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
-    let rdr = Cursor::new(tar!("directory.tar"));
+    let rdr = random_cursor_reader(tar!("directory.tar"));
     let mut ar = Archive::new(rdr);
     ar.unpack(td.path()).unwrap();
     check_dirtree(&td);
@@ -333,7 +385,7 @@ fn extracting_duplicate_file_fail() {
     let path_present = td.path().join("a");
     File::create(path_present).unwrap();
 
-    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let rdr = random_cursor_reader(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_overwrite(false);
     if let Err(err) = ar.unpack(td.path()) {
@@ -355,7 +407,7 @@ fn extracting_duplicate_file_succeed() {
     let path_present = td.path().join("a");
     File::create(path_present).unwrap();
 
-    let rdr = Cursor::new(tar!("reading_files.tar"));
+    let rdr = random_cursor_reader(tar!("reading_files.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_overwrite(true);
     ar.unpack(td.path()).unwrap();
@@ -368,7 +420,7 @@ fn extracting_duplicate_link_fail() {
     let path_present = td.path().join("lnk");
     std::os::unix::fs::symlink("file", path_present).unwrap();
 
-    let rdr = Cursor::new(tar!("link.tar"));
+    let rdr = random_cursor_reader(tar!("link.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_overwrite(false);
     if let Err(err) = ar.unpack(td.path()) {
@@ -391,7 +443,7 @@ fn extracting_duplicate_link_succeed() {
     let path_present = td.path().join("lnk");
     std::os::unix::fs::symlink("file", path_present).unwrap();
 
-    let rdr = Cursor::new(tar!("link.tar"));
+    let rdr = random_cursor_reader(tar!("link.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_overwrite(true);
     ar.unpack(td.path()).unwrap();
@@ -406,7 +458,7 @@ fn xattrs() {
         .prefix("tar-rs")
         .tempdir_in("/var/tmp")
         .unwrap();
-    let rdr = Cursor::new(tar!("xattrs.tar"));
+    let rdr = random_cursor_reader(tar!("xattrs.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_unpack_xattrs(true);
     ar.unpack(td.path()).unwrap();
@@ -424,7 +476,7 @@ fn no_xattrs() {
         .prefix("tar-rs")
         .tempdir_in("/var/tmp")
         .unwrap();
-    let rdr = Cursor::new(tar!("xattrs.tar"));
+    let rdr = random_cursor_reader(tar!("xattrs.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_unpack_xattrs(false);
     ar.unpack(td.path()).unwrap();
@@ -580,7 +632,7 @@ fn append_dir_all_does_not_work_on_non_directory() {
 #[test]
 fn extracting_duplicate_dirs() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
-    let rdr = Cursor::new(tar!("duplicate_dirs.tar"));
+    let rdr = random_cursor_reader(tar!("duplicate_dirs.tar"));
     let mut ar = Archive::new(rdr);
     ar.unpack(td.path()).unwrap();
 
@@ -738,7 +790,7 @@ fn extracting_malicious_tarball() {
 
 #[test]
 fn octal_spaces() {
-    let rdr = Cursor::new(tar!("spaces.tar"));
+    let rdr = random_cursor_reader(tar!("spaces.tar"));
     let mut ar = Archive::new(rdr);
 
     let entry = ar.entries().unwrap().next().unwrap().unwrap();
@@ -778,7 +830,7 @@ fn extracting_malformed_tar_null_blocks() {
 #[test]
 fn empty_filename() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
-    let rdr = Cursor::new(tar!("empty_filename.tar"));
+    let rdr = random_cursor_reader(tar!("empty_filename.tar"));
     let mut ar = Archive::new(rdr);
     assert!(ar.unpack(td.path()).is_ok());
 }
@@ -786,7 +838,7 @@ fn empty_filename() {
 #[test]
 fn file_times() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
-    let rdr = Cursor::new(tar!("file_times.tar"));
+    let rdr = random_cursor_reader(tar!("file_times.tar"));
     let mut ar = Archive::new(rdr);
     ar.unpack(td.path()).unwrap();
 
@@ -857,7 +909,7 @@ fn backslash_treated_well() {
 #[test]
 #[cfg(unix)]
 fn set_mask() {
-    use ::std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::PermissionsExt;
     let mut ar = tar::Builder::new(Vec::new());
 
     let mut header = tar::Header::new_gnu();
@@ -903,7 +955,7 @@ fn nul_bytes_in_path() {
 
 #[test]
 fn links() {
-    let mut ar = Archive::new(Cursor::new(tar!("link.tar")));
+    let mut ar = Archive::new(random_cursor_reader(tar!("link.tar")));
     let mut entries = ar.entries().unwrap();
     let link = entries.next().unwrap().unwrap();
     assert_eq!(
@@ -918,7 +970,7 @@ fn links() {
 #[cfg(unix)] // making symlinks on windows is hard
 fn unpack_links() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
-    let mut ar = Archive::new(Cursor::new(tar!("link.tar")));
+    let mut ar = Archive::new(random_cursor_reader(tar!("link.tar")));
     ar.unpack(td.path()).unwrap();
 
     let md = fs::symlink_metadata(td.path().join("lnk")).unwrap();
@@ -936,7 +988,7 @@ fn unpack_links() {
 
 #[test]
 fn pax_size() {
-    let mut ar = Archive::new(tar!("pax_size.tar"));
+    let mut ar = Archive::new(random_cursor_reader(tar!("pax_size.tar")));
     let mut entries = ar.entries().unwrap();
     let mut entry = entries.next().unwrap().unwrap();
     let mut attributes = entry.pax_extensions().unwrap().unwrap();
@@ -956,7 +1008,7 @@ fn pax_size() {
 
 #[test]
 fn pax_simple() {
-    let mut ar = Archive::new(tar!("pax.tar"));
+    let mut ar = Archive::new(random_cursor_reader(tar!("pax.tar")));
     let mut entries = ar.entries().unwrap();
 
     let mut first = entries.next().unwrap().unwrap();
@@ -1011,7 +1063,7 @@ fn pax_simple_write() {
 
 #[test]
 fn pax_path() {
-    let mut ar = Archive::new(tar!("pax2.tar"));
+    let mut ar = Archive::new(random_cursor_reader(tar!("pax2.tar")));
     let mut entries = ar.entries().unwrap();
 
     let first = entries.next().unwrap().unwrap();
@@ -1020,7 +1072,7 @@ fn pax_path() {
 
 #[test]
 fn pax_linkpath() {
-    let mut ar = Archive::new(tar!("pax2.tar"));
+    let mut ar = Archive::new(random_cursor_reader(tar!("pax2.tar")));
     let mut links = ar.entries().unwrap().skip(3).take(2);
 
     let long_symlink = links.next().unwrap().unwrap();
@@ -1192,7 +1244,7 @@ fn encoded_long_name_has_trailing_nul() {
 
 #[test]
 fn reading_sparse() {
-    let rdr = Cursor::new(tar!("sparse.tar"));
+    let rdr = random_cursor_reader(tar!("sparse.tar"));
     let mut ar = Archive::new(rdr);
     let mut entries = ar.entries().unwrap();
 
@@ -1242,7 +1294,7 @@ fn reading_sparse() {
 
 #[test]
 fn extract_sparse() {
-    let rdr = Cursor::new(tar!("sparse.tar"));
+    let rdr = random_cursor_reader(tar!("sparse.tar"));
     let mut ar = Archive::new(rdr);
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
     ar.unpack(td.path()).unwrap();
@@ -1295,7 +1347,7 @@ fn extract_sparse() {
 
 #[test]
 fn large_sparse() {
-    let rdr = Cursor::new(tar!("sparse-large.tar"));
+    let rdr = random_cursor_reader(tar!("sparse-large.tar"));
     let mut ar = Archive::new(rdr);
     let mut entries = ar.entries().unwrap();
     // Only check the header info without extracting, as the file is very large,
@@ -1307,7 +1359,7 @@ fn large_sparse() {
 
 #[test]
 fn sparse_with_trailing() {
-    let rdr = Cursor::new(tar!("sparse-1.tar"));
+    let rdr = random_cursor_reader(tar!("sparse-1.tar"));
     let mut ar = Archive::new(rdr);
     let mut entries = ar.entries().unwrap();
     let mut a = entries.next().unwrap().unwrap();
@@ -1556,7 +1608,7 @@ fn tar_directory_containing_symlink_to_directory() {
 #[test]
 fn long_path() {
     let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
-    let rdr = Cursor::new(tar!("7z_long_path.tar"));
+    let rdr = random_cursor_reader(tar!("7z_long_path.tar"));
     let mut ar = Archive::new(rdr);
     assert!(ar.unpack(td.path()).is_ok());
 }
@@ -1571,7 +1623,7 @@ fn unpack_path_larger_than_windows_max_path() {
         .tempdir()
         .unwrap();
     // directory in 7z_long_path.tar is over 100 chars
-    let rdr = Cursor::new(tar!("7z_long_path.tar"));
+    let rdr = random_cursor_reader(tar!("7z_long_path.tar"));
     let mut ar = Archive::new(rdr);
     // should unpack path greater than windows MAX_PATH length of 260 characters
     assert!(ar.unpack(td.path()).is_ok());
@@ -1768,7 +1820,7 @@ fn pax_and_gnu_uid_gid() {
 
     for file in &tarlist {
         let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
-        let rdr = Cursor::new(file);
+        let rdr = random_cursor_reader(file);
         let mut ar = Archive::new(rdr);
         ar.set_preserve_ownerships(true);
 
