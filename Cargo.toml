@@ -32,3 +32,7 @@ libc = "0.2"
 
 [features]
 default = ["xattr"]
+
+[lints.rust]
+# Feel free to comment this one out locally during development of a patch.
+dead_code = "deny"
