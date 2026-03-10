@@ -337,10 +337,11 @@ impl<'a> EntriesFields<'a> {
 
         let file_pos = self.next;
         let mut size = header.entry_size()?;
-        if size == 0 {
-            if let Some(pax_size) = pax_size {
-                size = pax_size;
-            }
+        // If this exists, it must override the header size. Disagreement among
+        // parsers allows construction of malicious archives that appear different
+        // when parsed.
+        if let Some(pax_size) = pax_size {
+            size = pax_size;
         }
         let ret = EntryFields {
             size,
