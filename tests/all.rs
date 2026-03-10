@@ -55,14 +55,7 @@ impl<R: Read> Read for RandomReader<R> {
 /// The RNG is seeded from a hash of the data, so different archives
 /// exercise different read-size sequences while remaining deterministic.
 fn random_cursor_reader<D: AsRef<[u8]>>(data: D) -> RandomReader<Cursor<D>> {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    data.as_ref().hash(&mut hasher);
-    let seed = hasher.finish();
-    RandomReader {
-        inner: Cursor::new(data),
-        rng: SmallRng::seed_from_u64(seed),
-    }
+    RandomReader::new(Cursor::new(data))
 }
 
 macro_rules! tar {
