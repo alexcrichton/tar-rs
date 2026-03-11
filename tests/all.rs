@@ -8,7 +8,8 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{self, BufWriter, Cursor};
 use std::iter::repeat;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 use filetime::FileTime;
 use rand::rngs::SmallRng;
@@ -497,6 +498,83 @@ fn writing_and_extracting_directories() {
     let mut ar = Archive::new(rdr);
     ar.unpack(td.path()).unwrap();
     check_dirtree(&td);
+}
+
+#[test]
+fn writing_files_absolute_path_fail() {
+    let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
+    let mut ar = Builder::new(Vec::new());
+
+    let td_abs_path = td.path().to_path_buf();
+    if let Err(res) = ar.append_dir(&td_abs_path, &td_abs_path) {
+        assert!(res
+            .to_string()
+            .contains("paths in archives must be relative when setting path for"));
+        return;
+    }
+
+    panic!("Expected error");
+}
+
+#[test]
+fn writing_files_absolute_path_succeed() {
+    let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
+
+    let mut ar = Builder::new(Vec::new());
+    ar.preserve_absolute(true);
+
+    let td_abs_path = td.path().to_path_buf();
+    ar.append_dir(&td_abs_path, &td_abs_path).unwrap();
+    ar.finish().unwrap();
+
+    let rdr = Cursor::new(ar.into_inner().unwrap());
+    let mut ar = Archive::new(rdr);
+    let actual: Vec<PathBuf> = ar
+        .entries()
+        .unwrap()
+        .map(|e| e.unwrap().path().unwrap().into_owned())
+        .collect();
+
+    assert_eq!(actual, vec![td_abs_path]);
+}
+
+#[test]
+fn extract_absolute_path_gnu_tar() {
+    let td_abs_path = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
+
+    let test_file = td_abs_path.path().join("tmpfile");
+    File::create(&test_file)
+        .unwrap()
+        .write_all(b"content")
+        .unwrap();
+
+    let test_arr = td_abs_path.path().join("arr.tar");
+
+    Command::new("tar")
+        .args([
+            "-cf",
+            &test_arr.display().to_string(),
+            "-P",
+            &test_file.display().to_string(),
+        ])
+        .status()
+        .expect("Failed to create an archive via GNU tar");
+
+    assert!(fs::metadata(&test_arr).is_ok());
+
+    fs::remove_file(&test_file).unwrap();
+    assert!(fs::metadata(&test_file).is_err());
+
+    let mut ar = Archive::new(File::open(&test_arr).unwrap());
+    ar.unpack(&td_abs_path).unwrap();
+
+    let unpacked_path = td_abs_path.path().join(
+        test_file
+            .components()
+            .skip_while(|c| matches!(c, Component::RootDir | Component::Prefix(_)))
+            .collect::<PathBuf>(),
+    );
+    assert!(fs::metadata(&unpacked_path).is_ok());
 }
 
 #[test]
