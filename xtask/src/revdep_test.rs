@@ -147,10 +147,27 @@ fn cargo_cmd<'a>(sh: &'a Shell, tar_rs_root: &Path, revdep: &RevDep) -> xshell::
     }
 }
 
+/// Update the downstream lockfile so it picks up our local `tar` version.
+///
+/// Without this, `--config patch.crates-io.tar.path=...` is silently ignored
+/// when the downstream `Cargo.lock` pins a different `tar` version than the
+/// one in our working tree (e.g. lockfile has 0.4.44 but we're at 0.4.45).
+/// Running `cargo update -p tar` with the patch config applied forces the
+/// lockfile to resolve to the patched version.
+fn update_tar_in_lockfile(sh: &Shell, tar_rs_root: &Path, revdep: &RevDep) -> Result<()> {
+    println!(":: Updating lockfile to use local tar-rs...");
+    cargo_cmd(sh, tar_rs_root, revdep)
+        .args(["update", "-p", "tar"])
+        .run()
+        .context("failed to update tar in downstream lockfile")?;
+    Ok(())
+}
+
 fn test_cargo(sh: &Shell, tar_rs_root: &Path, revdep: &RevDep) -> Result<()> {
     let dest = tar_rs_root.join("target/revdeps/cargo");
     clone_at_rev(sh, revdep.repo, revdep.rev, &dest)?;
     let _dir = sh.push_dir(&dest);
+    update_tar_in_lockfile(sh, tar_rs_root, revdep)?;
 
     println!(":: Building cargo workspace...");
     cargo_cmd(sh, tar_rs_root, revdep)
@@ -194,6 +211,7 @@ fn test_cargo_vendor_filterer(sh: &Shell, tar_rs_root: &Path, revdep: &RevDep) -
     let dest = tar_rs_root.join("target/revdeps/cargo-vendor-filterer");
     clone_at_rev(sh, revdep.repo, revdep.rev, &dest)?;
     let _dir = sh.push_dir(&dest);
+    update_tar_in_lockfile(sh, tar_rs_root, revdep)?;
 
     println!(":: Running cargo-vendor-filterer tests (exercises tar write path)...");
     // Skip tar_zstd which requires the external zstd CLI.
@@ -208,6 +226,7 @@ fn test_crates_io(sh: &Shell, tar_rs_root: &Path, revdep: &RevDep) -> Result<()>
     let dest = tar_rs_root.join("target/revdeps/crates-io");
     clone_at_rev(sh, revdep.repo, revdep.rev, &dest)?;
     let _dir = sh.push_dir(&dest);
+    update_tar_in_lockfile(sh, tar_rs_root, revdep)?;
 
     println!(":: Running crates_io_tarball tests (exercises tar Builder round-trip)...");
     // Tests cover Header::new_gnu, append_data, into_inner, size limits,
