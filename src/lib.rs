@@ -5,10 +5,10 @@
 //! an archive is never required to be fully resident in memory, and all objects
 //! provide largely a streaming interface to read bytes from.
 //!
-//! [1]: http://en.wikipedia.org/wiki/Tar_%28computing%29
+//! [1]: https://en.wikipedia.org/wiki/Tar_%28computing%29
 
 // More docs about the detailed tar format can also be found here:
-// http://www.freebsd.org/cgi/man.cgi?query=tar&sektion=5&manpath=FreeBSD+8-current
+// https://man.freebsd.org/cgi/man.cgi?query=tar&sektion=5&manpath=FreeBSD+8-current
 
 // NB: some of the coding patterns and idioms here may seem a little strange.
 //     This is currently attempting to expose a super generic interface while
