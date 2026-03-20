@@ -1,3 +1,13 @@
+//! Tar header types with I/O integration.
+//!
+//! This module provides the [`Header`] type and format-specific header types
+//! ([`GnuHeader`], [`UstarHeader`], [`OldHeader`]) that wrap raw 512-byte
+//! blocks with convenient accessor methods and filesystem metadata integration.
+//!
+//! The underlying sans-IO header parsing and format detection is provided by
+//! the [`tar_core`] crate; this module adds I/O error handling, path
+//! manipulation, and metadata filling on top of that foundation.
+
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 use std::os::unix::prelude::*;
 #[cfg(windows)]
@@ -152,14 +162,10 @@ impl Header {
     /// extensions such as long path names, long link names, and setting the
     /// atime/ctime metadata attributes of files.
     pub fn new_gnu() -> Header {
+        let core = tar_core::Header::new_gnu();
         let mut header = Header {
-            bytes: [0; BLOCK_SIZE as usize],
+            bytes: *core.as_bytes(),
         };
-        unsafe {
-            let gnu = cast_mut::<_, GnuHeader>(&mut header);
-            gnu.magic = *b"ustar ";
-            gnu.version = *b" \0";
-        }
         header.set_mtime(0);
         header
     }
@@ -172,14 +178,10 @@ impl Header {
     ///
     /// UStar is also the basis used for pax archives.
     pub fn new_ustar() -> Header {
+        let core = tar_core::Header::new_ustar();
         let mut header = Header {
-            bytes: [0; BLOCK_SIZE as usize],
+            bytes: *core.as_bytes(),
         };
-        unsafe {
-            let gnu = cast_mut::<_, UstarHeader>(&mut header);
-            gnu.magic = *b"ustar\0";
-            gnu.version = *b"00";
-        }
         header.set_mtime(0);
         header
     }
@@ -191,21 +193,27 @@ impl Header {
     /// format limits the path name limit and isn't able to contain extra
     /// metadata like atime/ctime.
     pub fn new_old() -> Header {
+        let core = tar_core::Header::new_old();
         let mut header = Header {
-            bytes: [0; BLOCK_SIZE as usize],
+            bytes: *core.as_bytes(),
         };
         header.set_mtime(0);
         header
     }
 
     fn is_ustar(&self) -> bool {
-        let ustar = unsafe { cast::<_, UstarHeader>(self) };
-        ustar.magic[..] == b"ustar\0"[..] && ustar.version[..] == b"00"[..]
+        self.as_core().is_ustar()
     }
 
     fn is_gnu(&self) -> bool {
-        let ustar = unsafe { cast::<_, UstarHeader>(self) };
-        ustar.magic[..] == b"ustar "[..] && ustar.version[..] == b" \0"[..]
+        self.as_core().is_gnu()
+    }
+
+    /// Returns a reference to the underlying `tar_core::Header`.
+    ///
+    /// This is a zero-copy cast since both types are `[u8; 512]`.
+    fn as_core(&self) -> &tar_core::Header {
+        tar_core::Header::from_bytes(&self.bytes)
     }
 
     /// View this archive header as a raw "old" archive header.

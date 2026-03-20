@@ -9,7 +9,8 @@ license = "MIT OR Apache-2.0"
 keywords = ["tar", "tarfile", "encoding"]
 readme = "README.md"
 edition = "2021"
-rust-version = "1.63"
+# Primarily from zerocopy
+rust-version = "1.86.0"
 exclude = ["tests/archives/*"]
 
 description = """
@@ -21,6 +22,7 @@ contents are never required to be entirely resident in memory all at once.
 
 [dependencies]
 filetime = "0.2.8"
+tar-core = "0.1.0"
 
 [dev-dependencies]
 astral-tokio-tar = "0.5"
