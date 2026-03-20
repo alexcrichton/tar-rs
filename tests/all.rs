@@ -1364,6 +1364,64 @@ fn sparse_with_trailing() {
     assert_eq!(&s[0x100_000..], "1MB through\n");
 }
 
+/// Test PAX sparse v1.0 format extraction.
+///
+/// Verifies that:
+/// - The file is extracted with its real name from GNU.sparse.name, not the
+///   synthetic `GNUSparseFile.0/<name>` path (issue #295)
+/// - The file has the correct real size from GNU.sparse.realsize, not the
+///   on-disk data size (issue #286)
+/// - The sparse regions are correctly zero-filled
+///
+/// Test archive from PR #298 by ncihnegn.
+#[test]
+fn pax_sparse() {
+    let rdr = Cursor::new(tar!("pax_sparse.tar"));
+    let mut ar = Archive::new(rdr);
+    let td = TempBuilder::new().prefix("tar-rs").tempdir().unwrap();
+    ar.unpack(td.path()).unwrap();
+
+    // The file should be extracted as "sparse_begin.txt", NOT under
+    // "GNUSparseFile.0/sparse_begin.txt".
+    assert!(
+        !td.path().join("GNUSparseFile.0").exists(),
+        "GNUSparseFile.0 directory should not exist"
+    );
+
+    let mut s = String::new();
+    File::open(td.path().join("sparse_begin.txt"))
+        .unwrap()
+        .read_to_string(&mut s)
+        .unwrap();
+
+    // Real size is 8096 bytes per GNU.sparse.realsize
+    assert_eq!(s.len(), 8096);
+    // First 5 bytes are "test\n"
+    assert_eq!(&s[..5], "test\n");
+    // The rest is zero-filled (sparse hole)
+    assert!(s[5..].chars().all(|x| x == '\u{0}'));
+}
+
+/// Test PAX sparse v1.0 format via the entries API.
+///
+/// Verifies the entry-level path and size are correct without unpacking.
+/// Test archive from PR #298 by ncihnegn.
+#[test]
+fn pax_sparse_entries() {
+    let rdr = Cursor::new(tar!("pax_sparse.tar"));
+    let mut ar = Archive::new(rdr);
+    let mut entries = ar.entries().unwrap();
+
+    let entry = entries.next().unwrap().unwrap();
+    // Path should be the real name, not GNUSparseFile.0/sparse_begin.txt
+    assert_eq!(entry.path().unwrap().to_str().unwrap(), "sparse_begin.txt");
+    // Size should be the real size (8096), not the on-disk data size
+    assert_eq!(entry.size(), 8096);
+
+    // No more entries
+    assert!(entries.next().is_none());
+}
+
 #[test]
 #[allow(clippy::option_map_unit_fn)]
 fn writing_sparse() {
