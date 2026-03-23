@@ -408,3 +408,59 @@ fn modify_symlink_just_created() {
         .unwrap();
     assert_eq!(contents.len(), 0);
 }
+
+/// Test that unpacking a tarball with a symlink followed by a directory entry
+/// with the same name does not allow modifying permissions of arbitrary directories
+/// outside the extraction path.
+#[test]
+#[cfg(unix)]
+fn symlink_dir_collision_does_not_modify_external_dir_permissions() {
+    use ::std::fs;
+    use ::std::os::unix::fs::PermissionsExt;
+
+    let td = Builder::new().prefix("tar").tempdir().unwrap();
+
+    let target_dir = td.path().join("target-dir");
+    fs::create_dir(&target_dir).unwrap();
+    fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let before_mode = fs::metadata(&target_dir).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(before_mode, 0o700);
+
+    let extract_dir = td.path().join("extract-dir");
+    fs::create_dir(&extract_dir).unwrap();
+
+    let mut ar = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Symlink);
+    header.set_path("foo").unwrap();
+    header.set_link_name(&target_dir).unwrap();
+    header.set_mode(0o777);
+    header.set_cksum();
+    ar.append(&header, &[][..]).unwrap();
+
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    header.set_entry_type(tar::EntryType::Directory);
+    header.set_path("foo").unwrap();
+    header.set_mode(0o777);
+    header.set_cksum();
+    ar.append(&header, &[][..]).unwrap();
+
+    let bytes = ar.into_inner().unwrap();
+    let mut ar = tar::Archive::new(&bytes[..]);
+
+    let result = ar.unpack(&extract_dir);
+    assert!(result.is_err());
+
+    let symlink_path = extract_dir.join("foo");
+    assert!(symlink_path
+        .symlink_metadata()
+        .unwrap()
+        .file_type()
+        .is_symlink());
+
+    let after_mode = fs::metadata(&target_dir).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(after_mode, 0o700);
+}

@@ -93,9 +93,21 @@ impl<R: Read> Archive<R> {
     /// extracting each file in turn to the location specified by the entry's
     /// path name.
     ///
-    /// This operation is relatively sensitive in that it will not write files
-    /// outside of the path specified by `dst`. Files in the archive which have
-    /// a '..' in their path are skipped during the unpacking process.
+    /// # Security
+    ///
+    /// A best-effort is made to prevent writing files outside `dst` (paths
+    /// containing `..` are skipped, symlinks are validated). However, there
+    /// have been historical bugs in this area, and more may exist. For this
+    /// reason, when processing untrusted archives, stronger sandboxing is
+    /// encouraged: e.g. the [`cap-std`] crate and/or OS-level
+    /// containerization/virtualization.
+    ///
+    /// If `dst` does not exist, it is created. Unpacking into an existing
+    /// directory merges content. This function assumes `dst` is not
+    /// concurrently modified by untrusted processes. Protecting against
+    /// TOCTOU races is out of scope for this crate.
+    ///
+    /// [`cap-std`]: https://docs.rs/cap-std/
     ///
     /// # Examples
     ///
@@ -337,10 +349,11 @@ impl<'a> EntriesFields<'a> {
 
         let file_pos = self.next;
         let mut size = header.entry_size()?;
-        if size == 0 {
-            if let Some(pax_size) = pax_size {
-                size = pax_size;
-            }
+        // If this exists, it must override the header size. Disagreement among
+        // parsers allows construction of malicious archives that appear different
+        // when parsed.
+        if let Some(pax_size) = pax_size {
+            size = pax_size;
         }
         let ret = EntryFields {
             size,
