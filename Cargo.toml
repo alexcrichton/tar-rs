@@ -24,7 +24,7 @@ filetime = "0.2.8"
 
 [dev-dependencies]
 astral-tokio-tar = "0.6"
-rand = { version = "0.8", features = ["small_rng"] }
+rand = { version = "0.10", features = ["small_rng"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt"] }
 tokio-stream = "0.1"
