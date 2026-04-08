@@ -4,6 +4,7 @@ use std::os::unix::prelude::*;
 use std::os::windows::prelude::*;
 
 use std::borrow::Cow;
+use std::cmp;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -47,6 +48,83 @@ pub enum HeaderMode {
 
     /// Only metadata that is directly relevant to the identity of a file will
     /// be included. In particular, ownership and mod/access times are excluded.
+    Deterministic,
+
+    /// Preserves all the original metadata except for the provided overrides.
+    /// The default is effectively the same as Complete.
+    Override(HeaderModeOverrides),
+}
+
+#[cfg(all(any(unix, windows), not(target_arch = "wasm32")))]
+impl HeaderMode {
+    fn as_override(&self) -> HeaderModeOverrides {
+        match self {
+            Self::Complete => HeaderModeOverrides::default(),
+            Self::Deterministic => HeaderModeOverrides::default()
+                .with_uid(0)
+                .with_gid(0)
+                .override_mtime(DETERMINISTIC_TIMESTAMP)
+                .with_deterministic_mode(),
+            Self::Override(overrides) => *overrides,
+        }
+    }
+}
+
+/// Declares the specific attributes of the header to override when filling a Header
+/// in [HeaderMode::Override]
+#[non_exhaustive]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HeaderModeOverrides {
+    uid: Option<u64>,
+    gid: Option<u64>,
+    mtime: Option<MtimeOverride>,
+    mode: Option<ModeOverride>,
+}
+
+impl HeaderModeOverrides {
+    /// Override the Header `uid` to the given value
+    pub fn with_uid(mut self, uid: u64) -> Self {
+        self.uid = Some(uid);
+        self
+    }
+
+    /// Override the Header `gid` to the given value
+    pub fn with_gid(mut self, gid: u64) -> Self {
+        self.gid = Some(gid);
+        self
+    }
+
+    /// Configures the `mtime` to be set to the specific value
+    pub fn override_mtime(mut self, mtime: u64) -> Self {
+        self.mtime = Some(MtimeOverride::Override(mtime));
+        self
+    }
+
+    /// Configures the `mtime` to be set to the minimum of either
+    /// the actual mtime or the provided value
+    pub fn clamp_mtime(mut self, mtime: u64) -> Self {
+        self.mtime = Some(MtimeOverride::Clamp(mtime));
+        self
+    }
+
+    /// Configures the file permissions to be set in the same manner
+    /// as [HeaderMode::Deterministic]
+    pub fn with_deterministic_mode(mut self) -> Self {
+        self.mode = Some(ModeOverride::Deterministic);
+        self
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MtimeOverride {
+    Override(u64),
+    Clamp(u64),
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModeOverride {
     Deterministic,
 }
 
@@ -787,32 +865,7 @@ impl Header {
 
     #[cfg(all(unix, not(target_arch = "wasm32")))]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        match mode {
-            HeaderMode::Complete => {
-                self.set_mtime(meta.mtime() as u64);
-                self.set_uid(meta.uid() as u64);
-                self.set_gid(meta.gid() as u64);
-                self.set_mode(meta.mode());
-            }
-            HeaderMode::Deterministic => {
-                // We could in theory set the mtime to zero here, but not all tools seem to behave
-                // well when ingesting files with a 0 timestamp.
-                // For example, rust-lang/cargo#9512 shows that lldb doesn't ingest files with a
-                // zero timestamp correctly.
-                self.set_mtime(DETERMINISTIC_TIMESTAMP);
-
-                self.set_uid(0);
-                self.set_gid(0);
-
-                // Use a default umask value, but propagate the (user) execute bit.
-                let fs_mode = if meta.is_dir() || (0o100 & meta.mode() == 0o100) {
-                    0o755
-                } else {
-                    0o644
-                };
-                self.set_mode(fs_mode);
-            }
-        }
+        self.fill_platform_from_overrides(meta, mode.as_override());
 
         // Note that if we are a GNU header we *could* set atime/ctime, except
         // the `tar` utility doesn't do that by default and it causes problems
@@ -842,36 +895,7 @@ impl Header {
     #[cfg(windows)]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         // There's no concept of a file mode on Windows, so do a best approximation here.
-        match mode {
-            HeaderMode::Complete => {
-                self.set_uid(0);
-                self.set_gid(0);
-                // The dates listed in tarballs are always seconds relative to
-                // January 1, 1970. On Windows, however, the timestamps are returned as
-                // dates relative to January 1, 1601 (in 100ns intervals), so we need to
-                // add in some offset for those dates.
-                let mtime = (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600;
-                self.set_mtime(mtime);
-                let fs_mode = {
-                    const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
-                    let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
-                    match (meta.is_dir(), readonly != 0) {
-                        (true, false) => 0o755,
-                        (true, true) => 0o555,
-                        (false, false) => 0o644,
-                        (false, true) => 0o444,
-                    }
-                };
-                self.set_mode(fs_mode);
-            }
-            HeaderMode::Deterministic => {
-                self.set_uid(0);
-                self.set_gid(0);
-                self.set_mtime(DETERMINISTIC_TIMESTAMP); // see above in unix
-                let fs_mode = if meta.is_dir() { 0o755 } else { 0o644 };
-                self.set_mode(fs_mode);
-            }
-        }
+        self.fill_platform_from_overrides(meta, mode.as_override());
 
         let ft = meta.file_type();
         self.set_entry_type(if ft.is_dir() {
@@ -883,6 +907,52 @@ impl Header {
         } else {
             EntryType::new(b' ')
         });
+    }
+
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    fn fill_platform_from_overrides(
+        &mut self,
+        meta: &fs::Metadata,
+        overrides: HeaderModeOverrides,
+    ) {
+        let mtime = match overrides.mtime {
+            Some(MtimeOverride::Override(mtime)) => mtime,
+            Some(MtimeOverride::Clamp(mtime)) => cmp::min(meta.mtime() as u64, mtime),
+            None => meta.mtime() as u64,
+        };
+        self.set_mtime(mtime);
+
+        self.set_uid(overrides.uid.unwrap_or_else(|| meta.uid() as u64));
+        self.set_gid(overrides.gid.unwrap_or_else(|| meta.gid() as u64));
+
+        let mode = match overrides.mode {
+            Some(ModeOverride::Deterministic) => deterministic_mode(meta),
+            None => meta.mode(),
+        };
+        self.set_mode(mode);
+    }
+
+    #[cfg(windows)]
+    fn fill_platform_from_overrides(
+        &mut self,
+        meta: &fs::Metadata,
+        overrides: HeaderModeOverrides,
+    ) {
+        self.set_uid(0);
+        self.set_gid(0);
+
+        let mtime = match overrides.mtime {
+            Some(MtimeOverride::Override(mtime)) => mtime,
+            Some(MtimeOverride::Clamp(mtime)) => cmp::min(extract_mtime_windows(meta), mtime),
+            None => extract_mtime_windows(meta),
+        };
+        self.set_mtime(mtime);
+
+        let mode = match overrides.mode {
+            Some(ModeOverride::Deterministic) => deterministic_mode(meta),
+            None => extract_mode_windows(meta),
+        };
+        self.set_mode(mode);
     }
 
     fn debug_fields(&self, b: &mut fmt::DebugStruct) {
@@ -1763,4 +1833,44 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
 #[cfg(target_arch = "wasm32")]
 fn invalid_utf8<T>(_: T) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid utf-8")
+}
+
+#[cfg(windows)]
+fn extract_mtime_windows(meta: &fs::Metadata) -> u64 {
+    // The dates listed in tarballs are always seconds relative to
+    // January 1, 1970. On Windows, however, the timestamps are returned as
+    // dates relative to January 1, 1601 (in 100ns intervals), so we need to
+    // add in some offset for those dates.
+    (meta.last_write_time() / (1_000_000_000 / 100)) - 11644473600
+}
+
+#[cfg(windows)]
+fn extract_mode_windows(meta: &fs::Metadata) -> u32 {
+    const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
+    let readonly = meta.file_attributes() & FILE_ATTRIBUTE_READONLY;
+    match (meta.is_dir(), readonly != 0) {
+        (true, false) => 0o755,
+        (true, true) => 0o555,
+        (false, false) => 0o644,
+        (false, true) => 0o444,
+    }
+}
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+fn deterministic_mode(meta: &fs::Metadata) -> u32 {
+    // Use a default umask value, but propagate the (user) execute bit.
+    if meta.is_dir() || (0o100 & meta.mode() == 0o100) {
+        0o755
+    } else {
+        0o644
+    }
+}
+
+#[cfg(windows)]
+fn deterministic_mode(meta: &fs::Metadata) -> u32 {
+    if meta.is_dir() {
+        0o755
+    } else {
+        0o644
+    }
 }
