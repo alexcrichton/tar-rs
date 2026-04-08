@@ -7,12 +7,14 @@ use std::io::{self, SeekFrom};
 use std::marker;
 use std::path::Path;
 
+use tar_core::parse::{Limits, ParseError, ParseEvent, Parser};
+use tar_core::SparseEntry as CoreSparseEntry;
+
 use crate::entry::{EntryFields, EntryIo};
 use crate::error::TarError;
 use crate::header::BLOCK_SIZE;
 use crate::other;
-use crate::pax::*;
-use crate::{Entry, GnuExtSparseHeader, GnuSparseHeader, Header};
+use crate::{Entry, Header};
 
 /// A top-level representation of an archive file.
 ///
@@ -48,6 +50,8 @@ struct EntriesFields<'a> {
     next: u64,
     done: bool,
     raw: bool,
+    parser: Parser,
+    buf: Vec<u8>,
 }
 
 impl<R: Read> Archive<R> {
@@ -223,6 +227,8 @@ impl Archive<dyn Read + '_> {
             done: false,
             next: 0,
             raw: false,
+            parser: new_parser(),
+            buf: Vec::new(),
         })
     }
 
@@ -292,15 +298,17 @@ impl<'a, R: Read> Iterator for Entries<'a, R> {
 }
 
 impl<'a> EntriesFields<'a> {
-    fn next_entry_raw(
-        &mut self,
-        pax_extensions: Option<&[u8]>,
-    ) -> io::Result<Option<Entry<'a, io::Empty>>> {
+    /// Read a single raw entry from the archive without processing
+    /// extension headers (GNU long name/link, PAX).
+    fn next_entry_raw(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
         let mut header = Header::new_old();
         let mut header_pos = self.next;
         loop {
             // Seek to the start of the next header in the archive
-            let delta = self.next - self.archive.inner.pos.get();
+            let delta = self
+                .next
+                .checked_sub(self.archive.inner.pos.get())
+                .ok_or_else(|| other("archive position overflow"))?;
             self.skip(delta)?;
 
             // EOF is an indicator that we are at the end of the archive.
@@ -334,27 +342,8 @@ impl<'a> EntriesFields<'a> {
             return Err(other("archive header checksum mismatch"));
         }
 
-        let mut pax_size: Option<u64> = None;
-        if let Some(pax_extensions_ref) = &pax_extensions {
-            pax_size = pax_extensions_value(pax_extensions_ref, PAX_SIZE);
-
-            if let Some(pax_uid) = pax_extensions_value(pax_extensions_ref, PAX_UID) {
-                header.set_uid(pax_uid);
-            }
-
-            if let Some(pax_gid) = pax_extensions_value(pax_extensions_ref, PAX_GID) {
-                header.set_gid(pax_gid);
-            }
-        }
-
         let file_pos = self.next;
-        let mut size = header.entry_size()?;
-        // If this exists, it must override the header size. Disagreement among
-        // parsers allows construction of malicious archives that appear different
-        // when parsed.
-        if let Some(pax_size) = pax_size {
-            size = pax_size;
-        }
+        let size = header.entry_size()?;
         let ret = EntryFields {
             size,
             header_pos,
@@ -385,173 +374,192 @@ impl<'a> EntriesFields<'a> {
         Ok(Some(ret.into_entry()))
     }
 
+    /// Read header bytes into the buffer and feed them to the tar-core parser
+    /// until it emits an Entry or End event.
     fn next_entry(&mut self) -> io::Result<Option<Entry<'a, io::Empty>>> {
-        if self.raw {
-            return self.next_entry_raw(None);
-        }
+        // Skip past any content from the previous entry that hasn't been
+        // consumed yet.
+        let delta = self
+            .next
+            .checked_sub(self.archive.inner.pos.get())
+            .ok_or_else(|| other("archive position overflow"))?;
+        self.skip(delta)?;
 
-        let mut gnu_longname = None;
-        let mut gnu_longlink = None;
-        let mut pax_extensions = None;
-        let mut processed = 0;
+        // Clear the header buffer for this round.
+        self.buf.clear();
+
         loop {
-            processed += 1;
-            let entry = match self.next_entry_raw(pax_extensions.as_deref())? {
-                Some(entry) => entry,
-                None if processed > 1 => {
-                    return Err(other(
-                        "members found describing a future member \
-                         but no future member found",
-                    ));
-                }
-                None => return Ok(None),
-            };
+            let event = self.parser.parse(&self.buf).map_err(parse_error_to_io)?;
 
-            let is_recognized_header =
-                entry.header().as_gnu().is_some() || entry.header().as_ustar().is_some();
-
-            if is_recognized_header && entry.header().entry_type().is_gnu_longname() {
-                if gnu_longname.is_some() {
-                    return Err(other(
-                        "two long name entries describing \
-                         the same member",
-                    ));
+            match event {
+                ParseEvent::NeedData { min_bytes } => {
+                    let cur_len = self.buf.len();
+                    let new_bytes = min_bytes.checked_sub(cur_len).ok_or_else(|| {
+                        other("parser requested fewer bytes than already buffered")
+                    })?;
+                    self.buf.resize(min_bytes, 0);
+                    match try_read_all(&mut &self.archive.inner, &mut self.buf[cur_len..]) {
+                        Ok(true) => {
+                            self.next += new_bytes as u64;
+                        }
+                        Ok(false) => {
+                            if cur_len == 0 || self.archive.inner.ignore_zeros {
+                                return Ok(None);
+                            }
+                            return Err(other("unexpected EOF in archive"));
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
-                gnu_longname = Some(EntryFields::from(entry).read_all()?);
-                continue;
+
+                ParseEvent::End { consumed } => {
+                    if self.archive.inner.ignore_zeros {
+                        // Drain consumed zero blocks and reset the parser so
+                        // it can parse the next concatenated archive (if any).
+                        self.buf.drain(..consumed);
+                        self.parser = new_parser();
+                        continue;
+                    }
+                    return Ok(None);
+                }
+
+                ParseEvent::Entry { consumed, entry } => {
+                    let meta = EntryMeta::from_parsed(consumed, entry, None);
+                    return self.finish_entry(meta);
+                }
+
+                ParseEvent::SparseEntry {
+                    consumed,
+                    entry,
+                    sparse_map,
+                    real_size,
+                } => {
+                    let meta =
+                        EntryMeta::from_parsed(consumed, entry, Some((sparse_map, real_size)));
+                    return self.finish_entry(meta);
+                }
+
+                ParseEvent::GlobalExtensions { consumed, .. } => {
+                    // Global PAX headers set defaults for subsequent entries.
+                    // tar-rs historically ignores them; consume and continue.
+                    self.buf.drain(..consumed);
+                    continue;
+                }
             }
-
-            if is_recognized_header && entry.header().entry_type().is_gnu_longlink() {
-                if gnu_longlink.is_some() {
-                    return Err(other(
-                        "two long name entries describing \
-                         the same member",
-                    ));
-                }
-                gnu_longlink = Some(EntryFields::from(entry).read_all()?);
-                continue;
-            }
-
-            if is_recognized_header && entry.header().entry_type().is_pax_local_extensions() {
-                if pax_extensions.is_some() {
-                    return Err(other(
-                        "two pax extensions entries describing \
-                         the same member",
-                    ));
-                }
-                pax_extensions = Some(EntryFields::from(entry).read_all()?);
-                continue;
-            }
-
-            let mut fields = EntryFields::from(entry);
-            fields.long_pathname = gnu_longname;
-            fields.long_linkname = gnu_longlink;
-            fields.pax_extensions = pax_extensions;
-            self.parse_sparse_header(&mut fields)?;
-            return Ok(Some(fields.into_entry()));
         }
     }
 
-    fn parse_sparse_header(&mut self, entry: &mut EntryFields<'a>) -> io::Result<()> {
-        if !entry.header.entry_type().is_gnu_sparse() {
-            return Ok(());
-        }
-        let gnu = match entry.header.as_gnu() {
-            Some(gnu) => gnu,
-            None => return Err(other("sparse entry type listed but not GNU header")),
+    /// Finish constructing an entry from its owned metadata.
+    ///
+    /// `EntryMeta::from_parsed` already consumed all borrowed data from
+    /// the `ParsedEntry`, so this method can freely borrow `&mut self`.
+    fn finish_entry(&mut self, meta: EntryMeta) -> io::Result<Option<Entry<'a, io::Empty>>> {
+        let header_pos = self
+            .next
+            .checked_sub(meta.consumed as u64)
+            .ok_or_else(|| other("archive position overflow"))?;
+        let file_pos = self.next;
+
+        // Build the I/O chain.
+        let (data, size) = if let Some((sparse_map, real_size)) = meta.sparse {
+            let data = Self::build_sparse_io(
+                &self.archive.inner,
+                &sparse_map,
+                real_size,
+                meta.content_size,
+            )?;
+            (data, real_size)
+        } else {
+            (
+                vec![EntryIo::Data((&self.archive.inner).take(meta.content_size))],
+                meta.content_size,
+            )
         };
 
-        // Sparse files are represented internally as a list of blocks that are
-        // read. Blocks are either a bunch of 0's or they're data from the
-        // underlying archive.
-        //
-        // Blocks of a sparse file are described by the `GnuSparseHeader`
-        // structure, some of which are contained in `GnuHeader` but some of
-        // which may also be contained after the first header in further
-        // headers.
-        //
-        // We read off all the blocks here and use the `add_block` function to
-        // incrementally add them to the list of I/O block (in `entry.data`).
-        // The `add_block` function also validates that each chunk comes after
-        // the previous, we don't overrun the end of the file, and each block is
-        // aligned to a 512-byte boundary in the archive itself.
-        //
-        // At the end we verify that the sparse file size (`Header::size`) is
-        // the same as the current offset (described by the list of blocks) as
-        // well as the amount of data read equals the size of the entry
-        // (`Header::entry_size`).
-        entry.data.truncate(0);
+        self.next = file_pos
+            .checked_add(meta.padded_content_size)
+            .ok_or_else(|| other("size overflow"))?;
 
-        let mut cur = 0;
-        let mut remaining = entry.size;
-        {
-            let data = &mut entry.data;
-            let reader = &self.archive.inner;
-            let size = entry.size;
-            let mut add_block = |block: &GnuSparseHeader| -> io::Result<_> {
-                if block.is_empty() {
-                    return Ok(());
-                }
-                let off = block.offset()?;
-                let len = block.length()?;
-                if len != 0 && (size - remaining) % BLOCK_SIZE != 0 {
-                    return Err(other(
-                        "previous block in sparse file was not \
-                         aligned to 512-byte boundary",
-                    ));
-                } else if off < cur {
-                    return Err(other(
-                        "out of order or overlapping sparse \
-                         blocks",
-                    ));
-                } else if cur < off {
-                    let block = io::repeat(0).take(off - cur);
-                    data.push(EntryIo::Pad(block));
-                }
-                cur = off
-                    .checked_add(len)
-                    .ok_or_else(|| other("more bytes listed in sparse file than u64 can hold"))?;
-                remaining = remaining.checked_sub(len).ok_or_else(|| {
-                    other(
-                        "sparse file consumed more data than the header \
-                         listed",
-                    )
-                })?;
-                data.push(EntryIo::Data(reader.take(len)));
-                Ok(())
-            };
-            for block in gnu.sparse.iter() {
-                add_block(block)?
-            }
-            if gnu.is_extended() {
-                let mut ext = GnuExtSparseHeader::new();
-                ext.isextended[0] = 1;
-                while ext.is_extended() {
-                    if !try_read_all(&mut &self.archive.inner, ext.as_mut_bytes())? {
-                        return Err(other("failed to read extension"));
-                    }
+        let fields = EntryFields {
+            size,
+            header_pos,
+            file_pos,
+            data,
+            header: meta.header,
+            long_pathname: meta.long_pathname,
+            long_linkname: meta.long_linkname,
+            pax_extensions: meta.pax_extensions,
+            mask: self.archive.inner.mask,
+            unpack_xattrs: self.archive.inner.unpack_xattrs,
+            preserve_permissions: self.archive.inner.preserve_permissions,
+            preserve_mtime: self.archive.inner.preserve_mtime,
+            overwrite: self.archive.inner.overwrite,
+            preserve_ownerships: self.archive.inner.preserve_ownerships,
+        };
 
-                    self.next += BLOCK_SIZE;
-                    for block in ext.sparse.iter() {
-                        add_block(block)?;
-                    }
-                }
+        Ok(Some(fields.into_entry()))
+    }
+
+    /// Build the sparse I/O chain from a tar-core sparse map.
+    ///
+    /// Interleaves zero-fill padding (`EntryIo::Pad`) for gaps and data
+    /// reads (`EntryIo::Data`) for sparse chunks, producing a reader that
+    /// yields the logical file content.
+    fn build_sparse_io(
+        reader: &'a ArchiveInner<dyn Read + 'a>,
+        sparse_map: &[CoreSparseEntry],
+        real_size: u64,
+        on_disk_size: u64,
+    ) -> io::Result<Vec<EntryIo<'a>>> {
+        let mut data = Vec::new();
+        let mut cur = 0u64;
+        let mut remaining = on_disk_size;
+
+        for block in sparse_map {
+            let off = block.offset;
+            let len = block.length;
+
+            if len != 0 && (on_disk_size - remaining) % BLOCK_SIZE != 0 {
+                return Err(other(
+                    "previous block in sparse file was not \
+                     aligned to 512-byte boundary",
+                ));
             }
+            if off < cur {
+                return Err(other(
+                    "out of order or overlapping sparse \
+                     blocks",
+                ));
+            }
+            if cur < off {
+                data.push(EntryIo::Pad(io::repeat(0).take(off - cur)));
+            }
+            cur = off
+                .checked_add(len)
+                .ok_or_else(|| other("more bytes listed in sparse file than u64 can hold"))?;
+            remaining = remaining.checked_sub(len).ok_or_else(|| {
+                other(
+                    "sparse file consumed more data than the header \
+                     listed",
+                )
+            })?;
+            data.push(EntryIo::Data(reader.take(len)));
         }
-        if cur != gnu.real_size()? {
+
+        if cur != real_size {
             return Err(other(
                 "mismatch in sparse file chunks and \
                  size in header",
             ));
         }
-        entry.size = cur;
         if remaining > 0 {
             return Err(other(
                 "mismatch in sparse file chunks and \
                  entry size in header",
             ));
         }
-        Ok(())
+
+        Ok(data)
     }
 
     fn skip(&mut self, mut amt: u64) -> io::Result<()> {
@@ -580,18 +588,22 @@ impl<'a> Iterator for EntriesFields<'a> {
 
     fn next(&mut self) -> Option<io::Result<Entry<'a, io::Empty>>> {
         if self.done {
-            None
+            return None;
+        }
+        let result = if self.raw {
+            self.next_entry_raw()
         } else {
-            match self.next_entry() {
-                Ok(Some(e)) => Some(Ok(e)),
-                Ok(None) => {
-                    self.done = true;
-                    None
-                }
-                Err(e) => {
-                    self.done = true;
-                    Some(Err(e))
-                }
+            self.next_entry()
+        };
+        match result {
+            Ok(Some(e)) => Some(Ok(e)),
+            Ok(None) => {
+                self.done = true;
+                None
+            }
+            Err(e) => {
+                self.done = true;
+                Some(Err(e))
             }
         }
     }
@@ -611,6 +623,84 @@ impl<R: ?Sized + Seek> Seek for &ArchiveInner<R> {
         self.pos.set(pos);
         Ok(pos)
     }
+}
+
+/// Owned entry metadata extracted from a borrowed `ParsedEntry`.
+///
+/// Consuming the `ParsedEntry` fields into owned data releases the borrow
+/// on the parser's input buffer, letting `finish_entry` take `&mut self`
+/// to build the I/O chain and update stream positions.
+struct EntryMeta {
+    consumed: usize,
+    header: Header,
+    content_size: u64,
+    padded_content_size: u64,
+    long_pathname: Option<Vec<u8>>,
+    long_linkname: Option<Vec<u8>>,
+    pax_extensions: Option<Vec<u8>>,
+    sparse: Option<(Vec<CoreSparseEntry>, u64)>,
+}
+
+impl EntryMeta {
+    fn from_parsed(
+        consumed: usize,
+        entry: tar_core::parse::ParsedEntry<'_>,
+        sparse: Option<(Vec<CoreSparseEntry>, u64)>,
+    ) -> Self {
+        let mut header = Header::new_old();
+        header
+            .as_mut_bytes()
+            .copy_from_slice(entry.header.as_bytes());
+        header.set_uid(entry.uid);
+        header.set_gid(entry.gid);
+
+        // Extract sizes before moving fields out of entry.
+        let content_size = entry.size;
+        let padded_content_size = entry.padded_size();
+
+        let long_pathname = if entry.path.as_ref() != entry.header.path_bytes() {
+            Some(entry.path.into_owned())
+        } else {
+            None
+        };
+
+        let long_linkname = entry.link_target.and_then(|lt| {
+            let header_link = entry.header.link_name_bytes();
+            if lt.as_ref() != header_link {
+                Some(lt.into_owned())
+            } else {
+                None
+            }
+        });
+
+        Self {
+            consumed,
+            header,
+            content_size,
+            padded_content_size,
+            long_pathname,
+            long_linkname,
+            pax_extensions: entry.pax.map(|b| b.to_vec()),
+            sparse,
+        }
+    }
+}
+
+/// Create a new tar-core parser with default limits.
+fn new_parser() -> Parser {
+    let mut parser = Parser::new(Limits::default());
+    parser.set_allow_empty_path(true);
+    parser
+}
+
+/// Map tar-core parse errors to io::Error with messages compatible with
+/// existing tar-rs error strings.
+fn parse_error_to_io(e: ParseError) -> io::Error {
+    let msg = match e {
+        ParseError::InvalidSize(_) => "size overflow".to_string(),
+        err => err.to_string(),
+    };
+    io::Error::new(io::ErrorKind::InvalidData, msg)
 }
 
 /// Try to fill the buffer from the reader.

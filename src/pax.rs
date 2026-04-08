@@ -1,4 +1,6 @@
-#![allow(dead_code)]
+// Many PAX constants are kept for completeness even though they aren't
+// currently referenced in tar-rs itself after the tar-core migration.
+#![allow(dead_code, unused_imports)]
 use std::io;
 use std::io::Write;
 use std::slice;
@@ -7,33 +9,35 @@ use std::str;
 use crate::other;
 
 // Keywords for PAX extended header records.
+// The canonical definitions live in tar-core; we re-export or alias them here
+// to keep this crate's internal references working.
 pub const PAX_NONE: &str = ""; // Indicates that no PAX key is suitable
-pub const PAX_PATH: &str = "path";
-pub const PAX_LINKPATH: &str = "linkpath";
-pub const PAX_SIZE: &str = "size";
-pub const PAX_UID: &str = "uid";
-pub const PAX_GID: &str = "gid";
-pub const PAX_UNAME: &str = "uname";
-pub const PAX_GNAME: &str = "gname";
-pub const PAX_MTIME: &str = "mtime";
-pub const PAX_ATIME: &str = "atime";
-pub const PAX_CTIME: &str = "ctime"; // Removed from later revision of PAX spec, but was valid
+pub use tar_core::PAX_ATIME;
+pub use tar_core::PAX_CTIME; // Removed from later revision of PAX spec, but was valid
+pub use tar_core::PAX_GID;
+pub use tar_core::PAX_GNAME;
+pub use tar_core::PAX_LINKPATH;
+pub use tar_core::PAX_MTIME;
+pub use tar_core::PAX_PATH;
+pub use tar_core::PAX_SIZE;
+pub use tar_core::PAX_UID;
+pub use tar_core::PAX_UNAME;
 pub const PAX_CHARSET: &str = "charset"; // Currently unused
 pub const PAX_COMMENT: &str = "comment"; // Currently unused
 
-pub const PAX_SCHILYXATTR: &str = "SCHILY.xattr.";
+pub const PAX_SCHILYXATTR: &str = tar_core::PAX_SCHILY_XATTR;
 
 // Keywords for GNU sparse files in a PAX extended header.
-pub const PAX_GNUSPARSE: &str = "GNU.sparse.";
-pub const PAX_GNUSPARSENUMBLOCKS: &str = "GNU.sparse.numblocks";
-pub const PAX_GNUSPARSEOFFSET: &str = "GNU.sparse.offset";
-pub const PAX_GNUSPARSENUMBYTES: &str = "GNU.sparse.numbytes";
-pub const PAX_GNUSPARSEMAP: &str = "GNU.sparse.map";
-pub const PAX_GNUSPARSENAME: &str = "GNU.sparse.name";
-pub const PAX_GNUSPARSEMAJOR: &str = "GNU.sparse.major";
-pub const PAX_GNUSPARSEMINOR: &str = "GNU.sparse.minor";
-pub const PAX_GNUSPARSESIZE: &str = "GNU.sparse.size";
-pub const PAX_GNUSPARSEREALSIZE: &str = "GNU.sparse.realsize";
+pub const PAX_GNUSPARSE: &str = tar_core::PAX_GNU_SPARSE;
+pub const PAX_GNUSPARSENUMBLOCKS: &str = tar_core::PAX_GNU_SPARSE_NUMBLOCKS;
+pub const PAX_GNUSPARSEOFFSET: &str = tar_core::PAX_GNU_SPARSE_OFFSET;
+pub const PAX_GNUSPARSENUMBYTES: &str = tar_core::PAX_GNU_SPARSE_NUMBYTES;
+pub const PAX_GNUSPARSEMAP: &str = tar_core::PAX_GNU_SPARSE_MAP;
+pub const PAX_GNUSPARSENAME: &str = tar_core::PAX_GNU_SPARSE_NAME;
+pub const PAX_GNUSPARSEMAJOR: &str = tar_core::PAX_GNU_SPARSE_MAJOR;
+pub const PAX_GNUSPARSEMINOR: &str = tar_core::PAX_GNU_SPARSE_MINOR;
+pub const PAX_GNUSPARSESIZE: &str = tar_core::PAX_GNU_SPARSE_SIZE;
+pub const PAX_GNUSPARSEREALSIZE: &str = tar_core::PAX_GNU_SPARSE_REALSIZE;
 
 /// An iterator over the pax extensions in an archive entry.
 ///
