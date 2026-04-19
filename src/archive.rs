@@ -120,7 +120,18 @@ impl<R: Read> Archive<R> {
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
         let me: &mut Archive<dyn Read> = self;
-        me._unpack(dst.as_ref())
+        me._unpack(dst.as_ref(), |_| {})
+    }
+
+    /// Same as [`unpack`][Self::unpack], but allows mapping entries during the
+    /// iteration.
+    pub fn unpack_mapped<P: AsRef<Path>>(
+        &mut self,
+        dst: P,
+        map_entry: impl Fn(&mut Entry<io::Empty>),
+    ) -> io::Result<()> {
+        let me: &mut Archive<dyn Read> = self;
+        me._unpack(dst.as_ref(), map_entry)
     }
 
     /// Set the mask of the permission bits when unpacking this entry.
@@ -226,7 +237,7 @@ impl Archive<dyn Read + '_> {
         })
     }
 
-    fn _unpack(&mut self, dst: &Path) -> io::Result<()> {
+    fn _unpack(&mut self, dst: &Path, map_entry: impl Fn(&mut Entry<io::Empty>)) -> io::Result<()> {
         if dst.symlink_metadata().is_err() {
             fs::create_dir_all(dst)
                 .map_err(|e| TarError::new(format!("failed to create `{}`", dst.display()), e))?;
@@ -245,6 +256,11 @@ impl Archive<dyn Read + '_> {
         let mut directories = Vec::new();
         for entry in self._entries(None)? {
             let mut file = entry.map_err(|e| TarError::new("failed to iterate over archive", e))?;
+
+            // Map the entry if needed (e.g. to map its path).
+            // In most cases, this will be a no-op.
+            map_entry(&mut file);
+
             if file.header().entry_type() == crate::EntryType::Directory {
                 directories.push(file);
             } else {
