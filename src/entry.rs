@@ -88,6 +88,14 @@ impl<'a, R: Read> Entry<'a, R> {
         self.fields.path_bytes()
     }
 
+    /// Sets the raw bytes listed for this entry.
+    ///
+    /// Subsequent calls to [`path_bytes`][Self::path_bytes] will return the
+    /// provided value.
+    pub fn set_path_bytes(&mut self, path_bytes: Vec<u8>) {
+        self.fields.long_pathname = Some(path_bytes);
+    }
+
     /// Returns the link name for this entry, if any is found.
     ///
     /// This method may fail if the pathname is not valid Unicode and this is
